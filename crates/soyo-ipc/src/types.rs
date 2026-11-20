@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use soyo_core::{
     contract::{
-        ApprovalSource, BoundaryError, ErrorInfo, ModelPurpose, PermissionMode, ReviewSource,
-        RunResult, RunStatus, ToolResult, Usage, WorkMode,
+        ApprovalSource, BoundaryError, ErrorInfo, ModelProtocol, ModelPurpose, PermissionMode,
+        ReviewSource, RunResult, RunStatus, ToolResult, Usage, WorkMode,
     },
     tools::todo::{TodoItem, TodoStatus},
 };
@@ -144,6 +144,24 @@ impl From<ModelPurpose> for ModelPurposeDto {
             ModelPurpose::Execution => Self::Execution,
             ModelPurpose::Review => Self::Review,
             ModelPurpose::Compaction => Self::Compaction,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelProtocolDto {
+    ChatCompletions,
+    Responses,
+    AnthropicMessages,
+}
+
+impl From<ModelProtocol> for ModelProtocolDto {
+    fn from(value: ModelProtocol) -> Self {
+        match value {
+            ModelProtocol::ChatCompletions => Self::ChatCompletions,
+            ModelProtocol::Responses => Self::Responses,
+            ModelProtocol::AnthropicMessages => Self::AnthropicMessages,
         }
     }
 }
@@ -403,6 +421,22 @@ pub enum SchemaEventDto {
     ModeChangeRequested { from: WorkModeDto, to: WorkModeDto },
     #[serde(rename = "mode.changed")]
     ModeChanged { from: WorkModeDto, to: WorkModeDto },
+    #[serde(rename = "model.routed")]
+    ModelRouted {
+        request_id: String,
+        purpose: ModelPurposeDto,
+        role: String,
+        profile: String,
+        model: String,
+        protocol: ModelProtocolDto,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_from: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        excluded: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        migration: Option<String>,
+    },
     #[serde(rename = "model.started")]
     ModelStarted {
         request_id: String,
@@ -681,6 +715,8 @@ pub struct ResumeSessionDto {
     pub profile_explicit: bool,
     #[serde(default)]
     pub mode_override: Option<WorkModeDto>,
+    #[serde(default)]
+    pub migrate_history: bool,
 }
 
 /// Paginated session metadata returned by `list_sessions`.
@@ -867,6 +903,8 @@ pub struct RunPromptParams {
     #[serde(default, skip_serializing_if = "is_false")]
     #[specta(skip)]
     pub reconcile_stream_text: bool,
+    #[serde(default)]
+    pub migrate_history: bool,
     /// Per-invocation diagnostic log threshold resolved in the CLI (`--log-level` /
     /// `SOYO_LOG_LEVEL` / `"warn"`). Scopes helper tracing per invocation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1232,4 +1270,6 @@ pub struct GoalReportDto {
 pub struct ExperimentalSettingsDto {
     pub js_repl_enabled: bool,
     pub subagents_enabled: bool,
+    pub routing_enabled: bool,
+    pub code_intel_enabled: bool,
 }

@@ -94,6 +94,7 @@ const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
   "modules",
   "mcp",
   "memory",
+  "experimental",
   "usage",
   "export",
 ];

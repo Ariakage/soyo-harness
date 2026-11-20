@@ -468,3 +468,21 @@ pub async fn set_subagents_enabled(
 ) -> Result<ExperimentalSettingsDto, DesktopError> {
     state.set_subagents_enabled(enabled).await
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_routing_enabled(
+    state: State<'_, DesktopState>,
+    enabled: bool,
+) -> Result<ExperimentalSettingsDto, DesktopError> {
+    state.set_routing_enabled(enabled).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_code_intel_enabled(
+    state: State<'_, DesktopState>,
+    enabled: bool,
+) -> Result<ExperimentalSettingsDto, DesktopError> {
+    state.set_code_intel_enabled(enabled).await
+}

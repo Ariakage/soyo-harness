@@ -648,7 +648,12 @@ export function installBrowserPreviewMock(): boolean {
   let previewBackend: SandboxBackendDto = "seatbelt";
   let previewAutoCompact = true;
   let previewTriggerTokens: number | null = 160000;
-  let previewExperimental = { js_repl_enabled: false, subagents_enabled: false };
+  let previewExperimental = {
+    js_repl_enabled: false,
+    subagents_enabled: false,
+    routing_enabled: false,
+    code_intel_enabled: false,
+  };
 
   let previewModules: ModuleStatusDto_Serialize[] = [
     {
@@ -964,6 +969,16 @@ export function installBrowserPreviewMock(): boolean {
       case "set_subagents_enabled": {
         const payload = args as { enabled: boolean };
         previewExperimental = { ...previewExperimental, subagents_enabled: payload.enabled };
+        return { ...previewExperimental };
+      }
+      case "set_routing_enabled": {
+        const payload = args as { enabled: boolean };
+        previewExperimental = { ...previewExperimental, routing_enabled: payload.enabled };
+        return { ...previewExperimental };
+      }
+      case "set_code_intel_enabled": {
+        const payload = args as { enabled: boolean };
+        previewExperimental = { ...previewExperimental, code_intel_enabled: payload.enabled };
         return { ...previewExperimental };
       }
       case "goal_list":

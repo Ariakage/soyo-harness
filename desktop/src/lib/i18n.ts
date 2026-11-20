@@ -365,6 +365,10 @@ export interface UiMessages {
     jsReplDesc: string;
     subagents: string;
     subagentsDesc: string;
+    routing: string;
+    routingDesc: string;
+    codeIntel: string;
+    codeIntelDesc: string;
     enabled: string;
     disabled: string;
     appliesNewSessions: string;
@@ -1047,6 +1051,10 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         jsReplDesc: "Sandboxed read-only JS orchestration; each bridged call still passes normal authorization and approval.",
         subagents: "Multi-agent subagents (F-09)",
         subagentsDesc: "Bounded parent-child subagent orchestration (max_depth = 1) with isolated worktrees and shared budgets.",
+        routing: "Model routing & failover (F-16)",
+        routingDesc: "Role-based multi-profile routing, transient pre-stream failover with circuit breaker, and opaque history policy.",
+        codeIntel: "Project index & sandboxed LSP (F-17)",
+        codeIntelDesc: "External SQLite symbol index with read-only sandboxed LSP diagnostics, references, and SHA-verified diff previews.",
         enabled: "Enabled",
         disabled: "Disabled",
         appliesNewSessions: "Applies to new sessions",
@@ -1753,6 +1761,10 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         jsReplDesc: "沙箱内只读 JS 编排；每次桥接调用仍走常规授权与审批。",
         subagents: "多 Agent 协作（subagents）",
         subagentsDesc: "受控父子 Agent 编排（max_depth = 1），支持独立工作树/目录副本与共享预算。",
+        routing: "模型路由与容灾（F-16）",
+        routingDesc: "按角色/模式多 Profile 路由、响应前瞬态故障切换与熔断冷却、显式跨协议历史迁移策略。",
+        codeIntel: "项目索引与沙箱 LSP（F-17）",
+        codeIntelDesc: "工作区外部 SQLite 符号索引与只读沙箱 LSP（跳转定义/引用/诊断与 SHA-256 校验补丁预览）。",
         enabled: "已启用",
         disabled: "已停用",
         appliesNewSessions: "对新会话生效",
@@ -2455,6 +2467,10 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         jsReplDesc: "沙箱內唯讀 JS 編排；每次橋接呼叫仍走常規授權與審批。",
         subagents: "多 Agent 協作（subagents）",
         subagentsDesc: "受控父子 Agent 編排（max_depth = 1），支援獨立工作樹/目錄副本與共享預算。",
+        routing: "模型路由與容災（F-16）",
+        routingDesc: "依角色/模式多 Profile 路由、回應前暫態故障切換與熔斷冷卻，以及明確的跨協定歷史遷移策略。",
+        codeIntel: "專案索引與沙盒 LSP（F-17）",
+        codeIntelDesc: "工作區外部 SQLite 符號索引與唯讀沙盒 LSP（定義跳轉/引用/診斷與 SHA-256 校驗補丁預覽）。",
         enabled: "已啟用",
         disabled: "已停用",
         appliesNewSessions: "對新會話生效",

@@ -246,6 +246,7 @@ pub struct HostService {
     pub staged_drafts: Arc<StdMutex<HashMap<String, StagedDraft>>>,
     pub pending_memory_actions: Arc<StdMutex<HashMap<String, PreparedMemoryAction>>>,
     pub secrets: Arc<SecretRegistry>,
+    pub health_tracker: Arc<soyo_core::provider::routing::ProfileHealthTracker>,
     pub test_model_factory: Option<TestModelFactory>,
 }
 
@@ -446,6 +447,7 @@ impl HostService {
                     staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
                     pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
                     secrets,
+                    health_tracker: Arc::new(Default::default()),
                     test_model_factory: None,
                 }
             }
@@ -475,6 +477,7 @@ impl HostService {
             staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
             pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
             secrets: registry,
+            health_tracker: Arc::new(Default::default()),
             test_model_factory: None,
         }
     }
@@ -1188,30 +1191,43 @@ impl HostService {
                 // Release an idle prepared slot for this same session so
                 // `session::resume` can acquire its SQLite session lock cleanly.
                 guard.sessions.remove(&parsed_id);
-                session::resume(
-                    &cfg,
-                    session_id,
-                    session::ResumeOptions {
-                        accept_config_change: params.accept_config_change,
-                        cwd_explicit: params.cwd.is_some(),
-                        profile_explicit: params.profile.is_some(),
-                        mode_override: params.mode.map(Into::into),
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    if let Some(boundary) = err.downcast_ref::<BoundaryError>() {
-                        DesktopError::from_boundary(boundary, &secrets)
-                    } else {
-                        let msg = redaction::redact_str(&err.to_string(), &secrets);
-                        let code = if msg.contains("configuration changed") {
-                            "config_change_requires_confirmation"
-                        } else {
-                            "resume_failed"
-                        };
-                        DesktopError::new(code, msg)
-                    }
-                })?
+                let opts = session::ResumeOptions {
+                    accept_config_change: params.accept_config_change,
+                    cwd_explicit: params.cwd.is_some(),
+                    profile_explicit: params.profile.is_some(),
+                    mode_override: params.mode.map(Into::into),
+                };
+                if params.migrate_history {
+                    let (prepared, _) = session::fork_migrated(&cfg, session_id, opts)
+                        .await
+                        .map_err(|err| {
+                            if let Some(boundary) = err.downcast_ref::<BoundaryError>() {
+                                DesktopError::from_boundary(boundary, &secrets)
+                            } else {
+                                DesktopError::new(
+                                    "resume_failed",
+                                    redaction::redact_str(&err.to_string(), &secrets),
+                                )
+                            }
+                        })?;
+                    prepared
+                } else {
+                    session::resume(&cfg, session_id, opts)
+                        .await
+                        .map_err(|err| {
+                            if let Some(boundary) = err.downcast_ref::<BoundaryError>() {
+                                DesktopError::from_boundary(boundary, &secrets)
+                            } else {
+                                let msg = redaction::redact_str(&err.to_string(), &secrets);
+                                let code = if msg.contains("configuration changed") {
+                                    "config_change_requires_confirmation"
+                                } else {
+                                    "resume_failed"
+                                };
+                                DesktopError::new(code, msg)
+                            }
+                        })?
+                }
             } else {
                 let new_sess = soyo_app::new_session(&cfg).map_err(|err| {
                     DesktopError::new(
@@ -1583,7 +1599,7 @@ impl HostService {
             personal: false,
         };
 
-        let build_result = soyo_app::spawn_build_runtime(
+        let build_result = soyo_app::spawn_build_runtime_with_health(
             cfg.clone(),
             session_snapshot.clone(),
             launch_summary,
@@ -1603,6 +1619,7 @@ impl HostService {
                 run_id: Some(run_id),
                 secret_registry: Some(self.secrets.clone()),
             },
+            Some(self.health_tracker.clone()),
             move |model, streamed| {
                 let mut inner_model = match &test_model_factory {
                     Some(factory) => factory(),
@@ -2364,26 +2381,36 @@ impl HostService {
             })?
         };
 
-        let prepared = session::resume(
-            &cfg,
-            session_id,
-            session::ResumeOptions {
-                accept_config_change: params.accept_config_change,
-                cwd_explicit: params.cwd_explicit,
-                profile_explicit: params.profile_explicit,
-                mode_override: params.mode_override.map(Into::into),
-            },
-        )
-        .await
-        .map_err(|err| {
-            let msg = redaction::redact_str(&err.to_string(), &secrets);
-            let code = if msg.contains("configuration changed") {
-                "config_change_requires_confirmation"
-            } else {
-                "resume_failed"
-            };
-            DesktopError::new(code, msg)
-        })?;
+        let resume_opts = session::ResumeOptions {
+            accept_config_change: params.accept_config_change,
+            cwd_explicit: params.cwd_explicit,
+            profile_explicit: params.profile_explicit,
+            mode_override: params.mode_override.map(Into::into),
+        };
+        let prepared = if params.migrate_history {
+            session::fork_migrated(&cfg, session_id, resume_opts)
+                .await
+                .map(|(p, _)| p)
+                .map_err(|err| {
+                    DesktopError::new(
+                        "resume_failed",
+                        redaction::redact_str(&err.to_string(), &secrets),
+                    )
+                })?
+        } else {
+            session::resume(&cfg, session_id, resume_opts)
+                .await
+                .map_err(|err| {
+                    let msg = redaction::redact_str(&err.to_string(), &secrets);
+                    let code = if msg.contains("configuration changed") {
+                        "config_change_requires_confirmation"
+                    } else {
+                        "resume_failed"
+                    };
+                    DesktopError::new(code, msg)
+                })?
+        };
+        let effective_sid = prepared.session.id.0.to_string();
 
         let recovered_runs = prepared.recovery.interrupted_runs as u32;
         let recovered_tools =
@@ -2409,7 +2436,7 @@ impl HostService {
         }
 
         let bootstrap = self
-            .get_bootstrap_state_for(conn_id, Some(session_id))
+            .get_bootstrap_state_for(conn_id, Some(&effective_sid))
             .await;
         Ok(ResumeSessionResultDto {
             bootstrap,
@@ -3072,6 +3099,32 @@ fn convert_event(
             from: from.into(),
             to: to.into(),
         },
+        EventPayload::ModelRouted {
+            request_id,
+            purpose,
+            role,
+            profile,
+            model,
+            protocol,
+            reason,
+            fallback_from,
+            excluded,
+            migration,
+        } => SchemaEventDto::ModelRouted {
+            request_id: redaction::redact_str(&request_id, secrets),
+            purpose: purpose.into(),
+            role: redaction::redact_str(&role, secrets),
+            profile: redaction::redact_str(&profile, secrets),
+            model: redaction::redact_str(&model, secrets),
+            protocol: protocol.into(),
+            reason: redaction::redact_str(&reason, secrets),
+            fallback_from: fallback_from.map(|v| redaction::redact_str(&v, secrets)),
+            excluded: excluded
+                .into_iter()
+                .map(|v| redaction::redact_str(&v, secrets))
+                .collect(),
+            migration: migration.map(|v| redaction::redact_str(&v, secrets)),
+        },
         EventPayload::ModelStarted {
             request_id,
             purpose,
@@ -3587,6 +3640,9 @@ impl Model for ReconcileTextModel {
 
     fn validate_session(&self, session: &Session) -> Result<(), BoundaryError> {
         self.0.validate_session(session)
+    }
+    fn model_routing(&self) -> Option<&soyo_core::provider::routing::RoutingCoordinator> {
+        self.0.model_routing()
     }
 
     fn start<'a>(

@@ -357,6 +357,24 @@ function applySchemaEvent(
         workMode: payload.data.to,
         pendingMode: null,
       };
+    case "model.routed": {
+      if (payload.data.purpose !== "execution" || !state.bootstrap) {
+        return {};
+      }
+      const nextBootstrap = {
+        ...state.bootstrap,
+        selected_profile: payload.data.profile,
+        selected_model: payload.data.model,
+      };
+      return {
+        bootstrap: nextBootstrap,
+        ...(payload.data.fallback_from
+          ? {
+              summaryLine: `${payload.data.fallback_from} -> ${payload.data.profile} (${payload.data.reason})`,
+            }
+          : {}),
+      };
+    }
     case "model.started":
       return {};
     case "model.text_delta": {

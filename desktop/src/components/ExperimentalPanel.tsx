@@ -24,14 +24,18 @@ export function ExperimentalPanel() {
     void load();
   }, [load]);
 
-  const toggleFlag = async (flag: "js_repl" | "subagents") => {
+  const toggleFlag = async (flag: "js_repl" | "subagents" | "routing" | "code_intel") => {
     if (!settings || busy) return;
     setBusy(true);
     setStatusMessage(null);
     const res =
       flag === "js_repl"
         ? await commands.setJsReplEnabled(!settings.js_repl_enabled)
-        : await commands.setSubagentsEnabled(!settings.subagents_enabled);
+        : flag === "subagents"
+          ? await commands.setSubagentsEnabled(!settings.subagents_enabled)
+          : flag === "routing"
+            ? await commands.setRoutingEnabled(!settings.routing_enabled)
+            : await commands.setCodeIntelEnabled(!settings.code_intel_enabled);
     if (res.status === "ok") {
       setSettings(res.data);
     } else {
@@ -41,7 +45,7 @@ export function ExperimentalPanel() {
   };
 
   const rows: {
-    key: "js_repl" | "subagents";
+    key: "js_repl" | "subagents" | "routing" | "code_intel";
     title: string;
     desc: string;
     enabled: boolean;
@@ -57,6 +61,18 @@ export function ExperimentalPanel() {
       title: t.experimentalPanel.subagents,
       desc: t.experimentalPanel.subagentsDesc,
       enabled: settings?.subagents_enabled ?? false,
+    },
+    {
+      key: "routing",
+      title: t.experimentalPanel.routing,
+      desc: t.experimentalPanel.routingDesc,
+      enabled: settings?.routing_enabled ?? false,
+    },
+    {
+      key: "code_intel",
+      title: t.experimentalPanel.codeIntel,
+      desc: t.experimentalPanel.codeIntelDesc,
+      enabled: settings?.code_intel_enabled ?? false,
     },
   ];
   const anyEnabled = rows.some((row) => row.enabled);

@@ -614,12 +614,11 @@ impl HostService {
     /// persist `[js_repl].enabled` and `[subagents].enabled` into `config.toml`
     /// (preserving comments via `toml_edit`) and update the loaded configuration
     /// so newly built sessions observe the value without a restart.
+    /// Experimental feature toggles surfaced in Settings. Each flag mutates the
+    /// helper's loaded configuration and applies to newly created sessions.
     pub async fn get_experimental_settings(&self) -> Result<ExperimentalSettingsDto, DesktopError> {
         let cfg = require_config_clone(self).await?;
-        Ok(ExperimentalSettingsDto {
-            js_repl_enabled: cfg.js_repl.enabled,
-            subagents_enabled: cfg.subagents.enabled,
-        })
+        Ok(experimental_settings_dto(&cfg))
     }
 
     async fn set_experimental_flag(
@@ -639,10 +638,7 @@ impl HostService {
             .await
             .map_err(|e| DesktopError::new(e.code(), e.to_string()))?;
         apply(cfg, enabled);
-        Ok(ExperimentalSettingsDto {
-            js_repl_enabled: cfg.js_repl.enabled,
-            subagents_enabled: cfg.subagents.enabled,
-        })
+        Ok(experimental_settings_dto(cfg))
     }
 
     pub async fn set_js_repl_enabled(
@@ -659,6 +655,26 @@ impl HostService {
     ) -> Result<ExperimentalSettingsDto, DesktopError> {
         self.set_experimental_flag("subagents", |cfg, val| cfg.subagents.enabled = val, enabled)
             .await
+    }
+
+    pub async fn set_routing_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.set_experimental_flag("routing", |cfg, val| cfg.routing.enabled = val, enabled)
+            .await
+    }
+
+    pub async fn set_code_intel_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.set_experimental_flag(
+            "code_intel",
+            |cfg, val| cfg.code_intel.enabled = val,
+            enabled,
+        )
+        .await
     }
 
     /// Toggle one managed-memory setting (`set_memory_setting`).
@@ -1537,5 +1553,14 @@ fn restore_config_backup(config_path: &Path, backup_path: Option<PathBuf>) {
         None => {
             let _ = fs::remove_file(config_path);
         }
+    }
+}
+
+fn experimental_settings_dto(cfg: &soyo_core::config::Config) -> ExperimentalSettingsDto {
+    ExperimentalSettingsDto {
+        js_repl_enabled: cfg.js_repl.enabled,
+        subagents_enabled: cfg.subagents.enabled,
+        routing_enabled: cfg.routing.enabled,
+        code_intel_enabled: cfg.code_intel.enabled,
     }
 }

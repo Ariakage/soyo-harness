@@ -551,6 +551,22 @@ impl DesktopState {
             .await
     }
 
+    pub async fn set_routing_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.call_rpc("set_routing_enabled", &json!({ "enabled": enabled }))
+            .await
+    }
+
+    pub async fn set_code_intel_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.call_rpc("set_code_intel_enabled", &json!({ "enabled": enabled }))
+            .await
+    }
+
     pub async fn toggle_mcp_server(
         &self,
         name: &str,

@@ -1888,9 +1888,14 @@ describe("App Stage 3 runtime integration", () => {
     });
   });
 
-  it("renders Experimental settings tab and toggles both js_repl and subagents_enabled", async () => {
+  it("renders Experimental settings tab and toggles js_repl, subagents, routing, and code_intel", async () => {
     isTauriMock.mockReturnValue(true);
-    let experimental = { js_repl_enabled: false, subagents_enabled: false };
+    let experimental = {
+      js_repl_enabled: false,
+      subagents_enabled: false,
+      routing_enabled: false,
+      code_intel_enabled: false,
+    };
     invokeMock.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "get_bootstrap_state") return sampleBootstrap();
       if (cmd === "list_sessions") return samplePage();
@@ -1904,6 +1909,14 @@ describe("App Stage 3 runtime integration", () => {
       }
       if (cmd === "set_subagents_enabled") {
         experimental = { ...experimental, subagents_enabled: Boolean(args?.enabled) };
+        return { ...experimental };
+      }
+      if (cmd === "set_routing_enabled") {
+        experimental = { ...experimental, routing_enabled: Boolean(args?.enabled) };
+        return { ...experimental };
+      }
+      if (cmd === "set_code_intel_enabled") {
+        experimental = { ...experimental, code_intel_enabled: Boolean(args?.enabled) };
         return { ...experimental };
       }
       return null;
@@ -1923,6 +1936,8 @@ describe("App Stage 3 runtime integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("experimental-panel")).toBeTruthy();
       expect(screen.getByTestId("experimental-toggle-subagents")).toBeTruthy();
+      expect(screen.getByTestId("experimental-toggle-routing")).toBeTruthy();
+      expect(screen.getByTestId("experimental-toggle-code_intel")).toBeTruthy();
     });
 
     const toggle = screen.getByTestId("experimental-toggle-subagents");
@@ -1932,6 +1947,20 @@ describe("App Stage 3 runtime integration", () => {
     await waitFor(() => {
       expect(toggle.getAttribute("aria-checked")).toBe("true");
       expect(experimental.subagents_enabled).toBe(true);
+    });
+
+    const routingToggle = screen.getByTestId("experimental-toggle-routing");
+    fireEvent.click(routingToggle);
+    await waitFor(() => {
+      expect(routingToggle.getAttribute("aria-checked")).toBe("true");
+      expect(experimental.routing_enabled).toBe(true);
+    });
+
+    const codeIntelToggle = screen.getByTestId("experimental-toggle-code_intel");
+    fireEvent.click(codeIntelToggle);
+    await waitFor(() => {
+      expect(codeIntelToggle.getAttribute("aria-checked")).toBe("true");
+      expect(experimental.code_intel_enabled).toBe(true);
     });
   });
 });

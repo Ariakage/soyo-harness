@@ -103,6 +103,33 @@ pub fn approval_action(name: &str, arguments: &Value) -> Option<String> {
             None => name.to_owned(),
         });
     }
+    if name.starts_with("code_") {
+        let detail = match name {
+            "code_search_symbols" => arguments
+                .get("query")
+                .and_then(Value::as_str)
+                .map(|q| format!("query={}", one_line(q, 40))),
+            "code_definition" | "code_references" | "code_edit_suggestions" => {
+                match (
+                    arguments.get("path").and_then(Value::as_str),
+                    arguments.get("line").and_then(Value::as_u64),
+                    arguments.get("column").and_then(Value::as_u64),
+                ) {
+                    (Some(p), Some(l), Some(c)) => Some(format!("{}:{l}:{c}", one_line(p, 48))),
+                    (Some(p), _, _) => Some(one_line(p, 48)),
+                    _ => None,
+                }
+            }
+            _ => arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .map(|p| one_line(p, 48)),
+        };
+        return Some(match detail {
+            Some(detail) => format!("{name} ({detail})"),
+            None => name.to_owned(),
+        });
+    }
     if !name.starts_with("browser_") {
         return None;
     }

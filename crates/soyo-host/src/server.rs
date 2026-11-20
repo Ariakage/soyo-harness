@@ -729,6 +729,22 @@ async fn dispatch(
             };
             r.await.and_then(ok)
         }
+        "set_routing_enabled" => {
+            let r = async {
+                service
+                    .set_routing_enabled(param_bool(&params, "enabled")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "set_code_intel_enabled" => {
+            let r = async {
+                service
+                    .set_code_intel_enabled(param_bool(&params, "enabled")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
         "list_credentials" => service.list_credentials().await.and_then(ok),
         "import_credential" => {
             let r = async {

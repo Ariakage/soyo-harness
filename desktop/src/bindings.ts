@@ -66,6 +66,8 @@ export const commands = {
 	getExperimentalSettings: () => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("get_experimental_settings")),
 	setJsReplEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_js_repl_enabled", { enabled })),
 	setSubagentsEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_subagents_enabled", { enabled })),
+	setRoutingEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_routing_enabled", { enabled })),
+	setCodeIntelEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_code_intel_enabled", { enabled })),
 };
 
 /* Types */
@@ -337,6 +339,8 @@ export type ErrorInfoDto = {
 export type ExperimentalSettingsDto = {
 	js_repl_enabled: boolean,
 	subagents_enabled: boolean,
+	routing_enabled: boolean,
+	code_intel_enabled: boolean,
 };
 
 export type ExportFormatDto = "json" | "markdown";
@@ -685,6 +689,8 @@ export type ModeStateDto_Serialize = {
 	active_run: boolean,
 };
 
+export type ModelProtocolDto = "chat_completions" | "responses" | "anthropic_messages";
+
 export type ModelPurposeDto = "execution" | "review" | "compaction";
 
 export type ModuleStatusDto = ModuleStatusDto_Serialize | ModuleStatusDto_Deserialize;
@@ -903,6 +909,17 @@ export type SchemaEventDto_Deserialize = { type: "session.created"; data: {
 } } | { type: "mode.changed"; data: {
 	from: WorkModeDto,
 	to: WorkModeDto,
+} } | { type: "model.routed"; data: {
+	request_id: string,
+	purpose: ModelPurposeDto,
+	role: string,
+	profile: string,
+	model: string,
+	protocol: ModelProtocolDto,
+	reason: string,
+	fallback_from?: string | null,
+	excluded?: string[],
+	migration?: string | null,
 } } | { type: "model.started"; data: {
 	request_id: string,
 	purpose: ModelPurposeDto,
@@ -975,6 +992,17 @@ export type SchemaEventDto_Serialize = { type: "session.created"; data: {
 } } | { type: "mode.changed"; data: {
 	from: WorkModeDto,
 	to: WorkModeDto,
+} } | { type: "model.routed"; data: {
+	request_id: string,
+	purpose: ModelPurposeDto,
+	role: string,
+	profile: string,
+	model: string,
+	protocol: ModelProtocolDto,
+	reason: string,
+	fallback_from?: string,
+	excluded?: string[],
+	migration?: string,
 } } | { type: "model.started"; data: {
 	request_id: string,
 	purpose: ModelPurposeDto,
