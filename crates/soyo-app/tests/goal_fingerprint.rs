@@ -110,4 +110,20 @@ fn web_and_browser_configuration_participate_in_the_goal_fingerprint() {
             .code,
         "goal_authorization"
     );
+
+    // Subagent opt-in and bounds participate in the Goal fingerprint (`F-09`).
+    let mut subagents = base.clone();
+    subagents.subagents.enabled = true;
+    subagents.subagents.max_concurrent = Some(2);
+    assert_ne!(
+        goal_profile_fingerprint(&base, "chat").unwrap(),
+        goal_profile_fingerprint(&subagents, "chat").unwrap()
+    );
+    assert_eq!(
+        configured_auto_goal(&subagents, &goal(&base))
+            .unwrap_err()
+            .0
+            .code,
+        "goal_authorization"
+    );
 }

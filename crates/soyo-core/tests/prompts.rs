@@ -334,3 +334,45 @@ fn run_context_keeps_instance_data_out_of_the_shared_system_prefix()
     );
     Ok(())
 }
+
+#[test]
+fn subagents_prompt_section_is_opt_in_and_matches_docs_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let without_subagents = prompt::execution(
+        WorkMode::Work,
+        PermissionMode::Auto,
+        &tools(&["read_file", "background_start"]),
+    )?;
+    assert!(
+        !without_subagents
+            .instructions
+            .contains("Subagent orchestration")
+    );
+    assert!(!without_subagents.section_ids.contains(&"subagents"));
+
+    let with_subagents = prompt::execution(
+        WorkMode::Work,
+        PermissionMode::Auto,
+        &tools(&[
+            "read_file",
+            "subagent_spawn",
+            "subagent_status",
+            "subagent_wait",
+            "subagent_diff",
+            "subagent_merge",
+        ]),
+    )?;
+    assert!(
+        with_subagents
+            .instructions
+            .contains("Subagent orchestration")
+    );
+    assert!(with_subagents.instructions.contains("subagent_merge"));
+    assert!(with_subagents.section_ids.contains(&"subagents"));
+    assert!(with_subagents.instructions.is_ascii());
+
+    let embedded = include_str!("../prompts/v1/subagents.md");
+    let snapshot = include_str!("../../../docs/prompt/v1/subagents.md");
+    assert_eq!(embedded, snapshot);
+    Ok(())
+}
