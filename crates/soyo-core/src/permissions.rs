@@ -92,8 +92,10 @@ impl PermissionConfig {
         toml::from_str(text).map_err(|e| failure("invalid_config", e.to_string()))
     }
 }
+#[derive(Clone)]
 struct Rule {
     config: RuleConfig,
+    normalized_glob: Option<String>,
     path: Option<GlobMatcher>,
 }
 
@@ -545,6 +547,38 @@ impl Operation {
             target: Target::BackgroundControl,
         })
     }
+    /// Construct a subagent lifecycle or inspection control operation.
+    pub fn subagent_control(tool: &str) -> Result<Self, BoundaryError> {
+        if !matches!(
+            tool,
+            "subagent_spawn"
+                | "subagent_status"
+                | "subagent_wait"
+                | "subagent_message"
+                | "subagent_cancel"
+                | "subagent_diff"
+        ) {
+            return Err(failure("invalid_args", "unsupported subagent control"));
+        }
+        Ok(Self {
+            tool: tool.into(),
+            target: Target::BackgroundControl,
+        })
+    }
+    /// Construct a conflict-checked merge operation into parent workspace paths.
+    pub fn subagent_merge(
+        paths: Vec<PathBuf>,
+        binding: String,
+        review: serde_json::Value,
+    ) -> Result<Self, BoundaryError> {
+        if paths.is_empty() {
+            return Err(failure(
+                "invalid_args",
+                "subagent_merge requires at least one target path",
+            ));
+        }
+        Self::managed("subagent_merge", paths, binding, false, review)
+    }
 }
 fn normalize_target(workspace: &Path, path: &Path) -> Result<PathBuf, BoundaryError> {
     let input = if path.is_absolute() {
@@ -649,6 +683,7 @@ pub struct Policy {
     roots: Vec<PathBuf>,
     rules: Vec<Rule>,
     host_protected: std::sync::RwLock<Vec<PathBuf>>,
+    enforce_roots_in_bypass: bool,
 }
 impl Policy {
     /// Compile explicit rules. The workspace and each additional root must exist.
@@ -695,28 +730,174 @@ impl Policy {
                 *executable = std::fs::canonicalize(&*executable)
                     .map_err(|e| failure("invalid_config", e.to_string()))?;
             }
-            let path = match &rule.path_glob {
-                Some(pattern) if Path::new(pattern).is_absolute() => Some(
-                    GlobBuilder::new(&normalize_glob(pattern)?)
+            let (normalized_glob, path) = match &rule.path_glob {
+                Some(pattern) if Path::new(pattern).is_absolute() => {
+                    let norm = normalize_glob(pattern)?;
+                    let matcher = GlobBuilder::new(&norm)
                         .literal_separator(true)
                         .build()
                         .map_err(|e| failure("invalid_config", e.to_string()))?
-                        .compile_matcher(),
-                ),
+                        .compile_matcher();
+                    (Some(norm), Some(matcher))
+                }
                 Some(_) => return Err(failure("invalid_config", "path_glob must be absolute")),
-                None => None,
+                None => (None, None),
             };
-            rules.push(Rule { config: rule, path });
+            rules.push(Rule {
+                config: rule,
+                normalized_glob,
+                path,
+            });
         }
         Ok(Self {
             workspace,
             roots,
             rules,
             host_protected: std::sync::RwLock::new(Vec::new()),
+            enforce_roots_in_bypass: false,
         })
     }
     pub fn workspace(&self) -> &Path {
         &self.workspace
+    }
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+    pub(crate) fn protected_paths(&self) -> Result<Vec<PathBuf>, BoundaryError> {
+        self.host_protected
+            .read()
+            .map(|guard| guard.clone())
+            .map_err(|_| failure("permission_error", "Protected resource lock failed"))
+    }
+    /// Derive a strictly non-escalating policy for a child subagent.
+    ///
+    /// Rules targeting paths inside the parent workspace are duplicated onto
+    /// `child_workspace` so parent `deny`/`ask` rules cannot be bypassed inside
+    /// an isolated worktree. Isolated subagents and narrowed `allowed_rel_paths`
+    /// also enforce root containment under `PermissionMode::Bypass`.
+    pub fn derive_for_subagent(
+        &self,
+        child_workspace: &Path,
+        isolated: bool,
+        allowed_rel_paths: &[PathBuf],
+        extra_protected: &[PathBuf],
+    ) -> Result<Self, BoundaryError> {
+        let child_ws = std::fs::canonicalize(child_workspace)
+            .map_err(|e| failure("invalid_path", e.to_string()))?;
+        if !child_ws.is_dir() {
+            return Err(failure(
+                "invalid_path",
+                "child workspace must be a directory",
+            ));
+        }
+        let mut protected = self.protected_paths()?;
+        for path in extra_protected {
+            protected.push(crate::execution::normalize_path(path)?);
+        }
+        protected.sort();
+        protected.dedup();
+
+        let mut roots = Vec::new();
+        if allowed_rel_paths.is_empty() {
+            roots.push(child_ws.clone());
+        } else {
+            for rel in allowed_rel_paths {
+                if rel.as_os_str().is_empty()
+                    || rel.is_absolute()
+                    || rel.components().any(|component| {
+                        matches!(
+                            component,
+                            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+                        )
+                    })
+                    || rel
+                        .to_str()
+                        .is_none_or(|s| s.chars().any(crate::text::is_terminal_control))
+                {
+                    return Err(failure(
+                        "invalid_path",
+                        "allowed_paths entries must be safe workspace-relative paths",
+                    ));
+                }
+                let joined = child_ws.join(rel);
+                let resolved = crate::config::canonicalize_deepest(&joined);
+                if !resolved.starts_with(&child_ws)
+                    || is_repository_control_path(&resolved)
+                    || protected.iter().any(|p| resolved.starts_with(p))
+                {
+                    return Err(failure(
+                        "path_denied",
+                        "allowed_paths target escapes child workspace or hits protected storage",
+                    ));
+                }
+                if !roots.contains(&resolved) {
+                    roots.push(resolved);
+                }
+            }
+        }
+
+        let parent_ws_str = self
+            .workspace
+            .to_str()
+            .ok_or_else(|| failure("invalid_path", "parent workspace is not UTF-8"))?;
+        let child_ws_str = child_ws
+            .to_str()
+            .ok_or_else(|| failure("invalid_path", "child workspace is not UTF-8"))?;
+        let parent_prefix = globset::escape(parent_ws_str).replace('\\', "\\\\");
+        let child_prefix = globset::escape(child_ws_str).replace('\\', "\\\\");
+
+        let mut rules = Vec::with_capacity(self.rules.len() * 2);
+        for rule in &self.rules {
+            rules.push(rule.clone());
+            if let Some(norm) = &rule.normalized_glob
+                && (norm == &parent_prefix || norm.starts_with(&format!("{parent_prefix}/")))
+            {
+                let suffix = &norm[parent_prefix.len()..];
+                let remapped_norm = format!("{child_prefix}{suffix}");
+                let matcher = GlobBuilder::new(&remapped_norm)
+                    .literal_separator(true)
+                    .build()
+                    .map_err(|e| failure("invalid_config", e.to_string()))?
+                    .compile_matcher();
+                let mut remapped_config = rule.config.clone();
+                if let Some(orig) = &rule.config.path_glob {
+                    let remapped_pattern = if let Some(rest) = orig.strip_prefix(parent_ws_str) {
+                        format!("{child_ws_str}{rest}")
+                    } else {
+                        format!("{child_ws_str}{suffix}")
+                    };
+                    remapped_config.path_glob = Some(remapped_pattern);
+                }
+                rules.push(Rule {
+                    config: remapped_config,
+                    normalized_glob: Some(remapped_norm),
+                    path: Some(matcher),
+                });
+            }
+        }
+
+        Ok(Self {
+            workspace: child_ws,
+            roots,
+            rules,
+            host_protected: std::sync::RwLock::new(protected),
+            enforce_roots_in_bypass: isolated || !allowed_rel_paths.is_empty(),
+        })
+    }
+    /// Return a copy that explicitly denies `exec` in every permission mode.
+    pub(crate) fn with_exec_denied(mut self) -> Self {
+        self.rules.push(Rule {
+            config: RuleConfig {
+                effect: Effect::Deny,
+                tool: Some("exec".into()),
+                path_glob: None,
+                executable: None,
+                args_prefix: None,
+            },
+            normalized_glob: None,
+            path: None,
+        });
+        self
     }
     pub(crate) fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -765,6 +946,22 @@ impl Policy {
                 _ => return decision(Decision::Deny, "host_managed_resource"),
             }
         }
+        if op.tool == "subagent_merge"
+            && let Target::Managed { paths, .. } = &op.target
+        {
+            if paths.is_empty() {
+                return decision(Decision::Deny, "invalid_target");
+            }
+            for path in paths {
+                if is_repository_control_path(path) {
+                    return decision(Decision::Deny, "repository_control_data");
+                }
+                match self.host_protected.read() {
+                    Ok(protected) if !protected.iter().any(|root| path.starts_with(root)) => {}
+                    _ => return decision(Decision::Deny, "host_managed_resource"),
+                }
+            }
+        }
         let read = crate::registry::is_local_read_tool(&op.tool)
             || matches!(&op.target, Target::External(descriptor)
             if descriptor.effect == crate::registry::ToolEffect::ExternalReadOnly)
@@ -798,7 +995,7 @@ impl Policy {
             | Target::Builtin(_)
             | Target::External(_) => None,
         };
-        if permissions != PermissionMode::Bypass
+        if (permissions != PermissionMode::Bypass || self.enforce_roots_in_bypass)
             && !matches!(
                 op.target,
                 Target::Exec {
@@ -806,7 +1003,9 @@ impl Policy {
                     ..
                 }
             )
-            && path.is_some_and(|path| !self.roots.iter().any(|root| path.starts_with(root)))
+            && (path.is_some_and(|path| !self.roots.iter().any(|root| path.starts_with(root)))
+                || (op.tool == "subagent_merge"
+                    && matches!(&op.target, Target::Managed { paths, .. } if paths.iter().any(|p| !self.roots.iter().any(|root| p.starts_with(root))))))
         {
             return decision(Decision::Deny, "outside_roots");
         }
@@ -848,6 +1047,7 @@ impl Policy {
             || control
             || metadata
             || crate::registry::is_local_write_tool(&op.tool)
+            || op.tool == "subagent_merge"
         {
             return decision(
                 Decision::Allow,

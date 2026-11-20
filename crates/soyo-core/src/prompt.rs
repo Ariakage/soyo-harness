@@ -16,6 +16,7 @@ pub const VERSION: &str = "saya-prompts-v1";
 const CORE: &str = include_str!("../prompts/v1/core.md");
 const TOOLS: &str = include_str!("../prompts/v1/tools.md");
 const BACKGROUND: &str = include_str!("../prompts/v1/background.md");
+const SUBAGENTS: &str = include_str!("../prompts/v1/subagents.md");
 const MEMORY_OPERATIONS: &str = include_str!("../prompts/v1/memory-operations.md");
 const REVIEW: &str = include_str!("../prompts/v1/review.md");
 const GOAL_PLANNING: &str = include_str!("../prompts/v1/goal-plan.md");
@@ -170,6 +171,9 @@ pub fn execution(
     }
     if names.contains("memory_update") || names.contains("memory_forget") {
         sections.push(("memory_operations", MEMORY_OPERATIONS));
+    }
+    if names.contains("subagent_spawn") {
+        sections.push(("subagents", SUBAGENTS));
     }
     let mut instructions = format!("Soyo prompt pack: {VERSION}\n\n");
     let mut section_ids = Vec::new();

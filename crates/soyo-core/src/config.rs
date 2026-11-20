@@ -622,6 +622,8 @@ struct Document {
     browser: crate::browser::BrowserSettings,
     #[serde(default)]
     js_repl: crate::js_repl::JsReplSettings,
+    #[serde(default)]
+    subagents: crate::subagent::SubagentSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -650,6 +652,8 @@ pub struct Config {
     pub browser: crate::browser::BrowserSettings,
     /// Opt-in experimental JS REPL (`F-21`); `enabled` defaults to `false`.
     pub js_repl: crate::js_repl::JsReplSettings,
+    /// Opt-in controlled parent-child subagents (`F-09`); `enabled` defaults to `false`.
+    pub subagents: crate::subagent::SubagentSettings,
     env: Environment,
 }
 impl Config {
@@ -996,6 +1000,7 @@ pub fn load(
     doc.browser
         .validate()
         .map_err(|_| invalid("browser settings are invalid"))?;
+    doc.subagents.validate()?;
     if doc
         .review
         .max_output_tokens
@@ -1095,6 +1100,7 @@ pub fn load(
         web: doc.web,
         browser: doc.browser,
         js_repl: doc.js_repl,
+        subagents: doc.subagents,
         env,
     })
 }

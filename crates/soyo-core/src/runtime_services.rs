@@ -84,14 +84,16 @@ struct State {
     plugin_broker_directory: Option<std::path::PathBuf>,
 }
 
-pub(super) struct RuntimeServices {
+pub(crate) struct RuntimeServices {
     settings: Mutex<Settings>,
     state: AsyncMutex<State>,
     begun: AtomicBool,
     local_configured: AtomicBool,
     active: Arc<AtomicUsize>,
     startup_calls: AtomicUsize,
-    used_tools: AtomicUsize,
+    used_tools: Arc<AtomicUsize>,
+    parent_tools: Mutex<Option<(Arc<AtomicUsize>, usize)>>,
+    subagents: Mutex<Option<Arc<crate::subagent::supervisor::SubagentSupervisor>>>,
     fatal: Mutex<Option<BoundaryError>>,
     executor: Mutex<Option<tokio::runtime::Handle>>,
     transition_running: Mutex<bool>,
@@ -106,7 +108,9 @@ impl Default for RuntimeServices {
             local_configured: AtomicBool::new(false),
             active: Arc::new(AtomicUsize::new(0)),
             startup_calls: AtomicUsize::new(0),
-            used_tools: AtomicUsize::new(0),
+            used_tools: Arc::new(AtomicUsize::new(0)),
+            parent_tools: Mutex::new(None),
+            subagents: Mutex::new(None),
             fatal: Mutex::new(None),
             executor: Mutex::new(None),
             transition_running: Mutex::new(false),
@@ -311,15 +315,69 @@ impl RuntimeServices {
         settings.registry = Some(registry);
         Ok(())
     }
+    pub(crate) fn tool_budget_handle(&self) -> Arc<AtomicUsize> {
+        self.used_tools.clone()
+    }
+    pub(crate) fn with_parent_tool_budget(
+        &self,
+        parent: Arc<AtomicUsize>,
+        limit: usize,
+    ) -> Result<(), BoundaryError> {
+        *self
+            .parent_tools
+            .lock()
+            .map_err(|_| error("runtime_services", "Parent tool budget lock failed"))? =
+            Some((parent, limit));
+        Ok(())
+    }
+    pub(crate) fn execution_snapshot(
+        &self,
+    ) -> Result<Option<(SandboxPolicy, Option<BrokerPolicy>)>, BoundaryError> {
+        Ok(self
+            .settings
+            .lock()
+            .map_err(|_| error("runtime_services", "Service settings lock failed"))?
+            .execution
+            .clone())
+    }
+    pub(super) fn configure_subagents(
+        &self,
+        supervisor: Arc<crate::subagent::supervisor::SubagentSupervisor>,
+    ) -> Result<(), BoundaryError> {
+        *self
+            .subagents
+            .lock()
+            .map_err(|_| error("runtime_services", "Subagents lock failed"))? = Some(supervisor);
+        Ok(())
+    }
     /// Reserve one host or model-dispatched tool attempt from the same Run
     /// counter. A failed CAS never starts an additional operation.
     pub(super) fn reserve_tool(&self, limit: usize) -> Result<(), BoundaryError> {
-        self.used_tools
+        let parent = self
+            .parent_tools
+            .lock()
+            .map_err(|_| error("runtime_services", "Parent tool budget lock failed"))?
+            .clone();
+        if let Some((parent_used, parent_limit)) = &parent {
+            parent_used
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                    (used < *parent_limit).then_some(used + 1)
+                })
+                .map_err(|_| error("limit_reached", "Run tool budget is exhausted"))?;
+        }
+        if self
+            .used_tools
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 (used < limit).then_some(used + 1)
             })
-            .map(|_| ())
-            .map_err(|_| error("limit_reached", "Run tool budget is exhausted"))
+            .is_err()
+        {
+            if let Some((parent_used, _)) = parent {
+                parent_used.fetch_sub(1, Ordering::AcqRel);
+            }
+            return Err(error("limit_reached", "Run tool budget is exhausted"));
+        }
+        Ok(())
     }
     pub(super) fn startup_calls(&self) -> usize {
         self.startup_calls.load(Ordering::Acquire)
@@ -355,9 +413,17 @@ impl RuntimeServices {
             .lock()
             .map_err(|_| error("runtime_services", "Browser state lock failed"))?
             .is_some();
+        let has_subagents = self
+            .subagents
+            .lock()
+            .map_err(|_| error("runtime_services", "Subagents lock failed"))?
+            .is_some();
         if target != WorkMode::Plan
             || !self.begun.load(Ordering::Acquire)
-            || (!self.local_configured.load(Ordering::Acquire) && !isolated && !browser)
+            || (!self.local_configured.load(Ordering::Acquire)
+                && !isolated
+                && !browser
+                && !has_subagents)
         {
             return handle.jobs.request_mode(target);
         }
@@ -384,6 +450,7 @@ impl RuntimeServices {
         // across the second permit check and native process-lease acquisition.
         if !self.local_configured.load(Ordering::Acquire)
             && !browser
+            && !has_subagents
             && handle.modes.active_invocations()? == 1
             && execution
                 .as_ref()
@@ -434,6 +501,14 @@ impl RuntimeServices {
             // original lifetime. Cleanup deadlines start at the idle barrier.
             if modes.active_invocations()? == 1 {
                 if !hooks_stopped {
+                    let subagents = self
+                        .subagents
+                        .lock()
+                        .map_err(|_| error("runtime_services", "Subagents lock failed"))?
+                        .clone();
+                    if let Some(subagents) = subagents {
+                        subagents.cancel_mutating().await?;
+                    }
                     let plugins = tokio::time::timeout(Duration::from_secs(130), async {
                         self.state.lock().await.plugins.clone()
                     })
@@ -1486,6 +1561,12 @@ impl RuntimeServices {
         // teardown. A browser failure must not skip the remaining cleanup; every
         // step runs and the first error is reported at the end.
         let mut first_error = None;
+        let subagents = self.subagents.lock().ok().and_then(|guard| guard.clone());
+        if let Some(subagents) = subagents
+            && let Err(error) = subagents.shutdown().await
+        {
+            first_error.get_or_insert(error);
+        }
         if let Err(error) = self.shutdown_browser().await {
             first_error.get_or_insert(error);
         }

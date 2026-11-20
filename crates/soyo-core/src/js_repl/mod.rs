@@ -372,6 +372,7 @@ pub(crate) fn allowed_sub_call(
     if name == TOOL_NAME
         || name == "ask_user"
         || name.starts_with("background_")
+        || name.starts_with("subagent_")
         || name.starts_with("memory_")
         || name.starts_with("skill_")
         || name.starts_with("checkpoint_")

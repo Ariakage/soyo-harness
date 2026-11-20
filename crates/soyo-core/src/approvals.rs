@@ -845,6 +845,21 @@ impl OneShotPermit {
         }
         self.end()
     }
+    /// Consume the one-shot permit bound to a single subagent control call.
+    pub(crate) fn consume_subagent_control(
+        &self,
+        call: &ToolCall,
+        context: &ToolContext,
+    ) -> Result<(), BoundaryError> {
+        let operation = Operation::subagent_control(&call.name)?;
+        if !self.check(call, context, &operation)? || !self.check(call, context, &operation)? {
+            return Err(failure(
+                "stale_approval",
+                "subagent control approval is stale",
+            ));
+        }
+        self.end()
+    }
     /// Use an exact, one-shot permit around one run-local background control.
     pub(crate) fn with_background_control<T>(
         &self,

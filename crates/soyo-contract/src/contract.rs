@@ -240,6 +240,11 @@ pub mod error_codes {
     pub const STEERING_ERROR: &str = "steering_error";
     pub const STORAGE_ERROR: &str = "storage_error";
     pub const STORAGE_SENSITIVE_DATA: &str = "storage_sensitive_data";
+    pub const SUBAGENT_CONFLICT: &str = "subagent_conflict";
+    pub const SUBAGENT_ERROR: &str = "subagent_error";
+    pub const SUBAGENT_LIMIT: &str = "subagent_limit";
+    pub const SUBAGENT_NOT_FOUND: &str = "subagent_not_found";
+    pub const SUBAGENT_WORKSPACE_ERROR: &str = "subagent_workspace_error";
     pub const TOOL_ABORTED: &str = "tool_aborted";
     pub const TOOL_ERROR: &str = "tool_error";
     pub const TOOL_TIMEOUT: &str = "tool_timeout";

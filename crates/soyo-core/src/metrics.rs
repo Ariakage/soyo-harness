@@ -88,6 +88,45 @@ impl Totals {
             self.cached_input_unknown = true;
         }
     }
+    fn merge(&mut self, requests: u64, usage: Option<&Usage>) {
+        if requests == 0 && usage.is_none() {
+            return;
+        }
+        self.requests = self.requests.saturating_add(requests);
+        let Some(usage) = usage else {
+            self.input_unknown = true;
+            self.output_unknown = true;
+            self.cached_input_unknown = true;
+            self.estimated = true;
+            return;
+        };
+        self.completed = self.completed.saturating_add(requests);
+        self.estimated |= usage.estimated;
+        match usage.input_tokens {
+            Some(n) => match self.input.checked_add(n) {
+                Some(sum) => self.input = sum,
+                None => self.input_unknown = true,
+            },
+            None => self.input_unknown = true,
+        }
+        match usage.output_tokens {
+            Some(n) => match self.output.checked_add(n) {
+                Some(sum) => self.output = sum,
+                None => self.output_unknown = true,
+            },
+            None => self.output_unknown = true,
+        }
+        match usage.cached_input_tokens {
+            Some(n) => {
+                self.has_cached_input = true;
+                match self.cached_input.checked_add(n) {
+                    Some(sum) => self.cached_input = sum,
+                    None => self.cached_input_unknown = true,
+                }
+            }
+            None => self.cached_input_unknown = true,
+        }
+    }
     fn usage(&self) -> Option<Usage> {
         if self.requests == 0 {
             return None;
@@ -148,6 +187,24 @@ impl Metrics {
     pub fn tool_call(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.tools = state.tools.saturating_add(1);
+        }
+    }
+    /// Roll a finished child subagent's model requests, token usage, tool counts
+    /// and merged workspace artifacts into the parent run's metrics once.
+    pub fn merge_child(&self, child: &RunMetrics, artifacts: &[Artifact]) {
+        if let Ok(mut state) = self.state.lock() {
+            state
+                .execution
+                .merge(child.execution_requests, child.execution_usage.as_ref());
+            state
+                .review
+                .merge(child.review_requests, child.review_usage.as_ref());
+            state
+                .compaction
+                .merge(child.compaction_requests, child.compaction_usage.as_ref());
+            state.tools = state.tools.saturating_add(child.tool_calls);
+            state.executions = state.executions.saturating_add(child.tool_executions);
+            state.artifacts.extend(artifacts.iter().cloned());
         }
     }
     fn request(&self, purpose: ModelPurpose) {
@@ -473,5 +530,71 @@ mod tests {
         assert_eq!(usage.input_tokens, Some(100));
         assert_eq!(usage.cached_input_tokens, None);
         assert!(!usage.estimated);
+    }
+
+    #[test]
+    fn merge_child_aggregates_usage_and_propagates_unknowns() {
+        let parent = Metrics::default();
+        parent.request(ModelPurpose::Execution);
+        parent.finish(
+            ModelPurpose::Execution,
+            Some(Usage {
+                input_tokens: Some(100),
+                output_tokens: Some(25),
+                cached_input_tokens: Some(10),
+                estimated: false,
+            }),
+        );
+        parent.tool_call();
+
+        let child = RunMetrics {
+            execution_requests: 2,
+            review_requests: 1,
+            compaction_requests: 0,
+            tool_calls: 3,
+            tool_executions: 2,
+            duration_ms: 50,
+            execution_usage: Some(Usage {
+                input_tokens: Some(200),
+                output_tokens: Some(40),
+                cached_input_tokens: Some(30),
+                estimated: false,
+            }),
+            review_usage: Some(Usage {
+                input_tokens: None,
+                output_tokens: Some(5),
+                cached_input_tokens: None,
+                estimated: true,
+            }),
+            compaction_usage: None,
+            execution_cost: None,
+            review_cost: None,
+            compaction_cost: None,
+        };
+        let artifacts = vec![Artifact {
+            path: "src/lib.rs".into(),
+            operation: "modified".into(),
+        }];
+        parent.merge_child(&child, &artifacts);
+
+        let (metrics, total, merged_artifacts) = parent.snapshot().unwrap();
+        assert_eq!(metrics.execution_requests, 3);
+        assert_eq!(metrics.review_requests, 1);
+        assert_eq!(metrics.tool_calls, 4);
+        assert_eq!(metrics.tool_executions, 2);
+        assert_eq!(
+            metrics.execution_usage,
+            Some(Usage {
+                input_tokens: Some(300),
+                output_tokens: Some(65),
+                cached_input_tokens: Some(40),
+                estimated: false,
+            })
+        );
+        let total = total.unwrap();
+        assert_eq!(total.input_tokens, None);
+        assert_eq!(total.output_tokens, Some(70));
+        assert!(total.estimated);
+        assert_eq!(merged_artifacts, artifacts);
     }
 }

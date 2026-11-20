@@ -453,6 +453,20 @@ pub fn is_managed_tool(name: &str) -> bool {
             | "checkpoint_diff"
             | "checkpoint_accept"
             | "checkpoint_restore"
+            | "subagent_merge"
+    )
+}
+
+pub fn is_subagent_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "subagent_spawn"
+            | "subagent_status"
+            | "subagent_wait"
+            | "subagent_message"
+            | "subagent_cancel"
+            | "subagent_diff"
+            | "subagent_merge"
     )
 }
 
@@ -478,6 +492,9 @@ pub fn builtin_effect(name: &str) -> Option<ToolEffect> {
         }
         "ask_user" => ToolEffect::Interaction,
         "background_start" | "background_status" | "background_cancel" => ToolEffect::Control,
+        "subagent_spawn" | "subagent_status" | "subagent_wait" | "subagent_message"
+        | "subagent_cancel" | "subagent_diff" => ToolEffect::Control,
+        "subagent_merge" => ToolEffect::FileWrite,
         "fetch_url" | "web_search" => ToolEffect::WebRead,
         "browser_snapshot" | "browser_wait" | "browser_screenshot" => ToolEffect::BrowserRead,
         "browser_open" | "browser_close" | "browser_navigate" | "browser_click"

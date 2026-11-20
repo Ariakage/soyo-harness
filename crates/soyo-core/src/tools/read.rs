@@ -120,6 +120,58 @@ impl ReadTools {
     pub(crate) fn root_paths(&self) -> Vec<PathBuf> {
         self.roots.iter().map(|root| root.path.clone()).collect()
     }
+    pub fn limits(&self) -> ReadLimits {
+        self.limits.clone()
+    }
+    /// Open a strictly scoped workspace view without `bypass = true` root
+    /// expansion. Every entry in `allowed_roots` must resolve inside `workspace`.
+    pub fn new_restricted(
+        workspace: &Path,
+        allowed_roots: &[PathBuf],
+        limits: ReadLimits,
+    ) -> Result<Self, ReadError> {
+        let workspace = std::fs::canonicalize(workspace).map_err(io_err)?;
+        if !workspace.is_dir() {
+            return Err(err("invalid_path", "workspace is not a directory"));
+        }
+        let mut paths = Vec::new();
+        if allowed_roots.is_empty() {
+            paths.push(workspace.clone());
+        } else {
+            for root in allowed_roots {
+                let candidate = if root.is_absolute() {
+                    root.to_path_buf()
+                } else {
+                    workspace.join(root)
+                };
+                let canonical = std::fs::canonicalize(candidate).map_err(io_err)?;
+                if !canonical.starts_with(&workspace) || !canonical.is_dir() {
+                    return Err(err(
+                        "path_denied",
+                        "restricted root must be a directory inside the workspace",
+                    ));
+                }
+                if !paths.contains(&canonical) {
+                    paths.push(canonical);
+                }
+            }
+        }
+        let mut roots = Vec::new();
+        for path in paths {
+            roots.push(Root {
+                dir: Dir::open_ambient_dir(&path, ambient_authority()).map_err(io_err)?,
+                path,
+            });
+        }
+        roots.sort_by_key(|r| std::cmp::Reverse(r.path.components().count()));
+        Ok(Self {
+            workspace,
+            roots,
+            limits,
+            bypass: false,
+            protected: Arc::new(RwLock::new(protection::ProtectedPaths::default())),
+        })
+    }
     /// Open the workspace and additional roots. Missing or inaccessible roots
     /// return an error. `bypass` removes root restrictions; it does not grant
     /// permission to execute an operation or enable write access.

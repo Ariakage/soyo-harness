@@ -289,6 +289,8 @@ pub struct ToolDispatcher {
     execution: RwLock<Option<Arc<crate::execution::PreparedEnvironment>>>,
     secret_registry: OnceLock<Arc<crate::credentials::SecretRegistry>>,
     js_repl: OnceLock<crate::js_repl::ReplLimits>,
+    subagents: OnceLock<Arc<crate::subagent::supervisor::SubagentSupervisor>>,
+    exec_disabled: std::sync::atomic::AtomicBool,
 }
 #[derive(Debug, Clone)]
 struct McpDiscoveryConfig {
@@ -458,6 +460,24 @@ impl ToolDispatcher {
             .set(limits)
             .map_err(|_| failure("invalid_config", "js_repl is already configured"))
     }
+    /// Attach the subagent supervisor; when unset, `subagent_*` tools fail as unknown.
+    pub(crate) fn set_subagents(
+        &self,
+        supervisor: Arc<crate::subagent::supervisor::SubagentSupervisor>,
+    ) -> Result<(), BoundaryError> {
+        self.subagents
+            .set(supervisor)
+            .map_err(|_| failure("invalid_config", "subagents are already configured"))
+    }
+    pub(crate) fn disable_exec(&self) {
+        self.exec_disabled.store(true, Ordering::Release);
+    }
+    pub(crate) fn is_exec_disabled(&self) -> bool {
+        self.exec_disabled.load(Ordering::Acquire)
+    }
+    pub(crate) fn policy(&self) -> &Arc<Policy> {
+        &self.policy
+    }
     /// The prepared native environment, when one was installed for this run.
     pub(crate) fn execution_environment(
         &self,
@@ -612,11 +632,13 @@ impl ToolDispatcher {
             .eligible_entries(mode, !self.read_only)
             .into_iter()
             .filter(|entry| {
-                !self.read_only
+                (!self.read_only
                     || !matches!(
                         crate::registry::builtin_effect(&entry.descriptor().name),
                         Some(ToolEffect::BrowserRead | ToolEffect::BrowserWrite)
-                    )
+                    ))
+                    && !(self.exec_disabled.load(Ordering::Acquire)
+                        && entry.descriptor().name == "exec")
             })
             .collect();
         let mcp_count = eligible
@@ -859,6 +881,8 @@ impl ToolDispatcher {
             execution: RwLock::new(None),
             secret_registry: OnceLock::new(),
             js_repl: OnceLock::new(),
+            subagents: OnceLock::new(),
+            exec_disabled: std::sync::atomic::AtomicBool::new(false),
         };
         for definition in dispatcher.native_definitions() {
             dispatcher
@@ -959,6 +983,12 @@ impl ToolDispatcher {
             ));
         }
         let operation = if call.name == "exec" {
+            if self.exec_disabled.load(Ordering::Acquire) {
+                return Err(failure(
+                    "unknown_tool",
+                    "exec is disabled for this subagent",
+                ));
+            }
             let planner = ExecTool::new(
                 self.files.clone(),
                 self.store.clone(),
@@ -1020,6 +1050,56 @@ impl ToolDispatcher {
                 ));
             }
             Operation::background_control(&call.name)?
+        } else if crate::registry::is_subagent_tool(&call.name) {
+            let supervisor = self
+                .subagents
+                .get()
+                .ok_or_else(|| failure("unknown_tool", "subagents are not enabled"))?;
+            let limits = &supervisor.config().limits;
+            match call.name.as_str() {
+                "subagent_spawn" => {
+                    crate::subagent::parse_spawn(&call.arguments, limits)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_status" => {
+                    crate::subagent::parse_status(&call.arguments)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_wait" => {
+                    crate::subagent::parse_wait(&call.arguments, limits)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_message" => {
+                    crate::subagent::parse_message(&call.arguments, limits)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_cancel" => {
+                    crate::subagent::parse_cancel(&call.arguments)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_diff" => {
+                    crate::subagent::parse_diff(&call.arguments)?;
+                    Operation::subagent_control(&call.name)?
+                }
+                "subagent_merge" => {
+                    let args = crate::subagent::parse_merge(&call.arguments)?;
+                    if context.run.work_mode == crate::contract::WorkMode::Plan {
+                        Operation::subagent_merge(
+                            vec![context.workspace.clone()],
+                            "plan-mode-denied".into(),
+                            serde_json::json!({}),
+                        )?
+                    } else {
+                        let prepared = supervisor.prepare_merge(&args)?;
+                        Operation::subagent_merge(
+                            prepared.targets,
+                            prepared.binding,
+                            prepared.review,
+                        )?
+                    }
+                }
+                _ => return Err(failure("unknown_tool", "unsupported subagent tool")),
+            }
         } else if let Some(entry) = self.registered(&call.name)? {
             entry.validate_arguments(call)?;
             if self.read_only

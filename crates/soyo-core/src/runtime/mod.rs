@@ -10,7 +10,7 @@ mod managed_memory;
 #[path = "../runtime_secrets.rs"]
 mod secrets;
 #[path = "../runtime_services.rs"]
-mod services;
+pub(crate) mod services;
 #[path = "../runtime_skills.rs"]
 mod skills;
 use crate::{
@@ -118,6 +118,11 @@ fn invalid_tool_request(error: &BoundaryError) -> bool {
             | error_codes::PATH_DENIED
             | error_codes::STALE_APPROVAL
             | error_codes::EXECUTABLE_NOT_FOUND
+            | error_codes::SUBAGENT_NOT_FOUND
+            | error_codes::SUBAGENT_CONFLICT
+            | error_codes::SUBAGENT_LIMIT
+            | error_codes::SUBAGENT_ERROR
+            | error_codes::SUBAGENT_WORKSPACE_ERROR
     )
 }
 fn is_parallel_read_tool_name(name: &str) -> bool {
@@ -332,6 +337,20 @@ pub struct AgentRuntime {
     media_store: Option<Arc<crate::output_store::OutputStore>>,
     media_capabilities: crate::config::MediaCapabilities,
     js_repl: Option<crate::js_repl::JsReplConfig>,
+    raw_model: Arc<dyn Model>,
+    setup_exec: ExecConfig,
+    setup_read_limits: crate::tools::read::ReadLimits,
+    setup_known_secrets: Vec<String>,
+    context_settings_slot: Arc<
+        std::sync::RwLock<
+            Option<(
+                crate::context_builder::ContextBudget,
+                bool,
+                crate::compaction::CompactionConfig,
+            )>,
+        >,
+    >,
+    subagents: Option<Arc<crate::subagent::supervisor::SubagentSupervisor>>,
     started_at: std::time::SystemTime,
 }
 
@@ -588,6 +607,10 @@ impl AgentRuntime {
                 "runtime limits must be positive",
             ));
         }
+        let raw_model = setup.model.clone();
+        let setup_read_limits = setup.files.limits().clone();
+        let setup_exec = setup.exec.clone();
+        let setup_known_secrets = setup.known_secrets.clone();
         let metrics = Arc::new(Metrics::default());
         let secret_source = secrets::source();
         let store: Arc<dyn Store> = Arc::new(RuntimeStore {
@@ -688,6 +711,12 @@ impl AgentRuntime {
             media_store: None,
             media_capabilities: crate::config::MediaCapabilities::default(),
             js_repl: None,
+            raw_model,
+            setup_exec,
+            setup_read_limits,
+            setup_known_secrets,
+            context_settings_slot: Arc::new(std::sync::RwLock::new(None)),
+            subagents: None,
             started_at: std::time::SystemTime::now(),
         })
     }
@@ -754,6 +783,66 @@ impl AgentRuntime {
         Ok(self)
     }
     /// Apply a finite execution window and its resolved output target.
+    /// Enable opt-in controlled parent-child subagents (`F-09`). `None` leaves
+    /// all `subagent_*` tools unregistered so disabled sessions see zero prompt or
+    /// schema changes.
+    pub fn with_subagents(
+        mut self,
+        settings: Option<crate::subagent::SubagentConfig>,
+    ) -> Result<Self, BoundaryError> {
+        let Some(config) = settings else {
+            return Ok(self);
+        };
+        config.limits.validate()?;
+        let template = crate::subagent::supervisor::ParentRuntimeTemplate {
+            raw_model: self.raw_model.clone(),
+            policy: self.dispatcher.policy().clone(),
+            read_limits: self.setup_read_limits.clone(),
+            review: self.review.clone(),
+            exec: self.setup_exec.clone(),
+            known_secrets: self.setup_known_secrets.clone(),
+            secret_source: self.secret_source.clone(),
+            context_settings: self.context_settings_slot.clone(),
+            confirmation: self.confirmation.clone(),
+            limits: self.limits.clone(),
+            parent_budget: self.budget.clone(),
+            parent_metrics: self.metrics.clone(),
+            parent_services: self.services.clone(),
+            parent_cancel: self.cancel.clone(),
+        };
+        let supervisor = Arc::new(crate::subagent::supervisor::SubagentSupervisor::new(
+            config, template,
+        ));
+        self.dispatcher.set_subagents(supervisor.clone())?;
+        self.services.configure_subagents(supervisor.clone())?;
+        self.subagents = Some(supervisor);
+        Ok(self)
+    }
+    pub(crate) fn with_shared_budget(mut self, budget: SharedBudget) -> Self {
+        self.budget = budget;
+        self
+    }
+    pub(crate) fn with_parent_tool_budget(
+        self,
+        parent: Arc<std::sync::atomic::AtomicUsize>,
+        limit: usize,
+    ) -> Result<Self, BoundaryError> {
+        self.services.with_parent_tool_budget(parent, limit)?;
+        Ok(self)
+    }
+    pub(crate) fn with_exec_disabled(self) -> Self {
+        self.dispatcher.disable_exec();
+        self
+    }
+    pub(crate) fn metrics_snapshot(
+        &self,
+    ) -> Option<(
+        crate::metrics::RunMetrics,
+        Option<crate::contract::Usage>,
+        Vec<crate::contract::Artifact>,
+    )> {
+        self.metrics.snapshot()
+    }
     pub fn with_context_budget(
         mut self,
         budget: crate::context_builder::ContextBudget,
@@ -773,8 +862,13 @@ impl AgentRuntime {
     ) -> Result<Self, BoundaryError> {
         budget.input_capacity()?;
         self.context_state = Some(Arc::new(context::ContextState::new(
-            budget, automatic, config,
+            budget,
+            automatic,
+            config.clone(),
         )?));
+        if let Ok(mut guard) = self.context_settings_slot.write() {
+            *guard = Some((budget, automatic, config));
+        }
         Ok(self)
     }
     /// Attach private media snapshot storage before this single-use run starts.
@@ -952,7 +1046,10 @@ impl AgentRuntime {
         if let Some(checkpoints) = &self.checkpoints {
             stable.extend(checkpoints.definitions(mode, self.read_only));
         }
-        if (self.read_only || mode == WorkMode::Plan)
+        if self.subagents.is_some() {
+            stable.extend(crate::subagent::definitions(mode, self.read_only));
+        }
+        if (self.read_only || mode == WorkMode::Plan || self.dispatcher.is_exec_disabled())
             && let Some(definition) = stable
                 .iter_mut()
                 .find(|definition| definition.name == "background_start")
@@ -2348,6 +2445,236 @@ impl AgentRuntime {
         Ok(())
     }
 
+    async fn execute_subagent(
+        &self,
+        session: &mut Session,
+        call: &ToolCall,
+        context: &ToolContext,
+        permit: std::sync::Arc<crate::approvals::OneShotPermit>,
+        progress: &mut CallProgress,
+    ) -> Result<ToolResult, BoundaryError> {
+        if !self.dispatcher.owns_permit(&permit) {
+            return Err(BoundaryError::new(
+                error_codes::PERMISSION_DENIED,
+                "permit belongs to another dispatcher",
+            ));
+        }
+        let Some(supervisor) = self.subagents.clone() else {
+            return self
+                .save_local(
+                    session,
+                    call,
+                    ToolResult::failure(error_codes::UNKNOWN_TOOL, "subagents are not enabled"),
+                )
+                .await;
+        };
+        let limits = &supervisor.config().limits;
+        let current_mode = self.modes.snapshot()?.current;
+        let parent_perm = context.run.permissions;
+
+        if call.name == "subagent_merge" {
+            if current_mode == WorkMode::Plan {
+                return self
+                    .save_local(
+                        session,
+                        call,
+                        ToolResult::failure(
+                            error_codes::MODE_DENIED,
+                            "PLAN does not allow subagent_merge",
+                        ),
+                    )
+                    .await;
+            }
+            let args = match crate::subagent::parse_merge(&call.arguments) {
+                Ok(args) => args,
+                Err(error) => {
+                    return self
+                        .save_local(
+                            session,
+                            call,
+                            ToolResult::failure(error.code(), error.message()),
+                        )
+                        .await;
+                }
+            };
+            let prepared = match supervisor.prepare_merge(&args) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    return self
+                        .save_local(
+                            session,
+                            call,
+                            ToolResult::failure(error.code(), error.message()),
+                        )
+                        .await;
+                }
+            };
+            let operation = crate::permissions::Operation::subagent_merge(
+                prepared.targets,
+                prepared.binding.clone(),
+                prepared.review,
+            )?;
+            if !permit.authorize_managed(call, context, &operation)? {
+                return self
+                    .save_local(
+                        session,
+                        call,
+                        failed(
+                            error_codes::STALE_APPROVAL,
+                            "subagent merge approval changed before execution",
+                        ),
+                    )
+                    .await;
+            }
+            self.store
+                .commit(&[StoreChange::ToolIntent {
+                    run_id: self.run.id,
+                    call: call.clone(),
+                }])
+                .await?;
+            *progress = CallProgress::Dispatched;
+            let result = if !permit.authorize_managed(call, context, &operation)? {
+                failed(
+                    error_codes::STALE_APPROVAL,
+                    "subagent merge approval changed after intent persistence",
+                )
+            } else {
+                let protected = self.dispatcher.policy().protected_paths()?;
+                let roots = self.dispatcher.policy().roots();
+                match supervisor
+                    .merge(&args, &prepared.binding, roots, &protected)
+                    .await
+                {
+                    Ok(res) => res,
+                    Err(err)
+                        if !self.cancel.is_cancelled()
+                            && !err.is_code(error_codes::STORAGE_ERROR) =>
+                    {
+                        ToolResult::failure(err.code(), err.message())
+                    }
+                    Err(err) => return Err(err),
+                }
+            };
+            permit.finish_managed()?;
+            let mut result = result;
+            self.dispatcher.redact_tool_result(&mut result)?;
+            let result = crate::redaction::tool_result(&result, &self.review.known_secrets)?;
+            crate::tools::write::save_result(self.store.as_ref(), call, context, &result).await?;
+            session.history.push(HistoryItem::ToolResult {
+                call_id: call.call_id.clone(),
+                result: result.clone(),
+            });
+            return Ok(result);
+        }
+
+        enum ControlAction {
+            Spawn(crate::subagent::SpawnArgs),
+            Status(crate::subagent::StatusArgs),
+            Wait(crate::subagent::WaitArgs),
+            Message(crate::subagent::MessageArgs),
+            Cancel(crate::subagent::CancelArgs),
+            Diff(crate::subagent::DiffArgs),
+        }
+        let parsed = match call.name.as_str() {
+            "subagent_spawn" => {
+                crate::subagent::parse_spawn(&call.arguments, limits).map(ControlAction::Spawn)
+            }
+            "subagent_status" => {
+                crate::subagent::parse_status(&call.arguments).map(ControlAction::Status)
+            }
+            "subagent_wait" => {
+                crate::subagent::parse_wait(&call.arguments, limits).map(ControlAction::Wait)
+            }
+            "subagent_message" => {
+                crate::subagent::parse_message(&call.arguments, limits).map(ControlAction::Message)
+            }
+            "subagent_cancel" => {
+                crate::subagent::parse_cancel(&call.arguments).map(ControlAction::Cancel)
+            }
+            "subagent_diff" => {
+                crate::subagent::parse_diff(&call.arguments).map(ControlAction::Diff)
+            }
+            _ => Err(BoundaryError::new(
+                error_codes::UNKNOWN_TOOL,
+                "unsupported subagent tool",
+            )),
+        };
+        let action = match parsed {
+            Ok(action) => action,
+            Err(error) => {
+                return self
+                    .save_local(
+                        session,
+                        call,
+                        ToolResult::failure(error.code(), error.message()),
+                    )
+                    .await;
+            }
+        };
+        permit.consume_subagent_control(call, context)?;
+        self.store
+            .commit(&[StoreChange::ToolIntent {
+                run_id: self.run.id,
+                call: call.clone(),
+            }])
+            .await?;
+        *progress = CallProgress::Dispatched;
+
+        let outcome: Result<ToolResult, BoundaryError> = match action {
+            ControlAction::Spawn(args) => supervisor
+                .spawn(session, current_mode, parent_perm, self.read_only, &args)
+                .await
+                .and_then(|snap| {
+                    serde_json::to_value(snap)
+                        .map(|data| ToolResult::success(Some(data)))
+                        .map_err(|err| error(error_codes::SUBAGENT_ERROR, &err.to_string()))
+                }),
+            ControlAction::Status(args) => supervisor
+                .status(&args)
+                .await
+                .map(|data| ToolResult::success(Some(data))),
+            ControlAction::Wait(args) => supervisor
+                .wait(&args, self.cancel.as_ref())
+                .await
+                .map(|data| ToolResult::success(Some(data))),
+            ControlAction::Message(args) => supervisor
+                .message(current_mode, parent_perm, self.read_only, &args)
+                .await
+                .and_then(|snap| {
+                    serde_json::to_value(snap)
+                        .map(|data| ToolResult::success(Some(data)))
+                        .map_err(|err| error(error_codes::SUBAGENT_ERROR, &err.to_string()))
+                }),
+            ControlAction::Cancel(args) => supervisor.cancel(&args).await.and_then(|snap| {
+                serde_json::to_value(snap)
+                    .map(|data| ToolResult::success(Some(data)))
+                    .map_err(|err| error(error_codes::SUBAGENT_ERROR, &err.to_string()))
+            }),
+            ControlAction::Diff(args) => supervisor.diff(&args).await.and_then(|report| {
+                serde_json::to_value(report)
+                    .map(|data| ToolResult::success(Some(data)))
+                    .map_err(|err| error(error_codes::SUBAGENT_ERROR, &err.to_string()))
+            }),
+        };
+
+        let mut result = match outcome {
+            Ok(result) => result,
+            Err(err) if err.is_code(error_codes::CANCELLED) && self.cancel.is_cancelled() => {
+                return Err(err);
+            }
+            Err(err) if err.is_code(error_codes::STORAGE_ERROR) => return Err(err),
+            Err(err) => ToolResult::failure(err.code(), err.message()),
+        };
+        self.dispatcher.redact_tool_result(&mut result)?;
+        let result = crate::redaction::tool_result(&result, &self.review.known_secrets)?;
+        crate::tools::write::save_result(self.store.as_ref(), call, context, &result).await?;
+        session.history.push(HistoryItem::ToolResult {
+            call_id: call.call_id.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
     async fn execute_authorized_tool(
         &self,
         session: &mut Session,
@@ -2378,6 +2705,11 @@ impl AgentRuntime {
         if call.name == crate::js_repl::TOOL_NAME {
             return self
                 .execute_js_repl(session, call, context, permit, progress)
+                .await;
+        }
+        if crate::registry::is_subagent_tool(&call.name) {
+            return self
+                .execute_subagent(session, call, context, permit, progress)
                 .await;
         }
         let cancel = CallCancel::new(self.cancel.clone());

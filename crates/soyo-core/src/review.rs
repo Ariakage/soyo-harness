@@ -31,6 +31,8 @@ struct BudgetState {
     started: Instant,
     paused_at: Option<Instant>,
     paused: Duration,
+    self_paused: bool,
+    child_pause_depth: usize,
 }
 /// Shared per-run model request and active-time budget. Execution and review
 /// callers must use the same instance; each attempt consumes one request.
@@ -39,6 +41,7 @@ pub struct SharedBudget {
     state: Arc<Mutex<BudgetState>>,
     max_requests: usize,
     active_limit: Duration,
+    parent: Option<Arc<SharedBudget>>,
 }
 impl SharedBudget {
     /// Start timing when a newly constructed runtime actually begins its run.
@@ -47,7 +50,7 @@ impl SharedBudget {
             .state
             .lock()
             .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
-        if state.count != 0 || state.paused_at.is_some() {
+        if state.count != 0 || state.self_paused || state.child_pause_depth != 0 {
             return Err(failure("budget_error", "budget has already been used"));
         }
         state.started = Instant::now();
@@ -61,33 +64,64 @@ impl SharedBudget {
                 started: Instant::now(),
                 paused_at: None,
                 paused: Duration::ZERO,
+                self_paused: false,
+                child_pause_depth: 0,
             })),
             max_requests,
             active_limit,
+            parent: None,
+        }
+    }
+    /// Create a bounded child budget linked to `parent`. Every request
+    /// consumed from the child also consumes from `parent`, and remaining
+    /// active time never exceeds `parent.remaining()`.
+    pub fn child(parent: &Self, max_requests: usize, active_limit: Duration) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BudgetState {
+                count: 0,
+                started: Instant::now(),
+                paused_at: None,
+                paused: Duration::ZERO,
+                self_paused: false,
+                child_pause_depth: 0,
+            })),
+            max_requests,
+            active_limit,
+            parent: Some(Arc::new(parent.clone())),
         }
     }
     /// Consume one request, returning a limit error when exhausted.
     pub fn consume(&self) -> Result<(), BoundaryError> {
-        let mut s = self
-            .state
-            .lock()
-            .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
-        if s.paused_at.is_some() {
-            return Err(failure(
-                "budget_error",
-                "model request while active time is paused",
-            ));
-        }
-        let now = Instant::now();
-        if s.count >= self.max_requests
-            || now.duration_since(s.started).saturating_sub(s.paused) >= self.active_limit
         {
-            return Err(failure(
-                "limit_reached",
-                "model request or active time budget exceeded",
-            ));
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            if s.self_paused {
+                return Err(failure(
+                    "budget_error",
+                    "model request while active time is paused",
+                ));
+            }
+            let now = s.paused_at.unwrap_or_else(Instant::now);
+            if s.count >= self.max_requests
+                || now.duration_since(s.started).saturating_sub(s.paused) >= self.active_limit
+            {
+                return Err(failure(
+                    "limit_reached",
+                    "model request or active time budget exceeded",
+                ));
+            }
+            s.count += 1;
         }
-        s.count += 1;
+        if let Some(parent) = &self.parent
+            && let Err(error) = parent.consume()
+        {
+            if let Ok(mut s) = self.state.lock() {
+                s.count = s.count.saturating_sub(1);
+            }
+            return Err(error);
+        }
         Ok(())
     }
     pub fn used(&self) -> Result<usize, BoundaryError> {
@@ -98,34 +132,127 @@ impl SharedBudget {
             .count)
     }
     pub fn remaining(&self) -> Result<Duration, BoundaryError> {
-        let s = self
-            .state
-            .lock()
-            .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
-        let now = s.paused_at.unwrap_or_else(Instant::now);
-        Ok(self
-            .active_limit
-            .saturating_sub(now.duration_since(s.started).saturating_sub(s.paused)))
+        let local = {
+            let s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            let now = s.paused_at.unwrap_or_else(Instant::now);
+            self.active_limit
+                .saturating_sub(now.duration_since(s.started).saturating_sub(s.paused))
+        };
+        match &self.parent {
+            Some(parent) => Ok(local.min(parent.remaining()?)),
+            None => Ok(local),
+        }
     }
     /// Pause active time during a human confirmation or clarification.
     pub fn pause(&self) -> Result<(), BoundaryError> {
-        let mut s = self
-            .state
-            .lock()
-            .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
-        if s.paused_at.is_none() {
-            s.paused_at = Some(Instant::now());
+        let propagate = {
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            let was_paused = s.self_paused || s.child_pause_depth > 0;
+            s.self_paused = true;
+            if !was_paused {
+                s.paused_at = Some(Instant::now());
+                true
+            } else {
+                false
+            }
+        };
+        if propagate
+            && let Some(parent) = &self.parent
+            && let Err(error) = parent.pause_child()
+        {
+            if let Ok(mut s) = self.state.lock() {
+                s.self_paused = false;
+                if s.child_pause_depth == 0 {
+                    s.paused_at = None;
+                }
+            }
+            return Err(error);
         }
         Ok(())
     }
     /// Resume active time after human input.
     pub fn resume(&self) -> Result<(), BoundaryError> {
-        let mut s = self
-            .state
-            .lock()
-            .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
-        if let Some(since) = s.paused_at.take() {
-            s.paused += since.elapsed();
+        let propagate = {
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            if !s.self_paused {
+                return Ok(());
+            }
+            s.self_paused = false;
+            if s.child_pause_depth == 0 {
+                if let Some(since) = s.paused_at.take() {
+                    s.paused += since.elapsed();
+                }
+                true
+            } else {
+                false
+            }
+        };
+        if propagate && let Some(parent) = &self.parent {
+            parent.resume_child()?;
+        }
+        Ok(())
+    }
+    /// Reference-counted clock pause used when a child subagent awaits human input.
+    pub fn pause_child(&self) -> Result<(), BoundaryError> {
+        let propagate = {
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            let was_paused = s.self_paused || s.child_pause_depth > 0;
+            s.child_pause_depth = s.child_pause_depth.saturating_add(1);
+            if !was_paused {
+                s.paused_at = Some(Instant::now());
+                true
+            } else {
+                false
+            }
+        };
+        if propagate
+            && let Some(parent) = &self.parent
+            && let Err(error) = parent.pause_child()
+        {
+            if let Ok(mut s) = self.state.lock() {
+                s.child_pause_depth = s.child_pause_depth.saturating_sub(1);
+                if !s.self_paused && s.child_pause_depth == 0 {
+                    s.paused_at = None;
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+    /// Release one child pause reference on the active-time clock.
+    pub fn resume_child(&self) -> Result<(), BoundaryError> {
+        let propagate = {
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| failure("budget_error", "budget lock poisoned"))?;
+            if s.child_pause_depth == 0 {
+                return Ok(());
+            }
+            s.child_pause_depth -= 1;
+            if !s.self_paused && s.child_pause_depth == 0 {
+                if let Some(since) = s.paused_at.take() {
+                    s.paused += since.elapsed();
+                }
+                true
+            } else {
+                false
+            }
+        };
+        if propagate && let Some(parent) = &self.parent {
+            parent.resume_child()?;
         }
         Ok(())
     }
@@ -466,4 +593,69 @@ pub async fn review_operation(
         reason: "review_unavailable".into(),
         source: ReviewDecisionSource::HumanFallback,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn child_budget_chains_requests_and_clamps_remaining_time() {
+        let parent = SharedBudget::new(2, Duration::from_secs(10));
+        parent.start_run().unwrap();
+        tokio::time::advance(Duration::from_secs(3)).await;
+
+        let child_a = SharedBudget::child(&parent, 5, Duration::from_secs(20));
+        child_a.start_run().unwrap();
+        assert_eq!(child_a.remaining().unwrap(), Duration::from_secs(7));
+
+        let child_b = SharedBudget::child(&parent, 5, Duration::from_secs(4));
+        child_b.start_run().unwrap();
+        assert_eq!(child_b.remaining().unwrap(), Duration::from_secs(4));
+
+        child_a.consume().unwrap();
+        assert_eq!(child_a.used().unwrap(), 1);
+        assert_eq!(parent.used().unwrap(), 1);
+
+        child_b.consume().unwrap();
+        assert_eq!(child_b.used().unwrap(), 1);
+        assert_eq!(parent.used().unwrap(), 2);
+
+        // Parent exhausted: child_a must fail and NOT increment its local count.
+        let err = child_a.consume().unwrap_err();
+        assert_eq!(err.0.code, "limit_reached");
+        assert_eq!(child_a.used().unwrap(), 1);
+        assert_eq!(parent.used().unwrap(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn child_pause_is_refcounted_and_allows_sibling_requests() {
+        let parent = SharedBudget::new(4, Duration::from_secs(10));
+        parent.start_run().unwrap();
+        let child_a = SharedBudget::child(&parent, 4, Duration::from_secs(10));
+        let child_b = SharedBudget::child(&parent, 4, Duration::from_secs(100));
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        // child_a awaits approval -> self-paused, parent clock paused via refcount
+        child_a.pause().unwrap();
+        assert_eq!(child_a.consume().unwrap_err().0.code, "budget_error");
+
+        // Another child starts waiting too -> parent pause depth becomes 2
+        parent.pause_child().unwrap();
+        tokio::time::advance(Duration::from_secs(50)).await;
+
+        // Sibling child_b can still consume while parent clock is paused by child waits
+        child_b.consume().unwrap();
+        assert_eq!(parent.remaining().unwrap(), Duration::from_secs(8));
+
+        // First release keeps parent clock paused because depth is still 1
+        child_a.resume().unwrap();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert_eq!(parent.remaining().unwrap(), Duration::from_secs(8));
+
+        // Final release unpauses parent clock
+        parent.resume_child().unwrap();
+        tokio::time::advance(Duration::from_secs(3)).await;
+        assert_eq!(parent.remaining().unwrap(), Duration::from_secs(5));
+    }
 }
