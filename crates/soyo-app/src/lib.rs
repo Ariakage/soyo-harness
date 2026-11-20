@@ -97,11 +97,47 @@ pub async fn spawn_build_runtime(
     launch: Launch,
     decorate: impl FnOnce(Arc<dyn Model>, bool) -> Arc<dyn Model> + Send + 'static,
 ) -> Result<(AgentRuntime, bool), SharedError> {
+    spawn_build_runtime_with_health(config, session, summary, launch, None, decorate).await
+}
+
+/// [`spawn_build_runtime`] variant accepting a process- or service-shared
+/// [`ProfileHealthTracker`] so cooldown circuit breakers persist across runs (`F-16`).
+pub async fn spawn_build_runtime_with_health(
+    config: Config,
+    session: Session,
+    summary: String,
+    launch: Launch,
+    health: Option<Arc<soyo_core::provider::routing::ProfileHealthTracker>>,
+    decorate: impl FnOnce(Arc<dyn Model>, bool) -> Arc<dyn Model> + Send + 'static,
+) -> Result<(AgentRuntime, bool), SharedError> {
     tokio::task::spawn_blocking(move || {
-        build_runtime(&config, &session, &summary, launch, decorate)
+        build_runtime_with_health(&config, &session, &summary, launch, health, decorate)
     })
     .await
     .map_err(|_| "runtime build worker failed")?
+}
+
+/// Construct the workspace's [`RoutingCoordinator`] from configured profiles and
+/// `[routing]` settings (`F-16`).
+pub fn routing_coordinator(
+    config: &Config,
+    health: Option<Arc<soyo_core::provider::routing::ProfileHealthTracker>>,
+) -> Arc<soyo_core::provider::routing::RoutingCoordinator> {
+    let candidates = config
+        .profiles
+        .iter()
+        .map(|(name, profile)| {
+            (
+                name.clone(),
+                soyo_core::provider::routing::ProfileCandidateMeta::from_profile(name, profile),
+            )
+        })
+        .collect();
+    Arc::new(soyo_core::provider::routing::RoutingCoordinator::new(
+        config.routing.clone(),
+        candidates,
+        health.unwrap_or_default(),
+    ))
 }
 fn model(
     config: &Config,
@@ -300,6 +336,18 @@ pub fn build_runtime(
     launch: Launch,
     decorate: impl FnOnce(Arc<dyn Model>, bool) -> Arc<dyn Model>,
 ) -> Result<(AgentRuntime, bool), SharedError> {
+    build_runtime_with_health(config, session, summary, launch, None, decorate)
+}
+
+/// [`build_runtime`] variant accepting a shared [`ProfileHealthTracker`] (`F-16`).
+pub fn build_runtime_with_health(
+    config: &Config,
+    session: &Session,
+    summary: &str,
+    launch: Launch,
+    health: Option<Arc<soyo_core::provider::routing::ProfileHealthTracker>>,
+    decorate: impl FnOnce(Arc<dyn Model>, bool) -> Arc<dyn Model>,
+) -> Result<(AgentRuntime, bool), SharedError> {
     let profile = &session.profile;
     let selected = config.profiles.get(profile).ok_or("profile not found")?;
     let run = Run {
@@ -324,7 +372,9 @@ pub fn build_runtime(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, BoundaryError>>()?;
-    let router = Arc::new(ProfileRouter::new(profile.clone(), models)?);
+    let routing = routing_coordinator(config, health);
+    let router =
+        Arc::new(ProfileRouter::new(profile.clone(), models)?.with_routing(routing.clone()));
     let secrets = config.secret_env_names();
     let known_secrets = secrets
         .iter()
@@ -402,6 +452,7 @@ pub fn build_runtime(
         confirmation: launch.confirmation,
         limits: limits.clone(),
     })?;
+    runtime = runtime.with_routing(routing);
     let compact = soyo_core::compaction::CompactionConfig {
         summary_output_tokens: config
             .context
@@ -519,6 +570,7 @@ pub fn build_runtime(
             registry.clone(),
         )?;
     }
+    let code_intel_protected = sandbox.protected_paths.clone();
     runtime = runtime.with_execution_settings(sandbox, broker)?;
     if dynamic_credentials {
         runtime = runtime.with_mcp_settings(
@@ -552,11 +604,68 @@ pub fn build_runtime(
         registry,
         soyo_core::skills::SkillLimits::default(),
     )?)?;
+    if config.code_intel.enabled {
+        let mut protected_paths = code_intel_protected;
+        if let Ok(canon_cache) = std::fs::canonicalize(&config.cache_dir) {
+            protected_paths.retain(|p| p != &config.cache_dir && p != &canon_cache);
+        } else {
+            protected_paths.retain(|p| p != &config.cache_dir);
+        }
+        protected_paths.push(config.cache_dir.join("index"));
+        runtime = runtime.with_code_intel(soyo_core::code_intel::CodeIntelConfig {
+            workspace: session.workspace.clone(),
+            cache_dir: config.cache_dir.clone(),
+            sandbox_backend: config.sandbox.backend,
+            settings: config.code_intel.clone(),
+            protected_paths,
+            host_env: config.environment().clone(),
+        })?;
+    }
     if let Some(input) = launch.input {
         runtime = runtime.with_input_handler(input);
     }
     runtime = runtime.with_personal_context(launch.personal_context);
     Ok((runtime, streamed))
+}
+
+/// Build an offline host-guarded [`CodeIntelState`] and [`ReadTools`] pair for CLI index
+/// maintenance and inspection without starting a model session.
+pub fn open_workspace_code_intel(
+    config: &Config,
+    workspace: &std::path::Path,
+) -> Result<(soyo_core::code_intel::CodeIntelState, ReadTools), SharedError> {
+    let mut sandbox = soyo_core::execution::SandboxPolicy::workspace(workspace.to_path_buf());
+    sandbox.backend = config.sandbox.backend;
+    let mut private_paths = configure_host_sandbox(config, workspace, &mut sandbox)?;
+    private_paths.push(config.cache_dir.join("index"));
+    let read_tools = ReadTools::new(
+        workspace,
+        &config.permissions.additional_roots,
+        false,
+        soyo_core::tools::read::ReadLimits::default(),
+    )?;
+    read_tools.protect_paths(private_paths)?;
+
+    let mut protected_paths = sandbox.protected_paths;
+    if let Ok(canon_cache) = std::fs::canonicalize(&config.cache_dir) {
+        protected_paths.retain(|p| p != &config.cache_dir && p != &canon_cache);
+    } else {
+        protected_paths.retain(|p| p != &config.cache_dir);
+    }
+    protected_paths.push(config.cache_dir.join("index"));
+
+    let mut settings = config.code_intel.clone();
+    settings.enabled = true;
+    let state =
+        soyo_core::code_intel::CodeIntelState::new(soyo_core::code_intel::CodeIntelConfig {
+            workspace: workspace.to_path_buf(),
+            cache_dir: config.cache_dir.clone(),
+            sandbox_backend: config.sandbox.backend,
+            settings,
+            protected_paths,
+            host_env: config.environment().clone(),
+        })?;
+    Ok((state, read_tools))
 }
 
 pub(crate) fn configure_host_sandbox(

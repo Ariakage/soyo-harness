@@ -345,6 +345,9 @@ impl Model for PrintModel {
     fn validate_session(&self, s: &Session) -> Result<(), BoundaryError> {
         self.0.validate_session(s)
     }
+    fn model_routing(&self) -> Option<&soyo_core::provider::routing::RoutingCoordinator> {
+        self.0.model_routing()
+    }
 
     fn start<'a>(
         &'a self,

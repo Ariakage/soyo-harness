@@ -828,6 +828,7 @@ pub struct RemoteResume {
     pub cwd_explicit: bool,
     pub profile_explicit: bool,
     pub mode_override: Option<WorkMode>,
+    pub migrate_history: bool,
 }
 
 /// A live remote run: the streaming `submit_prompt`/`compact_session` call is
@@ -950,6 +951,7 @@ pub async fn chat_via_helper(
                 cwd_explicit: resume.cwd_explicit,
                 profile_explicit: resume.profile_explicit,
                 mode_override: resume.mode_override.map(Into::into),
+                migrate_history: resume.migrate_history,
             },
         )
     });
@@ -975,19 +977,21 @@ pub async fn chat_via_helper(
             // release this one first so the two readers cannot split input.
             drop(console);
             let prepared = match existing {
-                Some(resume) => Some(
-                    session::resume(
-                        &config,
-                        &resume.session_id,
-                        session::ResumeOptions {
-                            accept_config_change: resume.accept_config_change,
-                            cwd_explicit: resume.cwd_explicit,
-                            profile_explicit: resume.profile_explicit,
-                            mode_override: resume.mode_override,
-                        },
-                    )
-                    .await?,
-                ),
+                Some(resume) => {
+                    let opts = session::ResumeOptions {
+                        accept_config_change: resume.accept_config_change,
+                        cwd_explicit: resume.cwd_explicit,
+                        profile_explicit: resume.profile_explicit,
+                        mode_override: resume.mode_override,
+                    };
+                    if resume.migrate_history {
+                        let (forked, _) =
+                            session::fork_migrated(&config, &resume.session_id, opts).await?;
+                        Some(forked)
+                    } else {
+                        Some(session::resume(&config, &resume.session_id, opts).await?)
+                    }
+                }
                 None => Some(session::create(&config, new_session(&config)?).await?),
             };
             return chat(config, personal_context, anthropic_prompt_cache, prepared).await;

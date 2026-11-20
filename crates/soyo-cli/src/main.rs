@@ -147,6 +147,16 @@ enum Command {
     },
     /// Manage runtime capability module switches (`browser`, `vm`).
     Module(module_commands::ModuleArgs),
+    /// Inspect model routing candidates, capability checks, and budget gates.
+    Routing {
+        #[command(subcommand)]
+        action: RoutingAction,
+    },
+    /// Build, query, or inspect the external workspace symbol index.
+    Index {
+        #[command(subcommand)]
+        action: IndexAction,
+    },
     /// Open the debug-only interactive TUI fixture viewer.
     #[cfg(debug_assertions)]
     TuiPreview {
@@ -173,6 +183,8 @@ enum Command {
         session_id: String,
         #[arg(long)]
         accept_config_change: bool,
+        #[arg(long)]
+        migrate_history: bool,
     },
     Session {
         #[command(subcommand)]
@@ -186,6 +198,50 @@ enum Command {
     Helper,
     /// Stop the running helper daemon.
     Kill,
+}
+#[derive(Subcommand)]
+enum RoutingAction {
+    /// Explain candidate profile selection and exclusion reasons for a role/mode.
+    Explain {
+        #[arg(long, value_enum)]
+        role: Option<RoutingRoleOption>,
+        #[arg(long)]
+        tools: bool,
+        #[arg(long)]
+        image: bool,
+        #[arg(long)]
+        audio: bool,
+        #[arg(long)]
+        video: bool,
+        #[arg(long, default_value_t = 1024)]
+        tokens: u64,
+        #[arg(long)]
+        session: Option<String>,
+    },
+}
+#[derive(Clone, Copy, ValueEnum)]
+enum RoutingRoleOption {
+    Execution,
+    Planning,
+    Review,
+    Compaction,
+}
+#[derive(Subcommand)]
+enum IndexAction {
+    /// Build or incrementally refresh the external workspace symbol index.
+    Build,
+    /// Query indexed symbols from the external workspace index.
+    Query {
+        query: String,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Show external workspace symbol index path and status.
+    Status,
 }
 #[derive(Subcommand)]
 enum SessionAction {
@@ -219,6 +275,8 @@ struct RunArgs {
     session: Option<String>,
     #[arg(long, requires = "session")]
     accept_config_change: bool,
+    #[arg(long, requires = "session")]
+    migrate_history: bool,
 }
 fn overrides(cli: &Cli) -> Overrides {
     Overrides {
@@ -645,6 +703,7 @@ async fn compact_over_socket(
                 cwd_explicit: cli.cwd.is_some(),
                 profile_explicit: cli.profile.is_some(),
                 mode_override: cli.mode.map(|m| WorkMode::from(m).into()),
+                migrate_history: false,
             })?,
         )
         .await
@@ -965,7 +1024,18 @@ async fn run(
         None
     };
     let mut prepared = if let Some(id) = &args.session {
-        session::resume(config, id, resume_options).await?
+        if args.migrate_history {
+            let (forked, info) = session::fork_migrated(config, id, resume_options).await?;
+            if let Some(info) = info {
+                eprintln!(
+                    "soyo: forked migrated session {} from {} (stripped {} incompatible opaque item(s))",
+                    forked.session.id.0, id, info.stripped_opaque_items
+                );
+            }
+            forked
+        } else {
+            session::resume(config, id, resume_options).await?
+        }
     } else {
         session::create(config, new_session(config)?).await?
     };
@@ -1203,6 +1273,7 @@ async fn run_over_socket(
         attachments: Vec::new(),
         env: Some(config.environment().export_pairs()),
         reconcile_stream_text: config.output == Output::Text,
+        migrate_history: args.migrate_history,
         log_level: LOG_LEVEL
             .get()
             .copied()
@@ -1629,6 +1700,26 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
                 }
             }
         },
+        Some(Command::Routing { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match explain_routing(&config, action).await {
+                Ok(code) => code,
+                Err(error) => query_error(
+                    boxed_error(&*error, "invalid_query", &config),
+                    Some(config.output),
+                ),
+            },
+        },
+        Some(Command::Index { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match run_index_command(&config, action).await {
+                Ok(code) => code,
+                Err(error) => query_error(
+                    boxed_error(&*error, "index_error", &config),
+                    Some(config.output),
+                ),
+            },
+        },
         Some(Command::Helper) => {
             helper_commands::run_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await
         }
@@ -1693,6 +1784,7 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Resume {
             session_id,
             accept_config_change,
+            migrate_history,
         }) => match load_config(overrides, env) {
             Err(e) => fail(e),
             Ok(config) => {
@@ -1707,6 +1799,7 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
                         cwd_explicit: cli.cwd.is_some(),
                         profile_explicit: cli.profile.is_some(),
                         mode_override: cli.mode.map(Into::into),
+                        migrate_history: *migrate_history,
                     }),
                 )
                 .await
@@ -1782,6 +1875,221 @@ async fn dispatch_run_command(
             output_error(boxed_error(&*e, "invalid_input", &config), Some(output))
         }
     }
+}
+
+async fn explain_routing(
+    config: &Config,
+    action: &RoutingAction,
+) -> Result<u8, Box<dyn std::error::Error>> {
+    use soyo_core::{
+        config::MediaCapabilities,
+        contract::ModelPurpose,
+        provider::routing::{ModelRole, RouteRequirements},
+    };
+    let RoutingAction::Explain {
+        role,
+        tools,
+        image,
+        audio,
+        video,
+        tokens,
+        session: session_id,
+    } = action;
+    let role = match role {
+        Some(RoutingRoleOption::Execution) => ModelRole::Execution,
+        Some(RoutingRoleOption::Planning) => ModelRole::Planning,
+        Some(RoutingRoleOption::Review) => ModelRole::Review,
+        Some(RoutingRoleOption::Compaction) => ModelRole::Compaction,
+        None => ModelRole::from_request(ModelPurpose::Execution, config.mode),
+    };
+    let purpose = match role {
+        ModelRole::Execution | ModelRole::Planning => ModelPurpose::Execution,
+        ModelRole::Review => ModelPurpose::Review,
+        ModelRole::Compaction => ModelPurpose::Compaction,
+    };
+    let (session_profile, history) = if let Some(raw_id) = session_id {
+        let id = session::parse_id(raw_id)?;
+        let store = {
+            let owned = config.clone();
+            soyo_app::offload(move || session::open(&owned)).await?
+        };
+        let loaded = store.load_session(id).await?.ok_or("session not found")?;
+        (loaded.profile, loaded.history)
+    } else {
+        let default_profile = config.profile.clone().unwrap_or_default();
+        (default_profile, Vec::new())
+    };
+    let coord = soyo_app::routing_coordinator(config, None);
+    let reqs = RouteRequirements {
+        role,
+        purpose,
+        work_mode: config.mode,
+        session_profile,
+        review_profile: config.review.profile.clone(),
+        tools_required: *tools && purpose == ModelPurpose::Execution,
+        required_media: MediaCapabilities {
+            image: *image,
+            audio: *audio,
+            video: *video,
+        },
+        estimated_input_tokens: *tokens,
+        extra_safety_tokens: 0,
+        task_type: None,
+        prefer_reasoning: false,
+    };
+    let plan = coord.plan(&reqs, &history, &Default::default());
+    let payload = serde_json::json!({
+        "enabled": coord.is_enabled(),
+        "role": role.as_str(),
+        "work_mode": config.mode,
+        "selected": plan.eligible.first().map(|c| &c.profile),
+        "eligible": plan.eligible.iter().map(|c| serde_json::json!({
+            "profile": c.profile,
+            "model": c.model,
+            "protocol": c.protocol,
+            "source": c.source,
+            "estimated_cost_microunits": c.estimated_cost_microunits,
+            "migration": c.migration,
+        })).collect::<Vec<_>>(),
+        "excluded": plan.excluded,
+        "requires_new_session": plan.requires_new_session,
+        "requires_history_migration": plan.requires_history_migration,
+    });
+    if matches!(config.output, Output::Json | Output::Jsonl) {
+        println!("{payload}");
+    } else {
+        println!(
+            "Routing enabled: {} | role: {} | mode: {:?}",
+            coord.is_enabled(),
+            role.as_str(),
+            config.mode
+        );
+        if let Some(first) = plan.eligible.first() {
+            println!(
+                "Selected: {} ({}, {}) via {}",
+                first.profile,
+                first.model,
+                soyo_core::provider::routing::protocol_label(first.protocol),
+                first.source
+            );
+        } else {
+            println!("Selected: none ({})", coord.empty_plan_error(&plan));
+        }
+        if !plan.eligible.is_empty() {
+            println!("Eligible order:");
+            for (idx, c) in plan.eligible.iter().enumerate() {
+                println!(
+                    "  {}. {} ({}) [est_cost={:?}]",
+                    idx + 1,
+                    c.profile,
+                    c.source,
+                    c.estimated_cost_microunits
+                );
+            }
+        }
+        if !plan.excluded.is_empty() {
+            println!("Excluded:");
+            for ex in &plan.excluded {
+                println!("  - {}: {} ({})", ex.profile, ex.reason, ex.detail);
+            }
+        }
+    }
+    Ok(0)
+}
+
+async fn run_index_command(
+    config: &Config,
+    action: &IndexAction,
+) -> Result<u8, Box<dyn std::error::Error>> {
+    use soyo_core::code_intel::SymbolKind;
+    let workspace = std::fs::canonicalize(&config.cwd)?;
+    let (state, read_tools) = soyo_app::open_workspace_code_intel(config, &workspace)
+        .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+
+    match action {
+        IndexAction::Build => {
+            let status = state.build_index(Some(&read_tools)).await?;
+            if matches!(config.output, Output::Json | Output::Jsonl) {
+                println!("{}", serde_json::to_string(&status)?);
+            } else {
+                println!(
+                    "Indexed {} files ({} symbols, {} bytes) at {}",
+                    status.indexed_files,
+                    status.symbol_count,
+                    status.total_indexed_bytes,
+                    status.db_path.display()
+                );
+            }
+        }
+        IndexAction::Status => {
+            let status = state.status().await?;
+            if matches!(config.output, Output::Json | Output::Jsonl) {
+                println!("{}", serde_json::to_string(&status)?);
+            } else {
+                println!(
+                    "Workspace: {} | Index DB: {} ({} bytes)",
+                    status.workspace_root.display(),
+                    status.db_path.display(),
+                    status.db_bytes
+                );
+                println!(
+                    "Files: {} | Symbols: {} | Indexed bytes: {} | Truncated: {}",
+                    status.indexed_files,
+                    status.symbol_count,
+                    status.total_indexed_bytes,
+                    status.truncated
+                );
+            }
+        }
+        IndexAction::Query {
+            query,
+            kind,
+            path,
+            limit,
+        } => {
+            let parsed_kind = kind
+                .as_deref()
+                .map(|raw| {
+                    serde_json::from_value::<SymbolKind>(serde_json::Value::String(
+                        raw.to_ascii_lowercase(),
+                    ))
+                })
+                .transpose()
+                .map_err(|_| {
+                    format!("unsupported symbol kind: {}", kind.as_deref().unwrap_or(""))
+                })?;
+            let result = state
+                .search_symbols(
+                    query,
+                    parsed_kind,
+                    path.as_deref(),
+                    *limit,
+                    Some(&read_tools),
+                )
+                .await?;
+            if matches!(config.output, Output::Json | Output::Jsonl) {
+                println!("{}", serde_json::to_string(&result)?);
+            } else {
+                println!(
+                    "Found {} matches across {} indexed files{}:",
+                    result.matches.len(),
+                    result.indexed_files,
+                    if result.truncated { " (truncated)" } else { "" }
+                );
+                for sym in &result.matches {
+                    println!(
+                        "  {} [{}] {}:{}..{}",
+                        sym.name,
+                        sym.kind.as_str(),
+                        sym.path.display(),
+                        sym.start_line,
+                        sym.end_line
+                    );
+                }
+            }
+        }
+    }
+    Ok(0)
 }
 
 #[tokio::main(flavor = "current_thread")]

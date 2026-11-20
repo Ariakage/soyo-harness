@@ -224,6 +224,7 @@ async fn resumed_session_restores_context_usage_from_run_metrics() {
                     execution_cost: None,
                     review_cost: None,
                     compaction_cost: None,
+                    ..soyo_core::metrics::RunMetrics::default()
                 },
             },
         ])

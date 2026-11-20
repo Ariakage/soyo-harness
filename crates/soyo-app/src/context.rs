@@ -72,6 +72,9 @@ impl Model for ContextModel {
     fn validate_session(&self, session: &Session) -> Result<(), BoundaryError> {
         self.inner.validate_session(session)
     }
+    fn model_routing(&self) -> Option<&soyo_core::provider::routing::RoutingCoordinator> {
+        self.inner.model_routing()
+    }
     fn start<'a>(
         &'a self,
         request: &'a ModelRequest,

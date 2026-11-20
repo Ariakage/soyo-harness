@@ -386,6 +386,10 @@ pub(crate) mod tool {
     pub const STDERR: &str = "stderr";
     pub const EMPTY: &str = "(empty)";
     pub const UNAVAILABLE: &str = "unavailable";
+    pub const SYMBOLS: &str = "symbols";
+    pub const LOCATIONS: &str = "locations";
+    pub const DIAGNOSTICS: &str = "diagnostics";
+    pub const SUGGESTIONS: &str = "suggestions";
 }
 
 pub(crate) mod controller {
@@ -690,6 +694,11 @@ pub(crate) mod messages {
 
     pub fn stored_request(call_id: &str) -> String {
         format!("Stored request {call_id} · /tools shows linked records")
+    }
+
+    pub const MODEL_ROUTED_LABEL: &str = "model routed";
+    pub fn model_routed_failover(from: &str, to: &str, model: &str) -> String {
+        format!("Failover routed request from profile `{from}` to `{to}` ({model}).")
     }
 }
 

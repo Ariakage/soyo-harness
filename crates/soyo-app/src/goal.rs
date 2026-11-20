@@ -150,16 +150,16 @@ pub struct GoalPlanOutcome {
     pub request_count: u64,
 }
 
-/// Ask the execution profile for a structured plan. The result is parsed and
-/// validated here but is not applied or confirmed by this operation.
+/// Ask the configured Planning profile (with opt-in routing/failover if enabled)
+/// for a structured plan. The result is parsed and validated here but is not
+/// applied or confirmed by this operation.
 pub async fn plan_goal(
     config: &Config,
     record: &GoalRecord,
     existing: Vec<AcceptanceCriterion>,
     cancel: &dyn Cancellation,
 ) -> Result<GoalPlanOutcome, BoundaryError> {
-    let model = selected_model(config, &record.profile)?;
-    let request = ModelRequest {
+    let base_request = ModelRequest {
         request_id: RunId::new().0.to_string(),
         purpose: soyo_core::contract::ModelPurpose::Review,
         profile: record.profile.clone(),
@@ -172,7 +172,61 @@ pub async fn plan_goal(
         media: Default::default(),
         tools: vec![],
     };
-    let (text, usage) = complete_text(model, request, config, cancel, PLAN_RESPONSE_LIMIT).await?;
+    let (text, usage, requests_made) = if config.routing.enabled {
+        let coord = super::routing_coordinator(config, None);
+        let tokens = soyo_core::context_builder::conservative_request_tokens(&base_request)?;
+        let reqs = soyo_core::provider::routing::RouteRequirements {
+            role: soyo_core::provider::routing::ModelRole::Planning,
+            purpose: soyo_core::contract::ModelPurpose::Review,
+            work_mode: WorkMode::Plan,
+            session_profile: record.profile.clone(),
+            review_profile: config.review.profile.clone(),
+            tools_required: false,
+            required_media: Default::default(),
+            estimated_input_tokens: tokens,
+            extra_safety_tokens: 0,
+            task_type: Some("planning".into()),
+            prefer_reasoning: false,
+        };
+        let route_plan = coord.plan(&reqs, &[], &Default::default());
+        if route_plan.eligible.is_empty() {
+            return Err(coord.empty_plan_error(&route_plan));
+        }
+        let mut last_err = None;
+        let mut count = 0u64;
+        let mut completed = None;
+        for cand in &route_plan.eligible {
+            count += 1;
+            let model = selected_model(config, &cand.profile)?;
+            let mut req = base_request.clone();
+            req.request_id = RunId::new().0.to_string();
+            req.profile = cand.profile.clone();
+            match complete_text(model, req, config, cancel, PLAN_RESPONSE_LIMIT).await {
+                Ok((text, usage)) => {
+                    completed = Some((text, usage));
+                    break;
+                }
+                Err(err) if err.is_transient_model_error() => {
+                    last_err = Some(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        let (text, usage) = match completed {
+            Some(pair) => pair,
+            None => {
+                return Err(last_err.unwrap_or_else(|| {
+                    failure("model_unavailable", "no planning profile succeeded")
+                }));
+            }
+        };
+        (text, usage, count)
+    } else {
+        let model = selected_model(config, &record.profile)?;
+        let (text, usage) =
+            complete_text(model, base_request, config, cancel, PLAN_RESPONSE_LIMIT).await?;
+        (text, usage, 1)
+    };
     let plan = GoalPlan::parse(&text)?;
     if !existing.is_empty() && plan.acceptance != existing {
         return Err(failure(
@@ -183,7 +237,7 @@ pub async fn plan_goal(
     Ok(GoalPlanOutcome {
         plan,
         usage,
-        request_count: 1,
+        request_count: requests_made,
     })
 }
 
@@ -739,6 +793,8 @@ pub fn goal_profile_fingerprint(config: &Config, profile: &str) -> Result<String
             },
             "output_capture_enabled": config.output_capture.enabled,
             "subagents": &config.subagents,
+            "routing": &config.routing,
+            "code_intel": &config.code_intel,
         }))
         .map_err(|_| {
             failure(

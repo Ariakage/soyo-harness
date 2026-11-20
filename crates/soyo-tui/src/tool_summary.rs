@@ -74,6 +74,9 @@ pub(crate) fn summarize_call(
     if name.starts_with("subagent_") {
         return subagent_call_summary(name, arguments, result);
     }
+    if name.starts_with("code_") {
+        return code_intel_call_summary(name, arguments, result);
+    }
     if name != "exec" {
         return result.and_then(|result| {
             serde_json::to_string(result)
@@ -123,6 +126,62 @@ pub(crate) fn summarize_call(
         ok,
         truncated,
         running,
+    })
+}
+
+fn code_intel_call_summary(
+    name: &str,
+    arguments: &Value,
+    result: Option<&ToolResult>,
+) -> Option<ToolSummary> {
+    let target = arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .or_else(|| arguments.get("path").and_then(Value::as_str))
+        .map(|s| one_line(s, 48));
+    let Some(result) = result else {
+        let mut parts = vec![name.to_owned()];
+        if let Some(t) = target {
+            parts.push(t);
+        }
+        parts.push(text::RUNNING.into());
+        return Some(ToolSummary {
+            text: one_line(&parts.join(" · "), 120),
+            ok: true,
+            truncated: false,
+            running: true,
+        });
+    };
+    if !result.ok {
+        let error = result.error.as_ref()?;
+        return Some(ToolSummary {
+            text: one_line(&format!("{} · {}", error.code, error.message), 120),
+            ok: false,
+            truncated: result.truncated,
+            running: false,
+        });
+    }
+    let data = result.data.as_ref()?;
+    let mut parts = Vec::new();
+    if let Some(t) = target {
+        parts.push(t);
+    }
+    if let Some(arr) = data.get("matches").and_then(Value::as_array) {
+        parts.push(format!("{} {}", arr.len(), text::MATCHES));
+    } else if let Some(arr) = data.get("symbols").and_then(Value::as_array) {
+        parts.push(format!("{} {}", arr.len(), text::SYMBOLS));
+    } else if let Some(arr) = data.get("locations").and_then(Value::as_array) {
+        parts.push(format!("{} {}", arr.len(), text::LOCATIONS));
+    } else if let Some(arr) = data.get("diagnostics").and_then(Value::as_array) {
+        parts.push(format!("{} {}", arr.len(), text::DIAGNOSTICS));
+    } else if let Some(arr) = data.get("suggestions").and_then(Value::as_array) {
+        parts.push(format!("{} {}", arr.len(), text::SUGGESTIONS));
+    }
+    Some(ToolSummary {
+        text: one_line(&parts.join(" · "), 120),
+        ok: true,
+        truncated: result.truncated,
+        running: false,
     })
 }
 

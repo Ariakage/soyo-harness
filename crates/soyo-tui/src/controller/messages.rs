@@ -24,6 +24,28 @@ pub(super) struct ToolCard {
 impl App {
     pub(super) fn event(&mut self, event: Event) {
         match event.payload {
+            EventPayload::ModelRouted {
+                purpose,
+                profile,
+                model,
+                fallback_from,
+                ..
+            } => {
+                if purpose == ModelPurpose::Execution {
+                    self.state.profile = self.safe(&profile);
+                    self.state.model = self.safe(&model);
+                }
+                if let Some(from) = fallback_from {
+                    let from = self.safe(&from);
+                    let to = self.safe(&profile);
+                    let model = self.safe(&model);
+                    self.state.push_message(
+                        Role::System,
+                        text::MODEL_ROUTED_LABEL,
+                        text::model_routed_failover(&from, &to, &model),
+                    );
+                }
+            }
             EventPayload::ModelStarted {
                 request_id,
                 purpose,

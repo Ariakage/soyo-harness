@@ -442,6 +442,9 @@ impl Model for EventModel {
     fn validate_session(&self, session: &Session) -> Result<(), BoundaryError> {
         self.0.validate_session(session)
     }
+    fn model_routing(&self) -> Option<&soyo_core::provider::routing::RoutingCoordinator> {
+        self.0.model_routing()
+    }
     fn start<'a>(
         &'a self,
         request: &'a ModelRequest,

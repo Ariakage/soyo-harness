@@ -211,6 +211,33 @@ pub async fn resume(
     if session.model != profile.model || session.protocol != protocol {
         return Err("session model or protocol changed; start a new session".into());
     }
+    if config.routing.enabled {
+        let (_, from_protocols) = soyo_core::provider::routing::inspect_incompatible_opaque_items(
+            &session.history,
+            &session.profile,
+            protocol,
+            &session.profile,
+        );
+        if !from_protocols.is_empty() {
+            match config.routing.opaque_history {
+                soyo_core::config::OpaqueHistoryPolicy::Reject => {
+                    return Err(soyo_core::contract::BoundaryError::new(
+                        soyo_core::contract::error_codes::HISTORY_MIGRATION_REQUIRED,
+                        "session history contains incompatible opaque provider items; fork a migrated session",
+                    )
+                    .into());
+                }
+                soyo_core::config::OpaqueHistoryPolicy::RequireNewSession => {
+                    return Err(soyo_core::contract::BoundaryError::new(
+                        soyo_core::contract::error_codes::NEW_SESSION_REQUIRED,
+                        "session history contains incompatible opaque provider items; start a new session",
+                    )
+                    .into());
+                }
+                soyo_core::config::OpaqueHistoryPolicy::MigrateCompatible => {}
+            }
+        }
+    }
     let fingerprint = profile.fingerprint()?;
     let original = store.fingerprint(id).await?;
     if original != fingerprint && !options.accept_config_change {
@@ -254,6 +281,95 @@ pub async fn resume(
         _lock: lock,
         recovery,
     })
+}
+
+/// Create a brand-new forked session on the configured target profile by
+/// projecting compatible semantic history and stripping incompatible/endpoint-bound
+/// opaque provider items (`F-16`). Never mutates or rewrites the source session
+/// and never drops executed tool calls or tool results.
+pub async fn fork_migrated(
+    config: &Config,
+    raw: &str,
+    options: ResumeOptions,
+) -> Result<
+    (
+        Prepared,
+        Option<soyo_core::provider::routing::HistoryMigrationInfo>,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let id = parse_id(raw)?;
+    let store = {
+        let owned = config.clone();
+        crate::offload(move || open(&owned)).await?
+    };
+    let source = store.load_session(id).await?.ok_or("session not found")?;
+    let target_profile = config
+        .profile
+        .as_ref()
+        .ok_or("target profile not selected")?
+        .clone();
+    let profile = config
+        .profiles
+        .get(&target_profile)
+        .ok_or("target profile not found")?;
+    let target_protocol = match profile.protocol {
+        Protocol::ChatCompletions => ModelProtocol::ChatCompletions,
+        Protocol::Responses => ModelProtocol::Responses,
+        Protocol::AnthropicMessages => ModelProtocol::AnthropicMessages,
+    };
+    let (migrated_history, migration_info) =
+        soyo_core::provider::routing::project_compatible_history(
+            &source.history,
+            &target_profile,
+            target_protocol,
+            &source.profile,
+            soyo_core::config::OpaqueHistoryPolicy::MigrateCompatible,
+        )?;
+    let workspace = if options.cwd_explicit {
+        std::fs::canonicalize(&config.cwd)?
+    } else {
+        std::fs::canonicalize(&source.workspace)
+            .map_err(|_| "workspace is unavailable; use --cwd")?
+    };
+    let mode = options.mode_override.unwrap_or(source.work_mode);
+    check_roots(config, &workspace, mode)?;
+    let fingerprint = profile.fingerprint()?;
+    let forked = Session {
+        id: SessionId::new(),
+        workspace,
+        work_mode: mode,
+        profile: target_profile,
+        protocol: target_protocol,
+        model: profile.model.clone(),
+        history: migrated_history,
+    };
+    let media_capabilities = profile.multimodal;
+    let owned = config.clone();
+    let forked_clone = forked.clone();
+    let (media, lock) = crate::offload(move || {
+        let media = media_store(&owned)?;
+        let lock = store.lock_session(forked_clone.id)?;
+        Ok((media, lock))
+    })
+    .await?;
+    // Re-open with shared store handle used by create_session
+    let store_handle = {
+        let owned = config.clone();
+        crate::offload(move || open(&owned)).await?
+    };
+    store_handle.create_session(&forked, &fingerprint).await?;
+    Ok((
+        Prepared {
+            store: store_handle,
+            media,
+            media_capabilities,
+            session: forked,
+            _lock: lock,
+            recovery: RecoverySummary::default(),
+        },
+        migration_info,
+    ))
 }
 /// Persist user input, then reload the durable session. Propagates storage errors.
 pub async fn append(

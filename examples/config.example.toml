@@ -131,3 +131,59 @@ enabled = true
 # max_patch_bytes = 262144
 # max_summary_bytes = 32768
 
+# Opt-in model routing, capability filtering, circuit-breaker failover,
+# and explicit opaque-history migration (`F-16`).
+# [profiles.primary.capabilities]
+# tools = true
+# reasoning = false
+# task_types = ["code", "review"]
+#
+# [routing]
+# enabled = false
+# fallback_profiles = []
+# prefer_lowest_cost = false
+# max_run_cost_microunits = 1000000
+# cost_currency = "USD"
+# require_pricing_for_budget = false
+# circuit_breaker_failures = 2
+# cooldown_seconds = 60
+# opaque_history = "reject"
+#
+# [routing.roles]
+# execution = []
+# planning = []
+# review = []
+# compaction = []
+# plan = []
+# build = []
+# code = []
+# work = []
+
+# Opt-in external SQLite project index and sandboxed LSP code intelligence (`F-17`).
+# [code_intel]
+# enabled = false
+# inject_context = true
+# max_context_bytes = 8192
+# max_files = 10000
+# max_file_bytes = 1048576
+# max_total_index_bytes = 67108864
+# max_symbols_per_file = 512
+# max_query_results = 50
+#
+# [code_intel.lsp]
+# enabled = false
+# request_timeout_seconds = 15
+# startup_timeout_seconds = 30
+# max_diagnostics_per_file = 100
+# max_open_documents = 64
+# max_edit_files = 32
+# read_roots = []
+#
+# [code_intel.lsp.servers.rust]
+# enabled = true
+# argv = ["rust-analyzer"]
+# languages = ["rust"]
+# extensions = ["rs"]
+# root_markers = ["Cargo.toml"]
+
+

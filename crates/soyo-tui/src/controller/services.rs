@@ -382,6 +382,7 @@ impl App {
                                     cwd_explicit: false,
                                     profile_explicit: false,
                                     mode_override: None,
+                                    migrate_history: false,
                                 },
                             )
                             .await
