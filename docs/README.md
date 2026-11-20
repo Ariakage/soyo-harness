@@ -44,6 +44,7 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 | [插件 manifest 示例](../examples/soyo-plugin.example.toml) | 声明 Skills／MCP／Hooks 的结构示例 | 格式示例 |
 | [全局记忆](memory.md) | `MEMORY.md`、专用工具、审阅、更正／遗忘与回滚 | 已实现（N3）；完成四平台验收 |
 | [Goal 设计](goal.md) | 独立持久 Goal、结构化计划、预算与人工／自动推进 | 已实现（N4）；完成本机受控验收 |
+| [受控子 Agent](subagents.md) | 默认关闭的单层父子委派、隔离工作区、三方冲突合并与预算／安全边界 | 已实现（F-09，D-085）；本机受控与原生沙箱 CLI 验收通过 |
 | [Browser 设计](browser.md) | 受控 Web、Playwright worker、VM、文件／网络 broker 与截图遮蔽 | 已实现（N5）；VM 与 ARM64 实测通过 |
 | [TUI 设计](tui.md) | 默认 `soyo` 终端入口、分层控制、附件与恢复路径 | 已实现（N1／后续交互）；持续演进 |
 | [TUI 布局设计](tui-design.md) | 配色、侧栏、输入区、状态反馈与 `view/` 模块布局 | 已实现；与 `view/` 一致 |
@@ -97,6 +98,7 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 | [0.2.0 双语版本说明](releases/release-notes-0.2.0.md) | 已发布 0.2.0 正式版范围、安装与限制 |
 | [N4 中英双语说明](releases/release-notes-n4.md) | Goal 功能、命令、安全边界与开发线说明 |
 | [N5 中英双语说明](releases/release-notes-n5.md) | Browser 开发线功能、权限、VM 与兼容性说明 |
+| [F-09 中英双语说明](releases/release-notes-f09.md) | 受控子 Agent 功能、安全／隔离边界与兼容说明 |
 
 ### 专题实验与模型验证报告（`reports/`）
 
@@ -111,7 +113,7 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 
 - **已实现**：已有代码、受控回归或平台验证证据支持的能力；未支持场景在各自文档注明限制。
 - **已确认**：项目负责人明确确定的产品与工程约束，记录于[完整基线](mvp-baseline.md)与[决策记录](decisions.md)。
-- **规划中（未实现）**：如 GUI、多 Agent 协作等在[后续能力路线图](capability-roadmap.md)或 `prompt/drafts/` 中维护的设计方案。
+- **规划中（未实现）**：如多层递归委派或跨进程分布式协作等在[后续能力路线图](capability-roadmap.md)或 `prompt/drafts/` 中维护的扩展方向。
 - **历史档案**：记录过往里程碑审查、历史发行说明与专题实验快照，保留原始上下文与结论。
 
 ## 维护方式

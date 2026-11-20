@@ -216,5 +216,6 @@ DEV-069至DEV-074已实现。Goal 使用独立版本化 SQLite、专属 Session�
 | S3 Goal 步骤宿主命令验证器与 `start --auto` 门禁 | DEV-091 至 DEV-092 |
 | S5 工具 schema 真实调用样例与脱敏／schema 校验 | DEV-093 |
 | S1 默认关闭的实验性只读程序化编排 REPL（`F-21`）与逐调用门禁 | DEV-094 至 DEV-096 |
+| F-09 默认关闭的受控父子多 Agent 协作（`max_depth = 1`、隔离与三方合并，`D-085`） | [受控子 Agent](subagents.md) |
 
 这些事项已有任务和验收入口，开发阶段根据证据收敛。当前实现状态由[开发进度](progress.md)维护，功能全景继续见[能力路线图](capability-roadmap.md)。

@@ -175,7 +175,7 @@
 
 ### 7.2 桌面 UI 实机渲染截图（`docs/design/screenshots/desktop/`）
 
-以下 10 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查：
+以下 12 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查：
 
 | 场景与断点 | Soyo Dark | Soyo Light |
 | :--- | :--- | :--- |
@@ -185,6 +185,7 @@
 | 审批请求卡片（`1280×840`） | [approval-dark-1280x840.png](screenshots/desktop/approval-dark-1280x840.png) | — |
 | Settings › Appearance（`1280×840`） | [settings-appearance-dark-1280x840.png](screenshots/desktop/settings-appearance-dark-1280x840.png) | [settings-appearance-light-1280x840.png](screenshots/desktop/settings-appearance-light-1280x840.png) |
 | Settings › Usage（`1280×840`） | [settings-usage-dark-1280x840.png](screenshots/desktop/settings-usage-dark-1280x840.png) | — |
+| Settings › Experimental（`1280×840`） | [settings-experimental-dark-1280x840.png](screenshots/desktop/settings-experimental-dark-1280x840.png) | [settings-experimental-light-1280x840.png](screenshots/desktop/settings-experimental-light-1280x840.png) |
 
 ---
 

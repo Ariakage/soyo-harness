@@ -202,6 +202,8 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 
 **价值**：将大任务分成可独立执行和核验的子任务。
 
+> **实现状态（D-085）**：单层受控父子委派（`max_depth = 1`）已按默认关闭（`[subagents] enabled = false`）实现，涵盖 7 个 `subagent_*` 工具、非提权规则与 `PLAN` 切态取消、Git Worktree / 有界目录拷贝隔离、三方 SHA-256 冲突检测合并、共享预算与单源 Metrics 汇总、取消清理、Goal 配置指纹及 CLI／TUI／桌面端呈现（`Settings › Experimental`）。多层递归委派、跨运行持久子 Agent 与远程协同仍属后续扩展。详见[受控子 Agent](subagents.md)与[F-09 说明](releases/release-notes-f09.md)。
+
 - 父子任务、分工、消息、结果汇总、独立上下文与预算；对子任务数量和并发设上限。
 - 子 Agent 的权限、网络、凭据与可访问文件不能自动高于父任务的授权范围。
 - 独立 worktree／sandbox 与合并流程，避免多个 Agent 同时覆盖同一文件。

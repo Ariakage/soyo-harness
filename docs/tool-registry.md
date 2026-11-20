@@ -39,3 +39,9 @@ schema编译入口供外部注册和MCP目录验证复用。MCP传输、结果�
 `js_repl` 是实验性、严格默认关闭的内置控制面，`enabled` 时经 `register_control_definition` 注册，副作用分类固定为 `Process`（沙箱子进程语义，不在 PLAN 只读集合内）。审批按 `Target::Metadata` 绑定完整脚本原文与 `timeout_seconds`；`[js_repl]` 限额与 `engine`/`[js_repl.node]` 引擎固定一节见[配置](configuration.md)。默认 `engine = "quickjs"`（`__soyo-js-worker` 内嵌引擎）；`engine = "node"` 切换为受控外部 Node 运行时（D-084 的 B2 扩展点，脚本经 `node -e` bootstrap 在 `vm` 上下文中求值，仅暴露 `soyo.callTool`）。
 
 脚本发出的桥接调用不复用脚本自身的许可：每一次 `soyo.callTool` 在宿主侧重新生成合成 call（`外层:repl:N`）并完整走一遍 `check_pre_dispatch_hooks` → `dispatcher.authorize`（含人工确认）→ 一次性许可 → `execute` → `tool.finished` 与脱敏。可桥接集合只含只读工具——`FileRead`、`WebRead`、发现与输出查询类 `SessionMetadata`，以及描述符声明 `ExternalReadOnly`/`WebRead` 的外部工具；`exec`、写入、`ask_user`、会话与后台控制、`memory_*`/`skill_*`/`checkpoint_*`、浏览器工具、`todo_write` 与 `js_repl` 自身在授权前以 `permission_denied` 拒绝，未注册名称同样 fail-closed。桥接调用经 `ReplStore` 持久化 ToolIntent/ToolFinished 证据但不写入 `History`，因此合成 call ID 永远不进入模型上下文；只有脚本最终 `return` 值成为外层 `js_repl` 调用的 `ToolResult`。
+
+## 受控子 Agent 工具（F-09，D-085）
+
+当 `[subagents].enabled = true` 时，顶层父运行时在工具目录中注入 7 个内置子 Agent 工具（`subagent_spawn`、`subagent_status`、`subagent_wait`、`subagent_message`、`subagent_cancel`、`subagent_diff` 分类为 `ToolEffect::Control`，`subagent_merge` 分类为 `ToolEffect::FileWrite`）；`[subagents]` 默认关闭时不注册任何工具、零前缀漂移。子运行时深度限制为 `max_depth = 1`，绝不注入 `subagent_*`，并在派发层拒绝递归委派。
+
+`PLAN` 模式与只读运行时从模型侧工具列表隐藏 `subagent_merge`，并在策略与运行时派发双重路径拒绝 `subagent_merge` 及一切非 `read_only` 或 `allow_exec = true` 的委派。`subagent_merge` 在授权阶段经 `SubagentSupervisor::prepare_merge` 解析待合并目标路径、`SubagentMergeReceipt` 前置摘要与审核信息并绑定 `Operation::subagent_merge`，审批通过后执行基于 Fork 基线／父工作区／子工作区的三方 SHA-256 冲突检测与原子写入。`js_repl` 明确禁止桥接任何 `subagent_*` 工具；详情见[受控子 Agent](subagents.md)。

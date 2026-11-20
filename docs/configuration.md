@@ -353,6 +353,24 @@ enabled = false
 # roots = []
 ```
 
+`[subagents]`（`F-09`，`D-085`）是默认关闭的受控单层（`max_depth = 1`）父子协作开关。关闭时保持提示词、工具列表与配置指纹零漂移；开启后注册 `subagent_spawn`/`status`/`wait`/`message`/`cancel`/`diff`/`merge` 并强制执行非提权模式／`PLAN` 清理、工作区 `path_glob` 重映射、`Bypass` 子路径约束、`exec` 开关与沙箱 `write_roots` 收缩、共享父预算／工具上限、三方 SHA-256 冲突检测原子合并与退出清理；`default_timeout_seconds ≤ max_timeout_seconds ≤ 1800`、`max_concurrent ≤ max_total`。桌面端可通过 `Settings › Experimental` 的 `subagents_enabled` 无损更新 `enabled` 开关；详情见[受控子 Agent](subagents.md)。
+
+```toml
+[subagents]
+enabled = false
+max_concurrent = 4
+max_total = 16
+max_model_requests = 32
+max_tool_calls = 128
+default_timeout_seconds = 300
+max_timeout_seconds = 900
+max_workspace_files = 10000
+max_workspace_bytes = 67108864
+max_changed_files = 256
+max_patch_bytes = 262144
+max_summary_bytes = 32768
+```
+
 ## 输出捕获与上下文预算
 
 N3开发线默认开启私有OutputStore，位置为所选 `data_dir` 下的 `outputs/`。新增配置独立控制捕获存储，原有 `limits.command_stdout_max_bytes`／`command_stderr_max_bytes`继续限制各流的有效捕获量，默认各64KiB。显式扩大这些值时仍受OutputStore对象及Run剩余额度约束。用户媒体快照与工具捕获共用该私有根及总库／对象数配额；`output_capture.enabled = false`只关闭工具输出捕获，不禁用Session媒体快照。

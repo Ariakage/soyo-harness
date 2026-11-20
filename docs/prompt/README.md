@@ -2,7 +2,7 @@
 
 本目录保存 `XLFMTPsoyo-prompts-v1` 的一份可阅读快照，包含截至2026-11-11 的核心、工具、四种工作模式、三种权限模式、后台工具与独立审核提示词。正文保持英文，包含任务清单、宿主输出引用、完整性与有界检索，以及N3上下文、记忆证据和扩展边界。
 
-- [核心](v1/core.md)、[工具](v1/tools.md)、[后台调用](v1/background.md)
+- [核心](v1/core.md)、[工具](v1/tools.md)、[后台调用](v1/background.md)、[受控子 Agent](v1/subagents.md)
 - 工作模式：[PLAN](v1/modes/plan.md)、[BUILD](v1/modes/build.md)、[CODE](v1/modes/code.md)、[WORK](v1/modes/work.md)
 - 权限模式：[auto](v1/permissions/auto.md)、[Manual Approval](v1/permissions/manual.md)、[bypass](v1/permissions/bypass.md)
 - [独立安全审核](v1/review.md)
