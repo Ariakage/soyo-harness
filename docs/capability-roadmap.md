@@ -286,6 +286,8 @@ GUI 方向已于 D-072 确认为 Tauri 2 + in-process 桌面端 `soyo-desktop`�
 
 ## F-16 模型路由与故障切换
 
+**已实现状态（D-086）**：已在 `soyo-contract`/`soyo-core`/`soyo-app`/`soyo-cli`/`soyo-tui`/`soyo-ipc`/`soyo-host`/`desktop` 完成默认关闭（`[routing].enabled = false`）实现，包含 `[profiles.<name>.capabilities]`、角色／模式路由、`prefer_lowest_cost`/`max_run_cost_microunits` 预算筛选、`!received && is_transient_model_error()` 预流故障切换与熔断、`OpaqueHistoryPolicy`（`reject`/`migrate_compatible`/`require_new_session`）、`ModelRouted` 与 `RunMetrics` 分 profile 归因、`soyo routing explain` / `--migrate-history` 与桌面端开关，详情见[模型路由设计](model-routing.md)。
+
 **价值**：在多个已配置模型之间管理能力、可用性与消耗，不把所有任务固定到同一配置。
 
 - 按任务类型、工具／多模态能力、上下文需求与预算选择候选 profile，提供显式路由与可解释的选择记录。
@@ -296,6 +298,8 @@ GUI 方向已于 D-072 确认为 Tauri 2 + in-process 桌面端 `soyo-desktop`�
 验收：能力不匹配被排除、回退有记录、总预算仍生效，不能迁移的历史得到明确处理。MVP 仍保留不自动回退、不在同一会话切换模型／协议的基线，本能力在后续版本单独扩展。
 
 ## F-17 项目索引与 LSP 代码智能
+
+**已实现状态（D-087）**：已在 `soyo-core`/`soyo-app`/`soyo-cli`/`soyo-tui`/`soyo-ipc`/`soyo-host`/`desktop` 完成默认关闭（`[code_intel].enabled = false`、`[code_intel.lsp].enabled = false`）实现，包含工作区外 SQLite 符号索引（`0700`/`0600`、`.gitignore`/`.git`/私有路径与符号链接防御、`(size, mtime_ns, sha256)` 增量更新）、`PreparedEnvironment` 只读工作区沙箱 LSP 3.17 客户端、6 个只读 `code_*` 工具（含 `diffy` + `STALE_INDEX` 预览）、`soyo_code_intel_v1` 低信任导航注入、`soyo index build|query|status` 与桌面端开关，详情见[项目索引与代码智能](code-intelligence.md)。
 
 **价值**：为 CODE／BUILD 提供项目结构和语言语义，减少反复全文搜索和不准确的代码定位。
 

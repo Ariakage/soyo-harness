@@ -45,6 +45,8 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 | [全局记忆](memory.md) | `MEMORY.md`、专用工具、审阅、更正／遗忘与回滚 | 已实现（N3）；完成四平台验收 |
 | [Goal 设计](goal.md) | 独立持久 Goal、结构化计划、预算与人工／自动推进 | 已实现（N4）；完成本机受控验收 |
 | [受控子 Agent](subagents.md) | 默认关闭的单层父子委派、隔离工作区、三方冲突合并与预算／安全边界 | 已实现（F-09，D-085）；本机受控与原生沙箱 CLI 验收通过 |
+| [模型路由设计](model-routing.md) | 默认关闭的多模型能力筛选、角色路由、熔断预流回退与不透明历史迁移 | 已实现（F-16，D-086）；本机受控与 CLI 验收通过 |
+| [项目索引与代码智能](code-intelligence.md) | 默认关闭的工作区外 SQLite 符号索引与沙箱只读工作区 LSP 3.17 代码工具 | 已实现（F-17，D-087）；本机受控、Seatbelt 与 CLI 验收通过 |
 | [Browser 设计](browser.md) | 受控 Web、Playwright worker、VM、文件／网络 broker 与截图遮蔽 | 已实现（N5）；VM 与 ARM64 实测通过 |
 | [TUI 设计](tui.md) | 默认 `soyo` 终端入口、分层控制、附件与恢复路径 | 已实现（N1／后续交互）；持续演进 |
 | [TUI 布局设计](tui-design.md) | 配色、侧栏、输入区、状态反馈与 `view/` 模块布局 | 已实现；与 `view/` 一致 |
@@ -99,6 +101,7 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 | [N4 中英双语说明](releases/release-notes-n4.md) | Goal 功能、命令、安全边界与开发线说明 |
 | [N5 中英双语说明](releases/release-notes-n5.md) | Browser 开发线功能、权限、VM 与兼容性说明 |
 | [F-09 中英双语说明](releases/release-notes-f09.md) | 受控子 Agent 功能、安全／隔离边界与兼容说明 |
+| [F-16/F-17 中英双语说明](releases/release-notes-f16-f17.md) | 模型路由／故障切换与项目索引／沙箱 LSP 功能、安全边界与兼容说明 |
 
 ### 专题实验与模型验证报告（`reports/`）
 

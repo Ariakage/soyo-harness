@@ -45,3 +45,9 @@ schema编译入口供外部注册和MCP目录验证复用。MCP传输、结果�
 当 `[subagents].enabled = true` 时，顶层父运行时在工具目录中注入 7 个内置子 Agent 工具（`subagent_spawn`、`subagent_status`、`subagent_wait`、`subagent_message`、`subagent_cancel`、`subagent_diff` 分类为 `ToolEffect::Control`，`subagent_merge` 分类为 `ToolEffect::FileWrite`）；`[subagents]` 默认关闭时不注册任何工具、零前缀漂移。子运行时深度限制为 `max_depth = 1`，绝不注入 `subagent_*`，并在派发层拒绝递归委派。
 
 `PLAN` 模式与只读运行时从模型侧工具列表隐藏 `subagent_merge`，并在策略与运行时派发双重路径拒绝 `subagent_merge` 及一切非 `read_only` 或 `allow_exec = true` 的委派。`subagent_merge` 在授权阶段经 `SubagentSupervisor::prepare_merge` 解析待合并目标路径、`SubagentMergeReceipt` 前置摘要与审核信息并绑定 `Operation::subagent_merge`，审批通过后执行基于 Fork 基线／父工作区／子工作区的三方 SHA-256 冲突检测与原子写入。`js_repl` 明确禁止桥接任何 `subagent_*` 工具；详情见[受控子 Agent](subagents.md)。
+
+## 项目索引与沙箱 LSP 工具（F-17，D-087）
+
+当 `[code_intel].enabled = true` 时，工具目录在全部支持模型工具调用的运行模式（含只读 `PLAN`）中注册 6 个宿主托管只读工具：`code_search_symbols`、`code_file_outline`、`code_definition`、`code_references`、`code_diagnostics` 与 `code_edit_suggestions`；所有 6 个工具均分类为 `ToolEffect::FileRead`、接入 `Operation::code_intel` 授权与并行只读批处理，并在 `[code_intel].enabled = false` 时完全不注册、拒绝伪造调用（`unknown_tool`）。
+
+其中 `code_edit_suggestions` 通过沙箱化 LSP 请求 rename/code-action 并由宿主使用 `diffy` 计算统一 diff 预览，同时校验当前磁盘文件 SHA-256（若文件已变更则以 `STALE_INDEX` 拒绝），绝不直接向工作区写入任何字节；全部索引文件与 LSP 返回 URI 均强制执行工作区包含、符号链接拒绝、`.git` 控制路径排除与 `ReadTools::check_private_path` 保护（`Bypass` 模式下亦同）。详情见[项目索引与代码智能](code-intelligence.md)。

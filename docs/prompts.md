@@ -19,6 +19,7 @@
 | bypass | [bypass.md](../crates/soyo-core/prompts/v1/permissions/bypass.md) | 说明跳过项及仍有效的硬限制 |
 | 后台任务 | [background.md](../crates/soyo-core/prompts/v1/background.md) | 启动回执、依赖与冲突、查询、取消及清理 |
 | 子 Agent 协作 | [subagents.md](../crates/soyo-core/prompts/v1/subagents.md) | 单层委派范围、隔离工作区、并发拆解与合并前审查（默认关闭） |
+| 代码智能 | [code-intel.md](../crates/soyo-core/prompts/v1/code-intel.md) | 只读工作区索引／LSP 检查边界与 `STALE_INDEX`、`soyo_code_intel_v1` 低信任提示（默认关闭） |
 | 独立审核器 | [review.md](../crates/soyo-core/prompts/v1/review.md) | 数据边界、完整效果、allow／ask／deny 和输出契约 |
 | Goal 规划器 | [goal-plan.md](../crates/soyo-core/prompts/v1/goal-plan.md) | 严格 JSON 计划、依赖、验收项、步骤与确认边界 |
 | Goal 核验器 | [goal-verification.md](../crates/soyo-core/prompts/v1/goal-verification.md) | 仅依据主机证据判断单个验收项，拒绝模型自述替代 |
@@ -32,7 +33,7 @@
 
 1. 固定版本、稳定核心、工具纪律。
 2. 恰好一个工作模式段与一个权限说明段。
-3. 实际注册后台控制工具时才追加后台段；实际启用并注册 `subagent_*` 工具时才追加子 Agent 段（默认关闭时零漂移）；按当前工具注册情况选择输出检索、记忆写入／遗忘、Skill／扩展、任务清单与工作区快照段。未注册能力不注入其指导。
+3. 实际注册后台控制工具时才追加后台段；实际启用并注册 `subagent_*` 工具时才追加子 Agent 段（默认关闭时零漂移）；实际启用 `[code_intel]` 并注册 `code_*` 工具时才追加代码智能段（默认关闭时零漂移）；按当前工具注册情况选择输出检索、记忆写入／遗忘、Skill／扩展、任务清单与工作区快照段。未注册能力不注入其指导。
 4. 记忆读取能力实际可用时追加 Memory Context；关闭读取或仅有写入能力时不注入。
 5. 从 `ToolDefinition` 注册表生成排序后的可用名称清单；名称需唯一且为最长 64 字节的英文标识符，可含数字、下划线和连字符，首字符需为字母。
 

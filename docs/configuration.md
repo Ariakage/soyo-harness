@@ -371,6 +371,66 @@ max_patch_bytes = 262144
 max_summary_bytes = 32768
 ```
 
+`[routing]`（`F-16`，`D-086`）与 `[profiles.<name>.capabilities]` 控制默认关闭的多模型能力路由、角色／模式候选选择、预流熔断故障切换与不透明协议历史迁移策略；桌面端可通过 `Settings › Experimental` 的 `routing_enabled` 无损更新 `[routing].enabled`，详情见[模型路由设计](model-routing.md)。
+
+```toml
+# [profiles.primary.capabilities]
+# tools = true
+# reasoning = false
+# task_types = ["code", "review"]
+
+[routing]
+enabled = false
+fallback_profiles = []
+prefer_lowest_cost = false
+# max_run_cost_microunits = 1000000
+# cost_currency = "USD"
+require_pricing_for_budget = false
+circuit_breaker_failures = 2
+cooldown_seconds = 60
+opaque_history = "reject"
+
+[routing.roles]
+execution = []
+planning = []
+review = []
+compaction = []
+plan = []
+build = []
+code = []
+work = []
+```
+
+`[code_intel]` 与 `[code_intel.lsp]`（`F-17`，`D-087`）控制默认关闭的工作区外 SQLite 符号索引与沙箱化 LSP 3.17 客户端（`code_search_symbols`/`file_outline`/`definition`/`references`/`diagnostics`/`edit_suggestions`）；桌面端可通过 `Settings › Experimental` 的 `code_intel_enabled` 无损更新 `[code_intel].enabled`，详情见[项目索引与代码智能](code-intelligence.md)。
+
+```toml
+[code_intel]
+enabled = false
+inject_context = true
+max_context_bytes = 8192
+max_files = 10000
+max_file_bytes = 1048576
+max_total_index_bytes = 67108864
+max_symbols_per_file = 512
+max_query_results = 50
+
+[code_intel.lsp]
+enabled = false
+request_timeout_seconds = 15
+startup_timeout_seconds = 30
+max_diagnostics_per_file = 100
+max_open_documents = 64
+max_edit_files = 32
+read_roots = []
+
+# [code_intel.lsp.servers.rust]
+# enabled = true
+# argv = ["rust-analyzer"]
+# languages = ["rust"]
+# extensions = ["rs"]
+# root_markers = ["Cargo.toml"]
+```
+
 ## 输出捕获与上下文预算
 
 N3开发线默认开启私有OutputStore，位置为所选 `data_dir` 下的 `outputs/`。新增配置独立控制捕获存储，原有 `limits.command_stdout_max_bytes`／`command_stderr_max_bytes`继续限制各流的有效捕获量，默认各64KiB。显式扩大这些值时仍受OutputStore对象及Run剩余额度约束。用户媒体快照与工具捕获共用该私有根及总库／对象数配额；`output_capture.enabled = false`只关闭工具输出捕获，不禁用Session媒体快照。
