@@ -171,7 +171,7 @@
   python3 docs/design/devin_theme_gen.py --theme dark /tmp/soyo_theme_dark
   python3 docs/design/devin_theme_gen.py --theme light /tmp/soyo_theme_light
   ```
-- **[desktop-ui.pen](desktop-ui.pen)**：经 Pencil MCP 维护的仓库内 `.pen` 设计源文件（`mode: ["dark", "light"]` 48 项设计 Token 变量、绑定率 100%，含 14 帧 Soyo Dark 与右移 `+4560px` 并排的 14 帧 Soyo Light 共 **28 个画板**；`.pen` 为加密格式，须通过 Pencil MCP 编辑并调用 `save` 落盘，不可用文本工具直改）。
+- **[desktop-ui.pen](desktop-ui.pen)**：经 Pencil MCP 维护的仓库内 `.pen` 设计源文件（`mode: ["dark", "light"]` 48 项设计 Token 变量、绑定率 100%，含 15 帧 Soyo Dark 与右移 `+4560px` 并排的 15 帧 Soyo Light 共 **30 个画板**，新增 `15 · Settings — Experimental` / `Light` 对齐 F-09 实验性开关与布局；`.pen` 为加密格式，须通过 Pencil MCP 编辑并调用 `save` 落盘，不可用文本工具直改）。
 
 ### 7.2 桌面 UI 实机渲染截图（`docs/design/screenshots/desktop/`）
 

@@ -1,5 +1,5 @@
 {
-  "version": "2.22",
+  "version": "2.25",
   "children": [
     {
       "type": "frame",
@@ -67330,6 +67330,4248 @@
                               "fontWeight": "normal"
                             }
                           ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "o3AgSt",
+      "x": 3040,
+      "y": 3920,
+      "name": "15 · Settings — Experimental",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1280,
+      "height": 720,
+      "fill": "$surface-app",
+      "children": [
+        {
+          "type": "frame",
+          "id": "GTml3",
+          "name": "Container",
+          "width": 248,
+          "height": "fill_container",
+          "fill": "$surface-sidebar",
+          "stroke": "$border-subtle",
+          "strokeWidth": {
+            "right": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "padding": 8,
+          "children": [
+            {
+              "type": "frame",
+              "id": "wbvm0",
+              "name": "Container",
+              "width": 215,
+              "height": 208,
+              "layout": "vertical",
+              "gap": 1,
+              "padding": [
+                6,
+                0,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "SPTqt",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "IhDGP",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "H4RWpF",
+                          "x": 3.125,
+                          "y": 3.125,
+                          "name": "Vector",
+                          "geometry": "M4.375 0l0 8.75m-4.375-4.375l8.75 0",
+                          "viewBox": [
+                            0,
+                            0,
+                            8.75,
+                            8.75
+                          ],
+                          "width": 8.75,
+                          "height": 8.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "O22lXt",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ScnGT",
+                          "name": "New",
+                          "fill": "$text-primary",
+                          "content": "New session",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mHuY6",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ScMqD",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "Yv2Qq",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Vector",
+                          "geometry": "M8.75 4.375c0 2.41625-1.95875 4.375-4.375 4.375-2.41625 0-4.375-1.95875-4.375-4.375 0-2.41625 1.95875-4.375 4.375-4.375 2.41625 0 4.375 1.95875 4.375 4.375z",
+                          "viewBox": [
+                            0,
+                            0,
+                            8.75,
+                            8.75
+                          ],
+                          "width": 8.75,
+                          "height": 8.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "WMKgv",
+                          "x": 10.4375,
+                          "y": 10.4375,
+                          "name": "Vector",
+                          "geometry": "M2.6875 2.6875l-2.6875-2.6875",
+                          "viewBox": [
+                            0,
+                            0,
+                            2.6875,
+                            2.6875
+                          ],
+                          "width": 2.6875,
+                          "height": 2.6875,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "r1920z",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "i9R10",
+                          "name": "Search",
+                          "fill": "$text-secondary",
+                          "content": "Search",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DZO8x",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "t5rkN",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "sz4nv",
+                          "x": 1.875,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M11.25 7.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-7.5 0-2.5 2.5 0-10c0-0.33152 0.1317-0.64946 0.36612-0.88388 0.23442-0.23442 0.55236-0.36612 0.88388-0.36612l8.75 0c0.33152 0 0.64946 0.1317 0.88388 0.36612 0.23442 0.23442 0.36612 0.55236 0.36612 0.88388l0 6.25z",
+                          "viewBox": [
+                            0,
+                            0,
+                            11.25,
+                            11.25
+                          ],
+                          "width": 11.25,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "r1jQx",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "JVujd",
+                          "name": "Sessions",
+                          "fill": "$text-secondary",
+                          "content": "Sessions",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Y2cFXR",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Mt1TS",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "RE3IL",
+                          "x": 2.5,
+                          "y": 1.25,
+                          "name": "Vector",
+                          "geometry": "M10 1.875c0 1.03553-2.23858 1.875-5 1.875-2.76142 0-5-0.83947-5-1.875 0-1.03553 2.23858-1.875 5-1.875 2.76142 0 5 0.83947 5 1.875z",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            3.75
+                          ],
+                          "width": 10,
+                          "height": 3.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "U9yPqg",
+                          "x": 2.5,
+                          "y": 3.125,
+                          "name": "Vector",
+                          "geometry": "M0 0l0 8.75c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875l0-8.75",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            10.625
+                          ],
+                          "width": 10,
+                          "height": 10.625,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "s3ni6N",
+                          "x": 2.5,
+                          "y": 7.5,
+                          "name": "Vector",
+                          "geometry": "M0 0c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            1.875
+                          ],
+                          "width": 10,
+                          "height": 1.875,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CB16m",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "szGOT",
+                          "name": "Memory",
+                          "fill": "$text-secondary",
+                          "content": "Memory",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "BDlgW",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mVkrc",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "QDzWl",
+                          "x": 1.2404,
+                          "y": 1.25,
+                          "name": "Vector",
+                          "geometry": "M11.88465 0l-1.25 1.25m0 0l-4.75 4.75m4.75-4.75l1.875 1.875m-6.625 2.875c0.3201 0.3201 0.57401 0.70011 0.74724 1.11833 0.17324 0.41823 0.2624 0.86648 0.2624 1.31917 0 0.45269-0.08916 0.90094-0.2624 1.31917-0.17324 0.41823-0.42715 0.79824-0.74724 1.11833-0.3201 0.3201-0.70011 0.57401-1.11834 0.74725-0.41823 0.17324-0.86648 0.2624-1.31916 0.2624-0.45269 0-0.90094-0.08916-1.31917-0.2624-0.41823-0.17324-0.79824-0.42715-1.11833-0.74725-0.64647-0.64647-1.00965-1.52326-1.00965-2.4375 0-0.91424 0.36318-1.79103 1.00965-2.4375 0.64647-0.64647 1.52326-1.00965 2.4375-1.00965 0.91424 0 1.79103 0.36318 2.4375 1.00965z",
+                          "viewBox": [
+                            0,
+                            0,
+                            12.5096,
+                            11.8846
+                          ],
+                          "width": 12.5096,
+                          "height": 11.8846,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "i0w1K",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "K8SHT",
+                          "name": "MCP & Creds",
+                          "fill": "$text-secondary",
+                          "content": "MCP & credentials",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FmcJi",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "stwcs",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "p3uz1",
+                          "x": 1.875,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M11.25 7.5l0 2.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-8.75 0c-0.33152 0-0.64946-0.1317-0.88388-0.36612-0.23442-0.23442-0.36612-0.55236-0.36612-0.88388l0-2.5m2.5-3.125l3.125 3.125m0 0l3.125-3.125m-3.125 3.125l0-7.5",
+                          "viewBox": [
+                            0,
+                            0,
+                            11.25,
+                            11.25
+                          ],
+                          "width": 11.25,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "p5TiU",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "SdPNN",
+                          "name": "Export",
+                          "fill": "$text-secondary",
+                          "content": "Export",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "s7YXIb",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "I02dg",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "wVhRr",
+                          "x": 0.625,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M1.875 11.25l0-4.375m0-2.5l0-4.375m5 11.25l0-5.625m0-2.5l0-3.125m5 11.25l0-3.125m0-2.5l0-5.625m-11.875 6.875l3.75 0m1.25-3.75l3.75 0m1.25 5l3.75 0",
+                          "viewBox": [
+                            0,
+                            0,
+                            13.75,
+                            11.25
+                          ],
+                          "width": 13.75,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "uVnUL",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "D5yy8",
+                          "name": "Customize",
+                          "fill": "$text-secondary",
+                          "content": "Customize",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "QxEkS",
+              "name": "Container",
+              "width": 215,
+              "height": 33,
+              "padding": [
+                16,
+                10,
+                4,
+                10
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "wAcwr",
+                  "name": "Recents",
+                  "fill": "$text-tertiary",
+                  "content": "Recents",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "G7c7l",
+                  "name": "Text",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Q2Cgl",
+                      "name": "⌄",
+                      "fill": "$text-tertiary",
+                      "content": "⌄",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gGklc",
+              "name": "Container",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 1,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mAAH4",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 40,
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "V7yj6",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "egX5q",
+                          "name": "Implement desktop UI preview with Vite HMR",
+                          "fill": "$text-primary",
+                          "content": "Implement desktop UI preview...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "g8nwt",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "m8qRYE",
+                          "name": "code · 3 min",
+                          "fill": "$text-tertiary",
+                          "content": "code · 3 min",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z5PCxL",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 40,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "wyJV0",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "nZNdp",
+                          "name": "Markdown, Math & Mermaid Budget Showcase",
+                          "fill": "$text-secondary",
+                          "content": "Markdown, Math & Mermaid...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "E4hYR",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "AkXcz",
+                          "name": "plan · 1 h",
+                          "fill": "$text-tertiary",
+                          "content": "plan · 1 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XUquh",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "X9lmY",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "o0e242",
+                          "name": "规划基于 Tauri 2 的独立 Desktop 安装方案",
+                          "fill": "$text-secondary",
+                          "content": "规划基于 Tauri 2 的独立 Deskto...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dj8Pr",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "r0nDFw",
+                          "name": "plan · 2 h",
+                          "fill": "$text-tertiary",
+                          "content": "plan · 2 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "U40Yc",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "IgqiV",
+                      "name": "导出会话到 HANDOFF 文档",
+                      "fill": "$text-secondary",
+                      "content": "导出会话到 HANDOFF 文档",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HwVlI",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "RASHh",
+                          "name": "work · 5 h",
+                          "fill": "$text-tertiary",
+                          "content": "work · 5 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "b6Q4D",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "W42imv",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Wq1ph",
+                          "name": "审查 capability-roadmap 未完成项",
+                          "fill": "$text-secondary",
+                          "content": "审查 capability-roadmap 未完...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "D4BKt",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "vJcU1",
+                          "name": "plan · yesterday",
+                          "fill": "$text-tertiary",
+                          "content": "plan · yesterday",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "kae7x",
+              "name": "Link",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                6,
+                10
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "qUXwN",
+                  "name": "View all",
+                  "fill": "$text-tertiary",
+                  "content": "View all",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "aifWS",
+              "name": "Container:align",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "S1hFKM",
+                  "name": "Container",
+                  "width": "fill_container",
+                  "height": 36,
+                  "cornerRadius": "$radius-md",
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "RJr2w",
+                      "name": "Image",
+                      "clip": true,
+                      "width": 20,
+                      "height": 20,
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "assets/f34f294e3025.png",
+                        "mode": "cover"
+                      },
+                      "cornerRadius": 10,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "elmFP",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "l0HF1o",
+                          "name": "ariakage · anthropic-official",
+                          "fill": "$text-secondary",
+                          "content": "ariakage · anthropic-official",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "I4RpH4",
+          "name": "Container",
+          "clip": true,
+          "width": "fill_container",
+          "height": 720,
+          "fill": "$surface-app",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "V5oKi",
+              "x": 0,
+              "y": 0,
+              "name": "Container",
+              "width": 1032,
+              "height": 720,
+              "fill": "$scrim",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "P3aSe",
+                  "name": "Container",
+                  "clip": true,
+                  "width": 680,
+                  "height": 520,
+                  "fill": "$surface-overlay",
+                  "cornerRadius": "$radius-xl",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "$shadow-color",
+                    "offset": {
+                      "x": 0,
+                      "y": 24
+                    },
+                    "blur": 60
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "HmRcQ",
+                      "name": "Container",
+                      "width": 180,
+                      "height": "fill_container",
+                      "stroke": "$border-subtle",
+                      "strokeWidth": {
+                        "right": 1
+                      },
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "padding": [
+                        12,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "HgQO2",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "M9zNZ",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "lepfV",
+                                  "x": 5.625,
+                                  "y": 5.625,
+                                  "name": "Vector",
+                                  "geometry": "M3.75 1.875c0 1.03553-0.83947 1.875-1.875 1.875-1.03553 0-1.875-0.83947-1.875-1.875 0-1.03553 0.83947-1.875 1.875-1.875 1.03553 0 1.875 0.83947 1.875 1.875z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    3.75,
+                                    3.75
+                                  ],
+                                  "width": 3.75,
+                                  "height": 3.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "gYrY0",
+                                  "x": 0.625,
+                                  "y": 0.625,
+                                  "name": "Vector",
+                                  "geometry": "M6.875 0l0 2.5m0 8.75l0 2.5m-4.875-11.75l1.75 1.75m6.25 6.25l1.75 1.75m-11.75-4.875l2.5 0m8.75 0l2.5 0m-11.75 4.875l1.75-1.75m6.25-6.25l1.75-1.75",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    13.75,
+                                    13.75
+                                  ],
+                                  "width": 13.75,
+                                  "height": 13.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "JLOLu",
+                              "name": "General",
+                              "fill": "$text-secondary",
+                              "content": "General",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "q8zoXo",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "q3VDy",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "R6zR0C",
+                                  "x": 0.625,
+                                  "y": 1.875,
+                                  "name": "Vector",
+                                  "geometry": "M1.875 11.25l0-4.375m0-2.5l0-4.375m5 11.25l0-5.625m0-2.5l0-3.125m5 11.25l0-3.125m0-2.5l0-5.625m-11.875 6.875l3.75 0m1.25-3.75l3.75 0m1.25 5l3.75 0",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    13.75,
+                                    11.25
+                                  ],
+                                  "width": 13.75,
+                                  "height": 11.25,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "OCdU8",
+                              "name": "Appearance",
+                              "fill": "$text-secondary",
+                              "content": "Appearance",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "JFiDJ",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "rJKv8",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 14,
+                              "height": 14,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "d2JbVR",
+                                  "x": 2.3333,
+                                  "y": 2.3333,
+                                  "name": "Vector",
+                                  "geometry": "M1.16667 0l7 0c0.64433 0 1.16667 0.52233 1.16666 1.16667l0 7c0 0.64433-0.52233 1.16667-1.16666 1.16666l-7 0c-0.64433 0-1.16667-0.52233-1.16667-1.16666l0-7c0-0.64433 0.52233-1.16667 1.16667-1.16667z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    9.3333,
+                                    9.3333
+                                  ],
+                                  "width": 9.3333,
+                                  "height": 9.3333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "bNxLo",
+                                  "x": 5.25,
+                                  "y": 5.25,
+                                  "name": "Vector",
+                                  "geometry": "M0 0l3.5 0 0 3.5-3.5 0 0-3.5z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    3.5,
+                                    3.5
+                                  ],
+                                  "width": 3.5,
+                                  "height": 3.5,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "D2NNfZ",
+                                  "x": 0.5833,
+                                  "y": 0.5833,
+                                  "name": "Vector",
+                                  "geometry": "M4.66667 0l0 1.75m3.5-1.75l0 1.75m-3.5 9.33333l0 1.75m3.5-1.75l0 1.75m-8.16667-8.16666l1.75 0m-1.75 3.5l1.75 0m9.33333-3.5l1.75 0m-1.75 3.5l1.75 0",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12.8333,
+                                    12.8333
+                                  ],
+                                  "width": 12.8333,
+                                  "height": 12.8333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "XwFyj",
+                              "name": "Model & Profiles",
+                              "fill": "$text-secondary",
+                              "content": "Model & profiles",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "IT1YB",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ny4Zu",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 16,
+                              "height": 16,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "KvNFW",
+                                  "x": 2.6667,
+                                  "y": 1.3333,
+                                  "name": "Vector",
+                                  "geometry": "M5.33333 13.33333c0 0 5.33333-2.66667 5.33334-6.66666l0-4.66667-5.33334-2-5.33333 2 0 4.66667c0 4 5.33333 6.66667 5.33333 6.66666z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10.6667,
+                                    13.3333
+                                  ],
+                                  "width": 10.6667,
+                                  "height": 13.3333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.3333
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "hRr1r",
+                              "name": "Permissions",
+                              "fill": "$text-secondary",
+                              "content": "Permissions",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "QcAsW",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "NUzWR",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "pNdc7",
+                                  "x": 1.875,
+                                  "y": 1.2513,
+                                  "name": "Vector",
+                                  "geometry": "M11.25 3.74872c-0.00022-0.2192-0.05809-0.43449-0.16779-0.62428-0.1097-0.18978-0.26738-0.34737-0.45721-0.45697l-4.375-2.5c-0.19002-0.10971-0.40558-0.16747-0.625-0.16747-0.21942 0-0.43498 0.05776-0.625 0.16747l-4.375 2.5c-0.18984 0.1096-0.34751 0.2672-0.45721 0.45697-0.1097 0.18978-0.16756 0.40507-0.16779 0.62428l0 5c0.00022 0.2192 0.05809 0.43449 0.16779 0.62427 0.1097 0.18978 0.26738 0.34738 0.45721 0.45698l4.375 2.5c0.19002 0.10971 0.40558 0.16747 0.625 0.16747 0.21942 0 0.43498-0.05776 0.625-0.16747l4.375-2.5c0.18984-0.1096 0.34751-0.2672 0.45721-0.45698 0.1097-0.18978 0.16756-0.40507 0.16779-0.62427l0-5z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    11.25,
+                                    12.4974
+                                  ],
+                                  "width": 11.25,
+                                  "height": 12.4974,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "T74SCg",
+                              "name": "Modules",
+                              "fill": "$text-secondary",
+                              "content": "Modules",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "qBpGh",
+                          "name": "Experimental Link",
+                          "width": "fill_container",
+                          "fill": "$surface-hover",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "yxf9g",
+                              "name": "Experimental Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "flask-conical",
+                              "library": "lucide",
+                              "fill": "$text-primary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "jLf3X",
+                              "name": "Experimental",
+                              "fill": "$text-primary",
+                              "content": "Experimental",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "BX0sd",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "d0lI5",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "XcpyF",
+                                  "x": 1.2404,
+                                  "y": 1.25,
+                                  "name": "Vector",
+                                  "geometry": "M11.88465 0l-1.25 1.25m0 0l-4.75 4.75m4.75-4.75l1.875 1.875m-6.625 2.875c0.3201 0.3201 0.57401 0.70011 0.74724 1.11833 0.17324 0.41823 0.2624 0.86648 0.2624 1.31917 0 0.45269-0.08916 0.90094-0.2624 1.31917-0.17324 0.41823-0.42715 0.79824-0.74724 1.11833-0.3201 0.3201-0.70011 0.57401-1.11834 0.74725-0.41823 0.17324-0.86648 0.2624-1.31916 0.2624-0.45269 0-0.90094-0.08916-1.31917-0.2624-0.41823-0.17324-0.79824-0.42715-1.11833-0.74725-0.64647-0.64647-1.00965-1.52326-1.00965-2.4375 0-0.91424 0.36318-1.79103 1.00965-2.4375 0.64647-0.64647 1.52326-1.00965 2.4375-1.00965 0.91424 0 1.79103 0.36318 2.4375 1.00965z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12.5096,
+                                    11.8846
+                                  ],
+                                  "width": 12.5096,
+                                  "height": 11.8846,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "mhWvl",
+                              "name": "MCP & Credentials",
+                              "fill": "$text-secondary",
+                              "content": "MCP & credentials",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "z4uOU",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aT2UI",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "mvKdr",
+                                  "x": 2.5,
+                                  "y": 1.25,
+                                  "name": "Vector",
+                                  "geometry": "M10 1.875c0 1.03553-2.23858 1.875-5 1.875-2.76142 0-5-0.83947-5-1.875 0-1.03553 2.23858-1.875 5-1.875 2.76142 0 5 0.83947 5 1.875z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    3.75
+                                  ],
+                                  "width": 10,
+                                  "height": 3.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "cGnmO",
+                                  "x": 2.5,
+                                  "y": 3.125,
+                                  "name": "Vector",
+                                  "geometry": "M0 0l0 8.75c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875l0-8.75",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    10.625
+                                  ],
+                                  "width": 10,
+                                  "height": 10.625,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "vdnRZ",
+                                  "x": 2.5,
+                                  "y": 7.5,
+                                  "name": "Vector",
+                                  "geometry": "M0 0c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    1.875
+                                  ],
+                                  "width": 10,
+                                  "height": 1.875,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "FRnhL",
+                              "name": "Memory",
+                              "fill": "$text-secondary",
+                              "content": "Memory",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tcECx",
+                          "name": "Usage Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "sMeFF",
+                              "name": "Usage Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "activity",
+                              "library": "lucide",
+                              "fill": "$text-secondary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "c7rmqQ",
+                              "name": "Usage",
+                              "fill": "$text-secondary",
+                              "content": "Usage",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ZrN0k",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "x0NSL",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "e9Ayc",
+                                  "x": 1.875,
+                                  "y": 1.875,
+                                  "name": "Vector",
+                                  "geometry": "M11.25 7.5l0 2.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-8.75 0c-0.33152 0-0.64946-0.1317-0.88388-0.36612-0.23442-0.23442-0.36612-0.55236-0.36612-0.88388l0-2.5m2.5-3.125l3.125 3.125m0 0l3.125-3.125m-3.125 3.125l0-7.5",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    11.25,
+                                    11.25
+                                  ],
+                                  "width": 11.25,
+                                  "height": 11.25,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "z7o99n",
+                              "name": "Import & export",
+                              "fill": "$text-secondary",
+                              "content": "Import & export",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "E53z5",
+                      "name": "Container",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "eseei",
+                          "name": "Settings Header",
+                          "width": "fill_container",
+                          "stroke": "$border-subtle",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            12,
+                            16
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "LEp7a",
+                              "name": "Header Title Group",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "V7bv9n",
+                                  "name": "Sliders Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "sliders-horizontal",
+                                  "library": "lucide",
+                                  "fill": "$accent-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "nIlTW",
+                                  "name": "Experimental features",
+                                  "fill": "$text-primary",
+                                  "content": "Experimental features",
+                                  "fontFamily": "$font-sans",
+                                  "fontSize": 14,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "c0x6v",
+                              "name": "Close Button",
+                              "cornerRadius": "$radius-md",
+                              "gap": 6,
+                              "padding": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "Z70Io",
+                                  "name": "Icon",
+                                  "clip": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "path",
+                                      "id": "W5Ovvu",
+                                      "x": 3.5,
+                                      "y": 3.5,
+                                      "name": "Vector",
+                                      "geometry": "M7 0l-7 7m0-7l7 7",
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        7,
+                                        7
+                                      ],
+                                      "width": 7,
+                                      "height": 7,
+                                      "stroke": "$text-secondary",
+                                      "strokeWidth": 1.1667
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "x9pIzV",
+                          "name": "Experimental Panel Body",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "WE0kx",
+                              "name": "Panel Heading",
+                              "width": "fill_container",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "Uoamw",
+                                  "name": "Flask Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "flask-conical",
+                                  "library": "lucide",
+                                  "fill": "$accent-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fQqEF",
+                                  "name": "Panel Title",
+                                  "fill": "$text-primary",
+                                  "content": "Experimental features",
+                                  "fontFamily": "$font-sans",
+                                  "fontSize": 12,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "iTmVe",
+                              "name": "Panel Subtitle",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Opt-in capabilities under active development. Saved to config.toml; applies to newly created sessions.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "R9kcPH",
+                              "name": "Row js_repl",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "GcWwn",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "vgQaJ",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "J3wf2",
+                                          "name": "JavaScript REPL (js_repl)",
+                                          "fill": "$text-primary",
+                                          "content": "JavaScript REPL (js_repl)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "T86UHN",
+                                          "name": "Disabled Pill",
+                                          "fill": "$surface-raised",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "EUS4g",
+                                              "name": "Disabled",
+                                              "fill": "$text-secondary",
+                                              "content": "Disabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "auk7f",
+                                      "name": "js_repl Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Sandboxed read-only JS orchestration; each bridged call still passes normal authorization and approval.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "G6qfO",
+                                  "name": "Switch Off",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$border-strong",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "Q6INlw",
+                                      "x": 2,
+                                      "y": 2,
+                                      "name": "Knob Off",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$surface-raised",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "XwzHq",
+                              "name": "Row subagents",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "u5F4K",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "i2SXKb",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "c33WH",
+                                          "name": "Multi-agent subagents (F-09)",
+                                          "fill": "$text-primary",
+                                          "content": "Multi-agent subagents (F-09)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "cZFuZ",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "R81us",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "CdrwP",
+                                      "name": "subagents Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Bounded parent-child subagent orchestration (max_depth = 1) with isolated worktrees and shared budgets.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "Jmx1x",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "rRRXY",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "FYLhJ",
+                              "name": "Footer Note",
+                              "fill": "$text-tertiary",
+                              "content": "Applies to new sessions",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "A2r1x",
+              "x": 307.7656,
+              "y": 0,
+              "name": "Container",
+              "clip": true,
+              "width": 432.4688,
+              "height": 720,
+              "layout": "vertical",
+              "gap": 14,
+              "padding": [
+                18,
+                26,
+                8,
+                26
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mMlI8",
+                  "name": "Container",
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-xl",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "padding": [
+                    9,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n5iuJX",
+                      "name": "Check the runtime boundary for soyo-desktop.",
+                      "fill": "$text-primary",
+                      "content": "Check the runtime boundary for soyo-desktop.",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "J39a4T",
+                  "name": "Paragraph:margin",
+                  "width": 380.4688,
+                  "height": 38.7969,
+                  "layout": "vertical",
+                  "padding": [
+                    8,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Gp857",
+                      "name": "Paragraph",
+                      "width": 380.4688,
+                      "height": 22.7969,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "e1no9f",
+                          "x": 0,
+                          "y": 0,
+                          "name": "In-process linking directly invokes",
+                          "fill": "$text-secondary",
+                          "content": "In-process linking directly invokes ",
+                          "lineHeight": 1.65,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XVV2k",
+                          "x": 220.0938,
+                          "y": 3,
+                          "name": "Code",
+                          "width": 149.2813,
+                          "height": 18,
+                          "fill": "$surface-hover",
+                          "cornerRadius": "$radius-md",
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ZoXdn",
+                              "x": 6,
+                              "y": -1,
+                              "name": "spawn_build_runtime",
+                              "fill": "$text-primary",
+                              "content": "spawn_build_runtime",
+                              "lineHeight": 1.65,
+                              "fontFamily": "$font-mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "vkqkJ",
+                          "x": 369.375,
+                          "y": 0,
+                          "name": "…",
+                          "fill": "$text-secondary",
+                          "content": "…",
+                          "lineHeight": 1.65,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "l9pdow",
+      "x": 7600,
+      "y": 3920,
+      "name": "15 · Settings — Experimental · Light",
+      "theme": {
+        "mode": "light"
+      },
+      "clip": true,
+      "width": 1280,
+      "height": 720,
+      "fill": "$surface-app",
+      "children": [
+        {
+          "type": "frame",
+          "id": "EawZq",
+          "name": "Container",
+          "width": 248,
+          "height": "fill_container",
+          "fill": "$surface-sidebar",
+          "stroke": "$border-subtle",
+          "strokeWidth": {
+            "right": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "padding": 8,
+          "children": [
+            {
+              "type": "frame",
+              "id": "R3auo",
+              "name": "Container",
+              "width": 215,
+              "height": 208,
+              "layout": "vertical",
+              "gap": 1,
+              "padding": [
+                6,
+                0,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "koeua",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "V2Bm8V",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "U7QwX",
+                          "x": 3.125,
+                          "y": 3.125,
+                          "name": "Vector",
+                          "geometry": "M4.375 0l0 8.75m-4.375-4.375l8.75 0",
+                          "viewBox": [
+                            0,
+                            0,
+                            8.75,
+                            8.75
+                          ],
+                          "width": 8.75,
+                          "height": 8.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hZlAn",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "o8Sl2",
+                          "name": "New",
+                          "fill": "$text-primary",
+                          "content": "New session",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oWZUc",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "XSvEt",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "nkdjF",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Vector",
+                          "geometry": "M8.75 4.375c0 2.41625-1.95875 4.375-4.375 4.375-2.41625 0-4.375-1.95875-4.375-4.375 0-2.41625 1.95875-4.375 4.375-4.375 2.41625 0 4.375 1.95875 4.375 4.375z",
+                          "viewBox": [
+                            0,
+                            0,
+                            8.75,
+                            8.75
+                          ],
+                          "width": 8.75,
+                          "height": 8.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "se1tC",
+                          "x": 10.4375,
+                          "y": 10.4375,
+                          "name": "Vector",
+                          "geometry": "M2.6875 2.6875l-2.6875-2.6875",
+                          "viewBox": [
+                            0,
+                            0,
+                            2.6875,
+                            2.6875
+                          ],
+                          "width": 2.6875,
+                          "height": 2.6875,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "B1bTG",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "L1zpL",
+                          "name": "Search",
+                          "fill": "$text-secondary",
+                          "content": "Search",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cgslg",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n6zt1",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "jcuV5",
+                          "x": 1.875,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M11.25 7.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-7.5 0-2.5 2.5 0-10c0-0.33152 0.1317-0.64946 0.36612-0.88388 0.23442-0.23442 0.55236-0.36612 0.88388-0.36612l8.75 0c0.33152 0 0.64946 0.1317 0.88388 0.36612 0.23442 0.23442 0.36612 0.55236 0.36612 0.88388l0 6.25z",
+                          "viewBox": [
+                            0,
+                            0,
+                            11.25,
+                            11.25
+                          ],
+                          "width": 11.25,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "uvh3I",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "x0dVm",
+                          "name": "Sessions",
+                          "fill": "$text-secondary",
+                          "content": "Sessions",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oRWbI",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Yr5ne",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "U1Ja8z",
+                          "x": 2.5,
+                          "y": 1.25,
+                          "name": "Vector",
+                          "geometry": "M10 1.875c0 1.03553-2.23858 1.875-5 1.875-2.76142 0-5-0.83947-5-1.875 0-1.03553 2.23858-1.875 5-1.875 2.76142 0 5 0.83947 5 1.875z",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            3.75
+                          ],
+                          "width": 10,
+                          "height": 3.75,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "aJZP1",
+                          "x": 2.5,
+                          "y": 3.125,
+                          "name": "Vector",
+                          "geometry": "M0 0l0 8.75c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875l0-8.75",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            10.625
+                          ],
+                          "width": 10,
+                          "height": 10.625,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        },
+                        {
+                          "type": "path",
+                          "id": "L8DfzH",
+                          "x": 2.5,
+                          "y": 7.5,
+                          "name": "Vector",
+                          "geometry": "M0 0c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875",
+                          "viewBox": [
+                            0,
+                            0,
+                            10,
+                            1.875
+                          ],
+                          "width": 10,
+                          "height": 1.875,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YffbA",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "e4Ycgr",
+                          "name": "Memory",
+                          "fill": "$text-secondary",
+                          "content": "Memory",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ykg2G",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yNyxi",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "n3dFU",
+                          "x": 1.2404,
+                          "y": 1.25,
+                          "name": "Vector",
+                          "geometry": "M11.88465 0l-1.25 1.25m0 0l-4.75 4.75m4.75-4.75l1.875 1.875m-6.625 2.875c0.3201 0.3201 0.57401 0.70011 0.74724 1.11833 0.17324 0.41823 0.2624 0.86648 0.2624 1.31917 0 0.45269-0.08916 0.90094-0.2624 1.31917-0.17324 0.41823-0.42715 0.79824-0.74724 1.11833-0.3201 0.3201-0.70011 0.57401-1.11834 0.74725-0.41823 0.17324-0.86648 0.2624-1.31916 0.2624-0.45269 0-0.90094-0.08916-1.31917-0.2624-0.41823-0.17324-0.79824-0.42715-1.11833-0.74725-0.64647-0.64647-1.00965-1.52326-1.00965-2.4375 0-0.91424 0.36318-1.79103 1.00965-2.4375 0.64647-0.64647 1.52326-1.00965 2.4375-1.00965 0.91424 0 1.79103 0.36318 2.4375 1.00965z",
+                          "viewBox": [
+                            0,
+                            0,
+                            12.5096,
+                            11.8846
+                          ],
+                          "width": 12.5096,
+                          "height": 11.8846,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "R0qpB",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "uIbvg",
+                          "name": "MCP & Creds",
+                          "fill": "$text-secondary",
+                          "content": "MCP & credentials",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mqX7n",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yNWmt",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "BS58O",
+                          "x": 1.875,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M11.25 7.5l0 2.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-8.75 0c-0.33152 0-0.64946-0.1317-0.88388-0.36612-0.23442-0.23442-0.36612-0.55236-0.36612-0.88388l0-2.5m2.5-3.125l3.125 3.125m0 0l3.125-3.125m-3.125 3.125l0-7.5",
+                          "viewBox": [
+                            0,
+                            0,
+                            11.25,
+                            11.25
+                          ],
+                          "width": 11.25,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "G3vcwZ",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "F5qZUX",
+                          "name": "Export",
+                          "fill": "$text-secondary",
+                          "content": "Export",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "e6cJA",
+                  "name": "Link",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-md",
+                  "gap": 9,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "wljkA",
+                      "name": "Icon",
+                      "clip": true,
+                      "width": 15,
+                      "height": 15,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "VN3vQ",
+                          "x": 0.625,
+                          "y": 1.875,
+                          "name": "Vector",
+                          "geometry": "M1.875 11.25l0-4.375m0-2.5l0-4.375m5 11.25l0-5.625m0-2.5l0-3.125m5 11.25l0-3.125m0-2.5l0-5.625m-11.875 6.875l3.75 0m1.25-3.75l3.75 0m1.25 5l3.75 0",
+                          "viewBox": [
+                            0,
+                            0,
+                            13.75,
+                            11.25
+                          ],
+                          "width": 13.75,
+                          "height": 11.25,
+                          "stroke": "$text-tertiary",
+                          "strokeWidth": 1.25
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "vtr6P",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ksxLW",
+                          "name": "Customize",
+                          "fill": "$text-secondary",
+                          "content": "Customize",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FGv8N",
+              "name": "Container",
+              "width": 215,
+              "height": 33,
+              "padding": [
+                16,
+                10,
+                4,
+                10
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "j0d92W",
+                  "name": "Recents",
+                  "fill": "$text-tertiary",
+                  "content": "Recents",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "h2n9r5",
+                  "name": "Text",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "TkudD",
+                      "name": "⌄",
+                      "fill": "$text-tertiary",
+                      "content": "⌄",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "K19jQ",
+              "name": "Container",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 1,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KTUu8",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 40,
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "TobOv",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "qI6xT",
+                          "name": "Implement desktop UI preview with Vite HMR",
+                          "fill": "$text-primary",
+                          "content": "Implement desktop UI preview...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "G7pvmh",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "CbUI1",
+                          "name": "code · 3 min",
+                          "fill": "$text-tertiary",
+                          "content": "code · 3 min",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cTN3T",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 40,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "LHqCw",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "SQjso",
+                          "name": "Markdown, Math & Mermaid Budget Showcase",
+                          "fill": "$text-secondary",
+                          "content": "Markdown, Math & Mermaid...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "N4dqbV",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "m15fx",
+                          "name": "plan · 1 h",
+                          "fill": "$text-tertiary",
+                          "content": "plan · 1 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "A4vx1",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ljZEp",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "gcGGL",
+                          "name": "规划基于 Tauri 2 的独立 Desktop 安装方案",
+                          "fill": "$text-secondary",
+                          "content": "规划基于 Tauri 2 的独立 Deskto...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cgtk5",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "d4es2R",
+                          "name": "plan · 2 h",
+                          "fill": "$text-tertiary",
+                          "content": "plan · 2 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gMvFs",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "osB8t",
+                      "name": "导出会话到 HANDOFF 文档",
+                      "fill": "$text-secondary",
+                      "content": "导出会话到 HANDOFF 文档",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "AnLhb",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "foE0K",
+                          "name": "work · 5 h",
+                          "fill": "$text-tertiary",
+                          "content": "work · 5 h",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JoDL7",
+                  "name": "Link",
+                  "clip": true,
+                  "width": 215,
+                  "height": 42,
+                  "cornerRadius": "$radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "NhXzE",
+                      "name": "Container",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "A9syYo",
+                          "name": "审查 capability-roadmap 未完成项",
+                          "fill": "$text-secondary",
+                          "content": "审查 capability-roadmap 未完...",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JdNl3",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Nz2cU",
+                          "name": "plan · yesterday",
+                          "fill": "$text-tertiary",
+                          "content": "plan · yesterday",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "JQJK6",
+              "name": "Link",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                6,
+                10
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "rxqde",
+                  "name": "View all",
+                  "fill": "$text-tertiary",
+                  "content": "View all",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "JrVT8",
+              "name": "Container:align",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "OoFaN",
+                  "name": "Container",
+                  "width": "fill_container",
+                  "height": 36,
+                  "cornerRadius": "$radius-md",
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hU4LP",
+                      "name": "Image",
+                      "clip": true,
+                      "width": 20,
+                      "height": 20,
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "assets/f34f294e3025.png",
+                        "mode": "cover"
+                      },
+                      "cornerRadius": 10,
+                      "layout": "none"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sxEwl",
+                      "name": "Text",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "P1lNx",
+                          "name": "ariakage · anthropic-official",
+                          "fill": "$text-secondary",
+                          "content": "ariakage · anthropic-official",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "zZk5m",
+          "name": "Container",
+          "clip": true,
+          "width": "fill_container",
+          "height": 720,
+          "fill": "$surface-app",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "iGApm",
+              "x": 0,
+              "y": 0,
+              "name": "Container",
+              "width": 1032,
+              "height": 720,
+              "fill": "$scrim",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "bBYRI",
+                  "name": "Container",
+                  "clip": true,
+                  "width": 680,
+                  "height": 520,
+                  "fill": "$surface-overlay",
+                  "cornerRadius": "$radius-xl",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "$shadow-color",
+                    "offset": {
+                      "x": 0,
+                      "y": 24
+                    },
+                    "blur": 60
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "NKJXm",
+                      "name": "Container",
+                      "width": 180,
+                      "height": "fill_container",
+                      "stroke": "$border-subtle",
+                      "strokeWidth": {
+                        "right": 1
+                      },
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "padding": [
+                        12,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "qjTAH",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "mPIt2",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "UR6pD",
+                                  "x": 5.625,
+                                  "y": 5.625,
+                                  "name": "Vector",
+                                  "geometry": "M3.75 1.875c0 1.03553-0.83947 1.875-1.875 1.875-1.03553 0-1.875-0.83947-1.875-1.875 0-1.03553 0.83947-1.875 1.875-1.875 1.03553 0 1.875 0.83947 1.875 1.875z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    3.75,
+                                    3.75
+                                  ],
+                                  "width": 3.75,
+                                  "height": 3.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "HXlFu",
+                                  "x": 0.625,
+                                  "y": 0.625,
+                                  "name": "Vector",
+                                  "geometry": "M6.875 0l0 2.5m0 8.75l0 2.5m-4.875-11.75l1.75 1.75m6.25 6.25l1.75 1.75m-11.75-4.875l2.5 0m8.75 0l2.5 0m-11.75 4.875l1.75-1.75m6.25-6.25l1.75-1.75",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    13.75,
+                                    13.75
+                                  ],
+                                  "width": 13.75,
+                                  "height": 13.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "Inj1U",
+                              "name": "General",
+                              "fill": "$text-secondary",
+                              "content": "General",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "A1FH7k",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "dgabO",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "A8CWB",
+                                  "x": 0.625,
+                                  "y": 1.875,
+                                  "name": "Vector",
+                                  "geometry": "M1.875 11.25l0-4.375m0-2.5l0-4.375m5 11.25l0-5.625m0-2.5l0-3.125m5 11.25l0-3.125m0-2.5l0-5.625m-11.875 6.875l3.75 0m1.25-3.75l3.75 0m1.25 5l3.75 0",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    13.75,
+                                    11.25
+                                  ],
+                                  "width": 13.75,
+                                  "height": 11.25,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "Jd47n",
+                              "name": "Appearance",
+                              "fill": "$text-secondary",
+                              "content": "Appearance",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "p9d6xo",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "YBPhY",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 14,
+                              "height": 14,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "fCjhk",
+                                  "x": 2.3333,
+                                  "y": 2.3333,
+                                  "name": "Vector",
+                                  "geometry": "M1.16667 0l7 0c0.64433 0 1.16667 0.52233 1.16666 1.16667l0 7c0 0.64433-0.52233 1.16667-1.16666 1.16666l-7 0c-0.64433 0-1.16667-0.52233-1.16667-1.16666l0-7c0-0.64433 0.52233-1.16667 1.16667-1.16667z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    9.3333,
+                                    9.3333
+                                  ],
+                                  "width": 9.3333,
+                                  "height": 9.3333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "vrBLc",
+                                  "x": 5.25,
+                                  "y": 5.25,
+                                  "name": "Vector",
+                                  "geometry": "M0 0l3.5 0 0 3.5-3.5 0 0-3.5z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    3.5,
+                                    3.5
+                                  ],
+                                  "width": 3.5,
+                                  "height": 3.5,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "sP0FK",
+                                  "x": 0.5833,
+                                  "y": 0.5833,
+                                  "name": "Vector",
+                                  "geometry": "M4.66667 0l0 1.75m3.5-1.75l0 1.75m-3.5 9.33333l0 1.75m3.5-1.75l0 1.75m-8.16667-8.16666l1.75 0m-1.75 3.5l1.75 0m9.33333-3.5l1.75 0m-1.75 3.5l1.75 0",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12.8333,
+                                    12.8333
+                                  ],
+                                  "width": 12.8333,
+                                  "height": 12.8333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.1667
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "RXLHm",
+                              "name": "Model & Profiles",
+                              "fill": "$text-secondary",
+                              "content": "Model & profiles",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Xfn8Z",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "jU79Y",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 16,
+                              "height": 16,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "PZTGx",
+                                  "x": 2.6667,
+                                  "y": 1.3333,
+                                  "name": "Vector",
+                                  "geometry": "M5.33333 13.33333c0 0 5.33333-2.66667 5.33334-6.66666l0-4.66667-5.33334-2-5.33333 2 0 4.66667c0 4 5.33333 6.66667 5.33333 6.66666z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10.6667,
+                                    13.3333
+                                  ],
+                                  "width": 10.6667,
+                                  "height": 13.3333,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.3333
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "WffhA",
+                              "name": "Permissions",
+                              "fill": "$text-secondary",
+                              "content": "Permissions",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "SSJVp",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "B7PDY",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "WT88x",
+                                  "x": 1.875,
+                                  "y": 1.2513,
+                                  "name": "Vector",
+                                  "geometry": "M11.25 3.74872c-0.00022-0.2192-0.05809-0.43449-0.16779-0.62428-0.1097-0.18978-0.26738-0.34737-0.45721-0.45697l-4.375-2.5c-0.19002-0.10971-0.40558-0.16747-0.625-0.16747-0.21942 0-0.43498 0.05776-0.625 0.16747l-4.375 2.5c-0.18984 0.1096-0.34751 0.2672-0.45721 0.45697-0.1097 0.18978-0.16756 0.40507-0.16779 0.62428l0 5c0.00022 0.2192 0.05809 0.43449 0.16779 0.62427 0.1097 0.18978 0.26738 0.34738 0.45721 0.45698l4.375 2.5c0.19002 0.10971 0.40558 0.16747 0.625 0.16747 0.21942 0 0.43498-0.05776 0.625-0.16747l4.375-2.5c0.18984-0.1096 0.34751-0.2672 0.45721-0.45698 0.1097-0.18978 0.16756-0.40507 0.16779-0.62427l0-5z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    11.25,
+                                    12.4974
+                                  ],
+                                  "width": 11.25,
+                                  "height": 12.4974,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "ZudFO",
+                              "name": "Modules",
+                              "fill": "$text-secondary",
+                              "content": "Modules",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dC6iF",
+                          "name": "Experimental Link",
+                          "width": "fill_container",
+                          "fill": "$surface-hover",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "r9VmR",
+                              "name": "Experimental Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "flask-conical",
+                              "library": "lucide",
+                              "fill": "$text-primary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "huhQX",
+                              "name": "Experimental",
+                              "fill": "$text-primary",
+                              "content": "Experimental",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Q8MZvd",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "eTBiN",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "M3Bo3A",
+                                  "x": 1.2404,
+                                  "y": 1.25,
+                                  "name": "Vector",
+                                  "geometry": "M11.88465 0l-1.25 1.25m0 0l-4.75 4.75m4.75-4.75l1.875 1.875m-6.625 2.875c0.3201 0.3201 0.57401 0.70011 0.74724 1.11833 0.17324 0.41823 0.2624 0.86648 0.2624 1.31917 0 0.45269-0.08916 0.90094-0.2624 1.31917-0.17324 0.41823-0.42715 0.79824-0.74724 1.11833-0.3201 0.3201-0.70011 0.57401-1.11834 0.74725-0.41823 0.17324-0.86648 0.2624-1.31916 0.2624-0.45269 0-0.90094-0.08916-1.31917-0.2624-0.41823-0.17324-0.79824-0.42715-1.11833-0.74725-0.64647-0.64647-1.00965-1.52326-1.00965-2.4375 0-0.91424 0.36318-1.79103 1.00965-2.4375 0.64647-0.64647 1.52326-1.00965 2.4375-1.00965 0.91424 0 1.79103 0.36318 2.4375 1.00965z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12.5096,
+                                    11.8846
+                                  ],
+                                  "width": 12.5096,
+                                  "height": 11.8846,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "j7AjNJ",
+                              "name": "MCP & Credentials",
+                              "fill": "$text-secondary",
+                              "content": "MCP & credentials",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "kZSRY",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "xbdMf",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "ZlkLt",
+                                  "x": 2.5,
+                                  "y": 1.25,
+                                  "name": "Vector",
+                                  "geometry": "M10 1.875c0 1.03553-2.23858 1.875-5 1.875-2.76142 0-5-0.83947-5-1.875 0-1.03553 2.23858-1.875 5-1.875 2.76142 0 5 0.83947 5 1.875z",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    3.75
+                                  ],
+                                  "width": 10,
+                                  "height": 3.75,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "C3vPxh",
+                                  "x": 2.5,
+                                  "y": 3.125,
+                                  "name": "Vector",
+                                  "geometry": "M0 0l0 8.75c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875l0-8.75",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    10.625
+                                  ],
+                                  "width": 10,
+                                  "height": 10.625,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                },
+                                {
+                                  "type": "path",
+                                  "id": "h6kE8k",
+                                  "x": 2.5,
+                                  "y": 7.5,
+                                  "name": "Vector",
+                                  "geometry": "M0 0c0 1.0625 2.25 1.875 5 1.875 2.75 0 5-0.8125 5-1.875",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    10,
+                                    1.875
+                                  ],
+                                  "width": 10,
+                                  "height": 1.875,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "L24BF",
+                              "name": "Memory",
+                              "fill": "$text-secondary",
+                              "content": "Memory",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "RVi6T",
+                          "name": "Usage Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "eXa2o",
+                              "name": "Usage Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "activity",
+                              "library": "lucide",
+                              "fill": "$text-secondary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "HSuwv",
+                              "name": "Usage",
+                              "fill": "$text-secondary",
+                              "content": "Usage",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ENmZE",
+                          "name": "Link",
+                          "width": "fill_container",
+                          "cornerRadius": "$radius-md",
+                          "gap": 8,
+                          "padding": [
+                            6,
+                            9
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ELHu5",
+                              "name": "Icon",
+                              "clip": true,
+                              "width": 15,
+                              "height": 15,
+                              "layout": "none",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "ivOlX",
+                                  "x": 1.875,
+                                  "y": 1.875,
+                                  "name": "Vector",
+                                  "geometry": "M11.25 7.5l0 2.5c0 0.33152-0.1317 0.64946-0.36612 0.88388-0.23442 0.23442-0.55236 0.36612-0.88388 0.36612l-8.75 0c-0.33152 0-0.64946-0.1317-0.88388-0.36612-0.23442-0.23442-0.36612-0.55236-0.36612-0.88388l0-2.5m2.5-3.125l3.125 3.125m0 0l3.125-3.125m-3.125 3.125l0-7.5",
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    11.25,
+                                    11.25
+                                  ],
+                                  "width": 11.25,
+                                  "height": 11.25,
+                                  "stroke": "$text-secondary",
+                                  "strokeWidth": 1.25
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "LWu1G",
+                              "name": "Import & export",
+                              "fill": "$text-secondary",
+                              "content": "Import & export",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "A7w5Zu",
+                      "name": "Container",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "JO9xU",
+                          "name": "Settings Header",
+                          "width": "fill_container",
+                          "stroke": "$border-subtle",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            12,
+                            16
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "FdUks",
+                              "name": "Header Title Group",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "C5P5s",
+                                  "name": "Sliders Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "sliders-horizontal",
+                                  "library": "lucide",
+                                  "fill": "$accent-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "YqpfC",
+                                  "name": "Experimental features",
+                                  "fill": "$text-primary",
+                                  "content": "Experimental features",
+                                  "fontFamily": "$font-sans",
+                                  "fontSize": 14,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "DD7xP",
+                              "name": "Close Button",
+                              "cornerRadius": "$radius-md",
+                              "gap": 6,
+                              "padding": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "AM9t1",
+                                  "name": "Icon",
+                                  "clip": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "path",
+                                      "id": "WVii2",
+                                      "x": 3.5,
+                                      "y": 3.5,
+                                      "name": "Vector",
+                                      "geometry": "M7 0l-7 7m0-7l7 7",
+                                      "viewBox": [
+                                        0,
+                                        0,
+                                        7,
+                                        7
+                                      ],
+                                      "width": 7,
+                                      "height": 7,
+                                      "stroke": "$text-secondary",
+                                      "strokeWidth": 1.1667
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "BYHvi",
+                          "name": "Experimental Panel Body",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "X3h0P2",
+                              "name": "Panel Heading",
+                              "width": "fill_container",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "y21C0",
+                                  "name": "Flask Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "flask-conical",
+                                  "library": "lucide",
+                                  "fill": "$accent-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "RjEUl",
+                                  "name": "Panel Title",
+                                  "fill": "$text-primary",
+                                  "content": "Experimental features",
+                                  "fontFamily": "$font-sans",
+                                  "fontSize": 12,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "e5U76",
+                              "name": "Panel Subtitle",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Opt-in capabilities under active development. Saved to config.toml; applies to newly created sessions.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "q1IOqn",
+                              "name": "Row js_repl",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "OLQ0T",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "oOzvE",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "upuOC",
+                                          "name": "JavaScript REPL (js_repl)",
+                                          "fill": "$text-primary",
+                                          "content": "JavaScript REPL (js_repl)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "TSF47",
+                                          "name": "Disabled Pill",
+                                          "fill": "$surface-raised",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "v4Ayp",
+                                              "name": "Disabled",
+                                              "fill": "$text-secondary",
+                                              "content": "Disabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "u9qe8b",
+                                      "name": "js_repl Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Sandboxed read-only JS orchestration; each bridged call still passes normal authorization and approval.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "SbiC5",
+                                  "name": "Switch Off",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$border-strong",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "myS3C",
+                                      "x": 2,
+                                      "y": 2,
+                                      "name": "Knob Off",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$surface-raised",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "haOIT",
+                              "name": "Row subagents",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "iC2nO",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "kJDwE",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ISRWu",
+                                          "name": "Multi-agent subagents (F-09)",
+                                          "fill": "$text-primary",
+                                          "content": "Multi-agent subagents (F-09)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "EadOf",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "i3pgw",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "Sn2i1",
+                                      "name": "subagents Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Bounded parent-child subagent orchestration (max_depth = 1) with isolated worktrees and shared budgets.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "bNzza",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "XF2UH",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "kdqUg",
+                              "name": "Footer Note",
+                              "fill": "$text-tertiary",
+                              "content": "Applies to new sessions",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "r6IR4",
+              "x": 307.7656,
+              "y": 0,
+              "name": "Container",
+              "clip": true,
+              "width": 432.4688,
+              "height": 720,
+              "layout": "vertical",
+              "gap": 14,
+              "padding": [
+                18,
+                26,
+                8,
+                26
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "U8cy9H",
+                  "name": "Container",
+                  "fill": "$surface-raised",
+                  "cornerRadius": "$radius-xl",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "padding": [
+                    9,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "uw8se",
+                      "name": "Check the runtime boundary for soyo-desktop.",
+                      "fill": "$text-primary",
+                      "content": "Check the runtime boundary for soyo-desktop.",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "r1iN2D",
+                  "name": "Paragraph:margin",
+                  "width": 380.4688,
+                  "height": 38.7969,
+                  "layout": "vertical",
+                  "padding": [
+                    8,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "tHV9Y",
+                      "name": "Paragraph",
+                      "width": 380.4688,
+                      "height": 22.7969,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xX7yn",
+                          "x": 0,
+                          "y": 0,
+                          "name": "In-process linking directly invokes",
+                          "fill": "$text-secondary",
+                          "content": "In-process linking directly invokes ",
+                          "lineHeight": 1.65,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "gmdUN",
+                          "x": 220.0938,
+                          "y": 3,
+                          "name": "Code",
+                          "width": 149.2813,
+                          "height": 18,
+                          "fill": "$surface-hover",
+                          "cornerRadius": "$radius-md",
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "i9VIXR",
+                              "x": 6,
+                              "y": -1,
+                              "name": "spawn_build_runtime",
+                              "fill": "$text-primary",
+                              "content": "spawn_build_runtime",
+                              "lineHeight": 1.65,
+                              "fontFamily": "$font-mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "ZJB4N",
+                          "x": 369.375,
+                          "y": 0,
+                          "name": "…",
+                          "fill": "$text-secondary",
+                          "content": "…",
+                          "lineHeight": 1.65,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
                         }
                       ]
                     }
