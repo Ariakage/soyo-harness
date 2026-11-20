@@ -100,6 +100,24 @@ fn failed_preparation(
     }
 }
 
+#[derive(Clone)]
+pub(super) struct HostHookConfiguration {
+    pub(super) settings: crate::config::HookSettings,
+    pub(super) environment: Environment,
+    pub(super) journal: Arc<HookStore>,
+}
+
+pub(in crate::runtime) struct HostHookState {
+    pub(super) hooks: Vec<EnabledHook>,
+    pub(super) environment: Arc<PreparedEnvironment>,
+    pub(super) processes: hook_executor::HookProcesses,
+}
+
+pub(super) struct HostHookRuntime {
+    pub(super) state: Arc<HostHookState>,
+    pub(super) engine: Option<Arc<HookEngine>>,
+}
+
 pub(super) struct PluginRun {
     active: Arc<Mutex<ActivePlugins>>,
     pub(super) servers: BTreeMap<String, PluginServerDescriptor>,
@@ -756,12 +774,148 @@ impl RuntimeServices {
         Ok(())
     }
 
+    pub(in crate::runtime) fn configure_host_hooks(
+        &self,
+        settings: crate::config::HookSettings,
+        environment: Environment,
+        journal: Arc<HookStore>,
+    ) -> Result<(), BoundaryError> {
+        if self.begun.load(Ordering::Acquire) {
+            return Err(error(
+                "invalid_run",
+                "Host hook settings cannot change during a Run",
+            ));
+        }
+        settings.validate(&environment)?;
+        let mut guard = self
+            .settings
+            .lock()
+            .map_err(|_| error("runtime_services", "Service settings lock failed"))?;
+        if guard.host_hooks.is_some() {
+            return Err(error("invalid_config", "Host hooks are already configured"));
+        }
+        let active = settings.enabled && !settings.rules.is_empty();
+        guard.host_hooks = Some(HostHookConfiguration {
+            settings,
+            environment,
+            journal,
+        });
+        if active {
+            self.local_configured.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    pub(super) fn prepare_host_hooks(
+        &self,
+        runtime: &AgentRuntime,
+        settings: &Settings,
+        state: &State,
+    ) -> Result<Option<Arc<HostHookState>>, BoundaryError> {
+        let Some(config) = &settings.host_hooks else {
+            return Ok(None);
+        };
+        if !config.settings.enabled || config.settings.rules.is_empty() {
+            return Ok(None);
+        }
+        let environment = state.environment.clone().ok_or_else(|| {
+            error(
+                "sandbox_required",
+                "Host hooks require a prepared execution environment",
+            )
+        })?;
+        config.settings.validate(&config.environment)?;
+        let registry = settings.registry.as_ref().ok_or_else(|| {
+            error(
+                "sensitive_data",
+                "Host hook credential registry is unavailable",
+            )
+        })?;
+        runtime
+            .dispatcher
+            .protect_host_paths(vec![config.journal.protected_path().into()])?;
+        let mut secret_values = Vec::new();
+        for rule in &config.settings.rules {
+            for src in rule.env.values() {
+                if let Some(value) = config
+                    .environment
+                    .get_os(src)
+                    .and_then(std::ffi::OsStr::to_str)
+                    .filter(|value| !value.is_empty())
+                {
+                    secret_values.push(value.to_owned());
+                }
+            }
+        }
+        if !secret_values.is_empty() {
+            registry.register(&secret_values)?;
+        }
+        let hooks = config
+            .settings
+            .rules
+            .iter()
+            .map(|rule| EnabledHook::from_host_rule(rule, &runtime.run, 1))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(Arc::new(HostHookState {
+            hooks,
+            environment,
+            processes: hook_executor::HookProcesses::default(),
+        })))
+    }
+
+    pub(super) fn finalize_host_hooks(
+        self: &Arc<Self>,
+        runtime: &AgentRuntime,
+        session: &Session,
+        settings: &Settings,
+        state: &mut State,
+        prepared: Option<Arc<HostHookState>>,
+    ) -> Result<(), BoundaryError> {
+        let Some(host_state) = prepared else {
+            return Ok(());
+        };
+        let engine = if state.plugins.is_some() {
+            None
+        } else {
+            let config = settings
+                .host_hooks
+                .as_ref()
+                .ok_or_else(|| error("hook_config", "Host hook configuration is unavailable"))?;
+            let registry = settings.registry.clone().ok_or_else(|| {
+                error(
+                    "sensitive_data",
+                    "Host hook credential registry is unavailable",
+                )
+            })?;
+            let executor = Arc::new(hook_executor::NativeHookExecutor::new(
+                runtime,
+                session,
+                Arc::downgrade(self),
+                None,
+                Some(host_state.clone()),
+            ));
+            Some(Arc::new(HookEngine::new(
+                runtime.run.clone(),
+                HookLimits::default(),
+                registry,
+                executor,
+                config.journal.clone(),
+            )?))
+        };
+        state.host_hooks = Some(HostHookRuntime {
+            state: host_state,
+            engine,
+        });
+        Ok(())
+    }
+
     pub(super) async fn initialize_plugins(
         self: &Arc<Self>,
         runtime: &AgentRuntime,
         session: &Session,
         settings: &Settings,
         state: &mut State,
+        host_hooks: Option<Arc<HostHookState>>,
     ) -> Result<(), BoundaryError> {
         let Some(config) = &settings.plugins else {
             return Ok(());
@@ -949,7 +1103,8 @@ impl RuntimeServices {
             runtime,
             session,
             Arc::downgrade(self),
-            plugins.clone(),
+            Some(plugins.clone()),
+            host_hooks,
         ));
         let engine = Arc::new(HookEngine::new(
             runtime.run.clone(),
@@ -974,24 +1129,59 @@ impl RuntimeServices {
         parent_call_id: Option<String>,
         data: Value,
     ) -> Result<HookBatchOutcome, BoundaryError> {
-        let plugins = self.state.lock().await.plugins.clone();
-        let Some(plugins) = plugins else {
-            return Ok(HookBatchOutcome::default());
+        self.fire_hooks_for_session(runtime, session.id, event, event_id, parent_call_id, data)
+            .await
+    }
+
+    pub(in crate::runtime) async fn fire_hooks_for_session(
+        self: &Arc<Self>,
+        runtime: &AgentRuntime,
+        session_id: crate::contract::SessionId,
+        event: HookEvent,
+        event_id: String,
+        parent_call_id: Option<String>,
+        data: Value,
+    ) -> Result<HookBatchOutcome, BoundaryError> {
+        let (plugins, host_hooks) = {
+            let state = self.state.lock().await;
+            (
+                state.plugins.clone(),
+                state
+                    .host_hooks
+                    .as_ref()
+                    .map(|host| (host.state.clone(), host.engine.clone())),
+            )
         };
-        self.reconcile_plugins(runtime, &plugins).await?;
-        let engine = plugins
-            .engine
-            .lock()
-            .map_err(|_| error("plugin_state", "Plugin hook engine lock failed"))?
-            .clone();
+        if plugins.is_none() && host_hooks.is_none() {
+            return Ok(HookBatchOutcome::default());
+        }
+        let mut hooks = Vec::new();
+        let mut engine = None;
+        if let Some(plugins) = plugins {
+            self.reconcile_plugins(runtime, &plugins).await?;
+            engine = plugins
+                .engine
+                .lock()
+                .map_err(|_| error("plugin_state", "Plugin hook engine lock failed"))?
+                .clone();
+            hooks.extend(
+                plugins
+                    .enabled_hooks
+                    .lock()
+                    .map_err(|_| error("plugin_state", "Plugin hook catalog lock failed"))?
+                    .iter()
+                    .cloned(),
+            );
+        }
+        if let Some((host_state, host_engine)) = host_hooks {
+            if engine.is_none() {
+                engine = host_engine;
+            }
+            hooks.extend(host_state.hooks.iter().cloned());
+        }
         let Some(engine) = engine else {
             return Ok(HookBatchOutcome::default());
         };
-        let hooks = plugins
-            .enabled_hooks
-            .lock()
-            .map_err(|_| error("plugin_state", "Plugin hook catalog lock failed"))?
-            .clone();
         let snapshot = runtime.modes.snapshot()?;
         let hook_cancel = StartupCancel {
             root: runtime.cancel.clone(),
@@ -1001,7 +1191,7 @@ impl RuntimeServices {
         };
         let mut run = runtime.run.clone();
         run.work_mode = snapshot.current;
-        if session.id != run.session_id {
+        if session_id != run.session_id {
             return Err(error("hook_identity", "Hook session differs from its Run"));
         }
         let context = HookContext {
@@ -1049,9 +1239,10 @@ impl RuntimeServices {
             .lock()
             .map_err(|_| error("plugin_state", "Plugin hook catalog lock failed"))?
             .retain(|hook| {
-                !revoked
-                    .iter()
-                    .any(|plugin| plugin.lease.lease_id == hook.lease().record().lease_id)
+                !revoked.iter().any(|plugin| {
+                    hook.plugin_lease()
+                        .is_some_and(|lease| plugin.lease.lease_id == lease.record().lease_id)
+                })
             });
         if runtime.skill_state.is_some() {
             runtime.set_plugin_skill_leases(

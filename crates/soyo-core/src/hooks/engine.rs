@@ -11,7 +11,7 @@ impl HookEngine {
         self.validate_context(context)?;
         let selected: Vec<_> = hooks
             .iter()
-            .filter(|hook| hook.event == context.event)
+            .filter(|hook| hook.matches_context(context))
             .take(self.limits.max_hooks_per_event + 1)
             .collect();
         if selected.len() > self.limits.max_hooks_per_event {
@@ -22,9 +22,8 @@ impl HookEngine {
             if !seen.insert(hook.key()) {
                 return Err(error("hook_config", "Event hook entries are duplicated"));
             }
-            if hook.lease.record().session_id != context.run.session_id
-                || hook.lease.record().run_id != context.run.id
-            {
+            let (session_id, run_id) = hook.run_scope();
+            if session_id != context.run.session_id || run_id != context.run.id {
                 return Err(error(
                     "hook_identity",
                     "Hook lease belongs to another run or session",
@@ -170,10 +169,7 @@ impl HookEngine {
     }
 
     fn validate_context(&self, context: &HookContext) -> Result<(), BoundaryError> {
-        let tool_event = matches!(
-            context.event,
-            HookEvent::ToolBeforeDispatch | HookEvent::ToolFinished
-        );
+        let tool_event = context.event.is_tool_event();
         if context.run.id != self.run.id
             || context.run.session_id != self.run.session_id
             || context.run.permissions != self.run.permissions
@@ -236,12 +232,12 @@ impl HookEngine {
             run: context.run.clone(),
             parent_call_id: context.parent_call_id.clone(),
             depth: context.depth,
-            plugin_id: hook.lease.record().plugin_id.clone(),
-            package_digest: hook.lease.record().digest.clone(),
+            plugin_id: hook.plugin_id().to_owned(),
+            package_digest: hook.package_digest().to_owned(),
             entry_id: hook.entry.id.clone(),
             entry_sha256: hook.entry_sha256.clone(),
-            lease_id: hook.lease.record().lease_id.clone(),
-            enable_revision: hook.lease.record().enable_revision,
+            lease_id: hook.lease_id().to_owned(),
+            enable_revision: hook.enable_revision(),
             payload_sha256: digest(&output::encode(payload, self.limits.max_payload_bytes)?),
             timeout_ms: hook.entry.timeout_ms,
             output_max_bytes: self.limits.max_output_bytes,

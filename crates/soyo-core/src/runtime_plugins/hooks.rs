@@ -47,6 +47,7 @@ impl HookProcesses {
 
 pub(super) struct NativeHookExecutor {
     plugins: Weak<PluginRun>,
+    host_hooks: Option<Arc<super::HostHookState>>,
     services: Weak<RuntimeServices>,
     dispatcher: Arc<ToolDispatcher>,
     model: Arc<dyn Model>,
@@ -66,10 +67,12 @@ impl NativeHookExecutor {
         runtime: &AgentRuntime,
         session: &Session,
         services: Weak<RuntimeServices>,
-        plugins: Arc<PluginRun>,
+        plugins: Option<Arc<PluginRun>>,
+        host_hooks: Option<Arc<super::HostHookState>>,
     ) -> Self {
         Self {
-            plugins: Arc::downgrade(&plugins),
+            plugins: plugins.as_ref().map(Arc::downgrade).unwrap_or_default(),
+            host_hooks,
             services,
             dispatcher: runtime.dispatcher.clone(),
             model: runtime.model.clone(),
@@ -174,6 +177,9 @@ impl NativeHookExecutor {
         request: &HookExecutionRequest,
         cancel: &dyn Cancellation,
     ) -> Result<HookBegin, BoundaryError> {
+        if let Some(binding) = request.hook.host_binding() {
+            return self.begin_host_rule(request, binding, cancel).await;
+        }
         let plugins = self.plugins.upgrade().ok_or_else(|| {
             error(
                 "hook_execution",
@@ -247,21 +253,174 @@ impl NativeHookExecutor {
         let mut context = self.context.clone();
         context.run.work_mode = snapshot.current;
         let native = plugins.environment(&descriptor.hook_id).await?;
+        let prepare_launch = |launch_call: &ToolCall,
+                              launch_context: &ToolContext|
+         -> Result<crate::dispatch::McpLaunch, BoundaryError> {
+            let mut launch = plugins.scoped_plan(
+                &descriptor.hook_id,
+                launch_context,
+                launch_call,
+                &native,
+                self.dispatcher.effective_exec_config()?,
+            )?;
+            launch
+                .operation
+                .bind_plugin_input(&request.intent.payload_sha256, request.payload.clone())?;
+            Ok(launch)
+        };
+        self.spawn_hook_process(
+            request,
+            &descriptor.hook_id,
+            &services,
+            call,
+            context,
+            &start_cancel,
+            cancel,
+            Some(&plugins),
+            &plugins.processes,
+            prepare_launch,
+        )
+        .await
+    }
+
+    async fn begin_host_rule(
+        &self,
+        request: &HookExecutionRequest,
+        binding: &crate::hooks::HostHookBinding,
+        cancel: &dyn Cancellation,
+    ) -> Result<HookBegin, BoundaryError> {
+        let host = self
+            .host_hooks
+            .as_ref()
+            .ok_or_else(|| error("hook_execution", "Host hook supervisor is unavailable"))?;
+        let registered = host
+            .hooks
+            .iter()
+            .filter_map(|hook| hook.host_binding())
+            .find(|candidate| {
+                candidate.plugin_id == request.intent.plugin_id
+                    && candidate.package_digest == request.intent.package_digest
+                    && candidate.rule.id == request.intent.entry_id
+                    && candidate.lease_id == request.intent.lease_id
+            })
+            .ok_or_else(|| {
+                error(
+                    "hook_identity",
+                    "Host hook intent differs from its prepared rule",
+                )
+            })?;
+        let snapshot = self.modes.snapshot()?;
+        if cancel.is_cancelled()
+            || snapshot.current == WorkMode::Plan
+            || snapshot.pending.is_some()
+            || self.root.is_cancelled()
+        {
+            return Ok(HookBegin::NotStarted { denied: true });
+        }
+        if request.intent.run.id != self.context.run.id
+            || request.intent.run.session_id != self.context.run.session_id
+            || request.intent.enable_revision != registered.enable_revision
+            || binding.package_digest != registered.package_digest
+        {
+            return Ok(HookBegin::NotStarted { denied: true });
+        }
+        let services = self
+            .services
+            .upgrade()
+            .ok_or_else(|| error("hook_execution", "Hook lifecycle supervisor is unavailable"))?;
+        services.reserve_tool(self.limit)?;
+        services
+            .startup_calls
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < self.limit).then_some(count + 1)
+            })
+            .map_err(|_| error("limit_reached", "Hook startup exhausted the tool budget"))?;
+        let start_cancel = StartupCancel {
+            root: self.root.clone(),
+            modes: self.modes.clone(),
+            revision: snapshot.revision,
+            current: snapshot.current,
+        };
+        let environment = registered
+            .rule
+            .env
+            .iter()
+            .map(|(dest, src)| (dest.clone(), json!({"source":"reference","value":src})))
+            .collect::<serde_json::Map<_, _>>();
+        let allowed_refs: BTreeSet<String> = registered.rule.env.values().cloned().collect();
+        let call = ToolCall {
+            call_id: format!("hook-exec-{}", request.intent.invocation_id),
+            name: "exec".into(),
+            arguments: json!({
+                "argv": registered.rule.argv,
+                "cwd": self.context.workspace,
+                "env": environment
+            })
+            .to_string(),
+        };
+        let mut context = self.context.clone();
+        context.run.work_mode = snapshot.current;
+        let scope = json!({
+            "source": "host_hook",
+            "rule_id": registered.rule.id,
+            "digest": registered.package_digest,
+            "event": registered.rule.event,
+            "kind": registered.rule.kind,
+        });
+        let prepare_launch = |launch_call: &ToolCall,
+                              launch_context: &ToolContext|
+         -> Result<crate::dispatch::McpLaunch, BoundaryError> {
+            let mut launch =
+                self.dispatcher
+                    .prepare_mcp_launch(launch_call, launch_context, &allowed_refs)?;
+            if launch.config.execution.is_none() {
+                launch.config.execution = Some(host.environment.as_ref().clone());
+            }
+            launch.operation.bind_host_scope(scope.clone())?;
+            launch
+                .operation
+                .bind_plugin_input(&request.intent.payload_sha256, request.payload.clone())?;
+            Ok(launch)
+        };
+        let entry_id = format!("host:{}", registered.rule.id);
+        self.spawn_hook_process(
+            request,
+            &entry_id,
+            &services,
+            call,
+            context,
+            &start_cancel,
+            cancel,
+            None,
+            &host.processes,
+            prepare_launch,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_hook_process<F>(
+        &self,
+        request: &HookExecutionRequest,
+        entry_id: &str,
+        services: &Arc<RuntimeServices>,
+        call: ToolCall,
+        context: ToolContext,
+        start_cancel: &StartupCancel,
+        cancel: &dyn Cancellation,
+        plugins: Option<&Arc<PluginRun>>,
+        processes: &HookProcesses,
+        prepare_launch: F,
+    ) -> Result<HookBegin, BoundaryError>
+    where
+        F: Fn(&ToolCall, &ToolContext) -> Result<crate::dispatch::McpLaunch, BoundaryError>,
+    {
         if self.safe_input(request)?.is_none() {
             return Ok(HookBegin::NotStarted { denied: true });
         }
-        let mut launch = plugins.scoped_plan(
-            &descriptor.hook_id,
-            &context,
-            &call,
-            &native,
-            self.dispatcher.effective_exec_config()?,
-        )?;
-        launch
-            .operation
-            .bind_plugin_input(&request.intent.payload_sha256, request.payload.clone())?;
+        let launch = prepare_launch(&call, &context)?;
         let permit = match self
-            .authorize(&call, &context, &launch.operation, &start_cancel)
+            .authorize(&call, &context, &launch.operation, start_cancel)
             .await
         {
             Ok(Some(permit)) => permit,
@@ -295,16 +454,7 @@ impl NativeHookExecutor {
                 call: call.clone(),
             }])
             .await?;
-        let mut launch = plugins.scoped_plan(
-            &descriptor.hook_id,
-            &context,
-            &call,
-            &native,
-            self.dispatcher.effective_exec_config()?,
-        )?;
-        launch
-            .operation
-            .bind_plugin_input(&request.intent.payload_sha256, request.payload.clone())?;
+        let launch = prepare_launch(&call, &context)?;
         if cancel.is_cancelled()
             || start_cancel.is_cancelled()
             || !permit.authorize_managed(&call, &context, &launch.operation)?
@@ -334,7 +484,9 @@ impl NativeHookExecutor {
                 return Ok(HookBegin::NotStarted { denied: false });
             }
         };
-        plugins.record(&descriptor.hook_id, StopEvidence::Unknown)?;
+        if let Some(plugins) = plugins {
+            plugins.record(entry_id, StopEvidence::Unknown)?;
+        }
         services.active.fetch_add(1, Ordering::AcqRel);
         let secret_source = self.secrets.clone();
         let writer = process.take_stdin().map(|mut stdin| {
@@ -385,7 +537,7 @@ impl NativeHookExecutor {
             })
         });
         let process = Arc::new(AsyncMutex::new(RunningHook {
-            entry: descriptor.hook_id.clone(),
+            entry: entry_id.to_owned(),
             process,
             writer,
             stdout,
@@ -395,13 +547,12 @@ impl NativeHookExecutor {
             store: self.store.clone(),
             context,
             call,
-            plugins: Arc::downgrade(&plugins),
+            plugins: plugins.map(Arc::downgrade).unwrap_or_default(),
             active: Some(ActiveCall(services.active.clone())),
             finished: false,
         }));
         let id = request.intent.invocation_id.clone();
-        plugins
-            .processes
+        processes
             .0
             .lock()
             .map_err(|_| error("hook_execution", "Hook process registry lock failed"))?
@@ -410,7 +561,7 @@ impl NativeHookExecutor {
         Ok(HookBegin::Started(Box::new(NativeHookExecution {
             id,
             process,
-            owner: plugins.processes.clone(),
+            owner: processes.clone(),
         })))
     }
 }

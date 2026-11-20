@@ -54,6 +54,7 @@ struct Settings {
     authorizer: Option<Arc<dyn McpHttpAuthorizer>>,
     registry: Option<Arc<SecretRegistry>>,
     plugins: Option<plugins::PluginConfiguration>,
+    host_hooks: Option<plugins::HostHookConfiguration>,
 }
 struct LocalProcess {
     process: ManagedProcess,
@@ -81,6 +82,7 @@ struct State {
     emitted_status: Vec<McpServerStatus>,
     plugin_preparation: Option<plugins::PluginPreparation>,
     plugins: Option<Arc<plugins::PluginRun>>,
+    host_hooks: Option<plugins::HostHookRuntime>,
     plugin_broker_directory: Option<std::path::PathBuf>,
 }
 
@@ -266,6 +268,22 @@ impl RuntimeServices {
             status.tools = 0;
         }
         self.emit_status(&mut state).await
+    }
+    pub(super) fn configure_secret_registry(
+        &self,
+        registry: Arc<SecretRegistry>,
+    ) -> Result<(), BoundaryError> {
+        if self.begun.load(Ordering::Acquire) {
+            return Err(error(
+                "invalid_run",
+                "Secret registry cannot change during a run",
+            ));
+        }
+        self.settings
+            .lock()
+            .map_err(|_| error("runtime_services", "Service settings lock failed"))?
+            .registry = Some(registry);
+        Ok(())
     }
     pub(super) fn configure_execution(
         &self,
@@ -509,16 +527,21 @@ impl RuntimeServices {
                     if let Some(subagents) = subagents {
                         subagents.cancel_mutating().await?;
                     }
-                    let plugins = tokio::time::timeout(Duration::from_secs(130), async {
-                        self.state.lock().await.plugins.clone()
-                    })
-                    .await
-                    .map_err(|_| {
-                        error(
-                            "outcome_unknown",
-                            "Service initialization did not yield the mode cleanup boundary",
-                        )
-                    })?;
+                    let (plugins, host_processes) =
+                        tokio::time::timeout(Duration::from_secs(130), async {
+                            let state = self.state.lock().await;
+                            (
+                                state.plugins.clone(),
+                                state.host_hooks.as_ref().map(|h| h.state.processes.clone()),
+                            )
+                        })
+                        .await
+                        .map_err(|_| {
+                            error(
+                                "outcome_unknown",
+                                "Service initialization did not yield the mode cleanup boundary",
+                            )
+                        })?;
                     if let Some(plugins) = plugins {
                         tokio::time::timeout(
                             crate::hooks::HookLimits::default().cleanup_timeout,
@@ -527,6 +550,16 @@ impl RuntimeServices {
                         .await
                         .map_err(|_| {
                             error("outcome_unknown", "Hook cleanup timed out before PLAN")
+                        })??;
+                    }
+                    if let Some(processes) = host_processes {
+                        tokio::time::timeout(
+                            crate::hooks::HookLimits::default().cleanup_timeout,
+                            processes.stop_all(),
+                        )
+                        .await
+                        .map_err(|_| {
+                            error("outcome_unknown", "Host hook cleanup timed out before PLAN")
                         })??;
                     }
                     hooks_stopped = true;
@@ -671,6 +704,16 @@ impl RuntimeServices {
                     }
                 }
             }
+            if let Some(host_hooks) = &settings.host_hooks
+                && host_hooks.settings.enabled
+                && !host_hooks.settings.rules.is_empty()
+                && policy.backend != crate::execution::BackendKind::Host
+            {
+                let journal_path = host_hooks.journal.protected_path().to_path_buf();
+                if !policy.protected_paths.contains(&journal_path) {
+                    policy.protected_paths.push(journal_path);
+                }
+            }
             if policy.workspace.canonicalize().ok() != session.workspace.canonicalize().ok() {
                 return Err(error(
                     "invalid_workspace",
@@ -759,8 +802,10 @@ impl RuntimeServices {
             state.environment = Some(environment);
             runtime.check()?;
         }
-        self.initialize_plugins(runtime, session, &settings, &mut state)
+        let host_hooks = self.prepare_host_hooks(runtime, &settings, &state)?;
+        self.initialize_plugins(runtime, session, &settings, &mut state, host_hooks.clone())
             .await?;
+        self.finalize_host_hooks(runtime, session, &settings, &mut state, host_hooks)?;
         let mut registered = settings.mcp.clone();
         if let Some(plugins) = state.plugins.clone() {
             for (id, server) in &plugins.servers {
@@ -1364,6 +1409,7 @@ impl RuntimeServices {
         }
         Ok(())
     }
+
     pub(super) async fn facts(&self, mode: WorkMode) -> Result<Option<String>, BoundaryError> {
         let mut state = self.state.lock().await;
         let counts = state
@@ -1579,6 +1625,11 @@ impl RuntimeServices {
             first_error.get_or_insert(error);
         }
         if let Err(error) = self.stop_servers(&mut state, dispatcher, false).await {
+            first_error.get_or_insert(error);
+        }
+        if let Some(host_hooks) = state.host_hooks.take()
+            && let Err(error) = host_hooks.state.processes.stop_all().await
+        {
             first_error.get_or_insert(error);
         }
         if let Err(error) = self.cleanup_plugins(&mut state).await {

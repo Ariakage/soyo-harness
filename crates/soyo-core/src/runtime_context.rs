@@ -529,6 +529,28 @@ impl AgentRuntime {
                 Some(checkpoint.view.clone());
             state.published.store(true, Ordering::Release);
             state.rebuild.store(true, Ordering::Release);
+            let compaction_hooks = self
+                .services
+                .fire_hooks(
+                    self,
+                    session,
+                    crate::hooks::HookEvent::CompactionFinished,
+                    format!("compaction.finished:{}", checkpoint.view.checkpoint_id),
+                    None,
+                    serde_json::json!({
+                        "checkpoint_id": checkpoint.view.checkpoint_id,
+                        "covered_prefix": checkpoint.view.covered_prefix,
+                        "forced": forced,
+                        "migrated": migrated_history.is_some(),
+                    }),
+                )
+                .await?;
+            if compaction_hooks.cleanup_pending {
+                return Err(error(
+                    "outcome_unknown",
+                    "A compaction-finished hook requires cleanup reconciliation",
+                ));
+            }
             // Rebuild from the committed host record. Model-returned control
             // state never replaces the current runtime policy.
             let rebuilt = context_builder::build(make_input(Some(&checkpoint.view)), counter)?;

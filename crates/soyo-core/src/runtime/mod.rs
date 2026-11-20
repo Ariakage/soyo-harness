@@ -803,6 +803,7 @@ impl AgentRuntime {
                 .collect::<Vec<_>>(),
         )?;
         self.dispatcher.set_secret_registry(registry.clone())?;
+        self.services.configure_secret_registry(registry.clone())?;
         *self.secret_source.write().map_err(|_| {
             BoundaryError::new(
                 "sensitive_data",
@@ -963,6 +964,17 @@ impl AgentRuntime {
     ) -> Result<Self, BoundaryError> {
         self.services
             .configure_plugins(store, pool, bindings, journal)?;
+        Ok(self)
+    }
+    /// Attach opt-in host-configured automation hooks (`F-04`).
+    pub fn with_host_hooks(
+        self,
+        settings: crate::config::HookSettings,
+        environment: crate::config::Environment,
+        journal: Arc<crate::hook_store::HookStore>,
+    ) -> Result<Self, BoundaryError> {
+        self.services
+            .configure_host_hooks(settings, environment, journal)?;
         Ok(self)
     }
     pub fn with_mcp_settings(
@@ -1709,6 +1721,46 @@ impl AgentRuntime {
                     ));
                 }
             }
+            let pre_model_hooks = self
+                .services
+                .fire_hooks(
+                    self,
+                    session,
+                    crate::hooks::HookEvent::ModelBeforeRequest,
+                    format!("model.before_request:{}", request.request_id),
+                    None,
+                    serde_json::json!({
+                        "request_id": request.request_id,
+                        "profile": request.profile,
+                        "model": route_decision.as_ref().map(|d| d.model.as_str()),
+                        "protocol": route_decision.as_ref().map(|d| d.protocol),
+                        "purpose": request.purpose,
+                        "history_items": request.history.len(),
+                        "tools": request.tools.len(),
+                    }),
+                )
+                .await;
+            let pre_model_hooks = match pre_model_hooks {
+                Ok(outcome) => outcome,
+                Err(failure) => {
+                    let _ = mode_lease.complete();
+                    return Err(failure);
+                }
+            };
+            if pre_model_hooks.cleanup_pending {
+                mode_lease.complete()?;
+                return Err(BoundaryError::new(
+                    error_codes::OUTCOME_UNKNOWN,
+                    "A pre-model hook requires cleanup reconciliation",
+                ));
+            }
+            if pre_model_hooks.blocked {
+                mode_lease.complete()?;
+                return Err(BoundaryError::new(
+                    error_codes::HOOK_DENIED,
+                    "A configured check hook blocked the model request",
+                ));
+            }
             let mut partial = String::new();
             let mut received = false;
             let response = self
@@ -1740,7 +1792,39 @@ impl AgentRuntime {
                     }
                     let items = secrets::model_response(items, &self.secret_source)?;
                     let merged = merge_continued_items(accumulated_text, items);
-                    return secrets::model_response(merged, &self.secret_source);
+                    let merged = secrets::model_response(merged, &self.secret_source)?;
+                    let tool_calls = merged
+                        .iter()
+                        .filter(|item| matches!(item, HistoryItem::ToolCall(_)))
+                        .count();
+                    let has_text = merged
+                        .iter()
+                        .any(|item| matches!(item, HistoryItem::AssistantText(_)));
+                    let finished_hooks = self
+                        .services
+                        .fire_hooks(
+                            self,
+                            session,
+                            crate::hooks::HookEvent::ModelFinished,
+                            format!("model.finished:{}", request.request_id),
+                            None,
+                            serde_json::json!({
+                                "request_id": request.request_id,
+                                "profile": request.profile,
+                                "model": route_decision.as_ref().map(|d| d.model.as_str()),
+                                "items": merged.len(),
+                                "tool_calls": tool_calls,
+                                "has_text": has_text,
+                            }),
+                        )
+                        .await?;
+                    if finished_hooks.cleanup_pending {
+                        return Err(BoundaryError::new(
+                            error_codes::OUTCOME_UNKNOWN,
+                            "A model-finished hook requires cleanup reconciliation",
+                        ));
+                    }
+                    return Ok(merged);
                 }
                 Ok(AttemptResponse::Truncated(items)) => {
                     if let Some(coord) = self.effective_routing().filter(|r| r.is_enabled()) {
@@ -1840,6 +1924,32 @@ impl AgentRuntime {
         let Some(handler) = &self.confirmation else {
             return Ok(None);
         };
+        let input_hooks = self
+            .services
+            .fire_hooks_for_session(
+                self,
+                self.run.session_id,
+                crate::hooks::HookEvent::InputRequired,
+                format!(
+                    "input.required:approval:{}",
+                    crate::memory_context::digest(request.approval_id.as_bytes())
+                ),
+                None,
+                serde_json::json!({
+                    "kind": "approval",
+                    "approval_id": request.approval_id,
+                    "call_id": request.call_id,
+                    "tool": request.tool,
+                    "summary": request.operation_summary,
+                }),
+            )
+            .await?;
+        if input_hooks.cleanup_pending {
+            return Err(BoundaryError::new(
+                error_codes::OUTCOME_UNKNOWN,
+                "An input-required hook requires cleanup reconciliation",
+            ));
+        }
         self.budget.pause()?;
         let answer = tokio::select! {
             biased;
@@ -2190,6 +2300,31 @@ impl AgentRuntime {
                 },
             }])
             .await?;
+        let input_hooks = self
+            .services
+            .fire_hooks(
+                self,
+                session,
+                crate::hooks::HookEvent::InputRequired,
+                format!(
+                    "input.required:ask_user:{}",
+                    crate::memory_context::digest(call.call_id.as_bytes())
+                ),
+                None,
+                serde_json::json!({
+                    "kind": "ask_user",
+                    "input_id": call.call_id,
+                    "question": request.question,
+                    "options": request.options,
+                }),
+            )
+            .await?;
+        if input_hooks.cleanup_pending {
+            return Err(BoundaryError::new(
+                error_codes::OUTCOME_UNKNOWN,
+                "An input-required hook requires cleanup reconciliation",
+            ));
+        }
         let answer = if let Some(handler) = &self.input {
             self.store
                 .commit(&[StoreChange::ToolIntent {

@@ -50,16 +50,36 @@ pub enum HookEvent {
     ToolBeforeDispatch,
     #[serde(rename = "tool.finished")]
     ToolFinished,
+    #[serde(rename = "model.before_request")]
+    ModelBeforeRequest,
+    #[serde(rename = "model.finished")]
+    ModelFinished,
+    #[serde(rename = "input.required")]
+    InputRequired,
+    #[serde(rename = "compaction.finished")]
+    CompactionFinished,
 }
 impl HookEvent {
-    fn parse(text: &str) -> Result<Self, BoundaryError> {
+    pub(crate) fn parse(text: &str) -> Result<Self, BoundaryError> {
         match text {
             "run.started" => Ok(Self::RunStarted),
             "run.finished" => Ok(Self::RunFinished),
             "tool.before_dispatch" => Ok(Self::ToolBeforeDispatch),
             "tool.finished" => Ok(Self::ToolFinished),
+            "model.before_request" => Ok(Self::ModelBeforeRequest),
+            "model.finished" => Ok(Self::ModelFinished),
+            "input.required" => Ok(Self::InputRequired),
+            "compaction.finished" => Ok(Self::CompactionFinished),
             _ => Err(error("hook_config", "Hook event is unsupported")),
         }
+    }
+
+    pub(crate) fn allows_check(self) -> bool {
+        matches!(self, Self::ToolBeforeDispatch | Self::ModelBeforeRequest)
+    }
+
+    pub(crate) fn is_tool_event(self) -> bool {
+        matches!(self, Self::ToolBeforeDispatch | Self::ToolFinished)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,12 +88,38 @@ pub enum HookKind {
     Observer,
     Check,
 }
+impl HookKind {
+    pub(crate) fn parse(text: &str) -> Result<Self, BoundaryError> {
+        match text {
+            "observer" => Ok(Self::Observer),
+            "check" => Ok(Self::Check),
+            _ => Err(error("hook_config", "Hook kind is unsupported")),
+        }
+    }
+}
 
-/// A pinned, enabled package entry. The executor rechecks revocation, current
-/// policy, lease contents and permissions immediately before actual execution.
+#[derive(Clone)]
+pub struct HostHookBinding {
+    pub rule: crate::config::HostHookRule,
+    pub plugin_id: String,
+    pub package_digest: String,
+    pub lease_id: String,
+    pub enable_revision: u64,
+    pub session_id: crate::contract::SessionId,
+    pub run_id: crate::contract::RunId,
+}
+
+#[derive(Clone)]
+enum HookSource {
+    Plugin(Arc<PluginLease>),
+    Host(Arc<HostHookBinding>),
+}
+
+/// A pinned, enabled package or host entry. The executor rechecks revocation,
+/// current policy, lease contents and permissions immediately before execution.
 #[derive(Clone)]
 pub struct EnabledHook {
-    lease: Arc<PluginLease>,
+    source: HookSource,
     entry: HookEntry,
     event: HookEvent,
     kind: HookKind,
@@ -95,12 +141,8 @@ impl EnabledHook {
             .ok_or_else(|| error("hook_config", "Hook entry is not in the leased package"))?
             .clone();
         let event = HookEvent::parse(&entry.event)?;
-        let kind = match entry.kind.as_str() {
-            "observer" => HookKind::Observer,
-            "check" => HookKind::Check,
-            _ => return Err(error("hook_config", "Hook kind is unsupported")),
-        };
-        if (kind == HookKind::Check && event != HookEvent::ToolBeforeDispatch)
+        let kind = HookKind::parse(&entry.kind)?;
+        if (kind == HookKind::Check && !event.allows_check())
             || entry.timeout_ms == 0
             || entry.timeout_ms > 5000
             || !lease.record().grant.capabilities.contains("process.exec")
@@ -121,16 +163,140 @@ impl EnabledHook {
         }
         let entry_sha256 = digest(&output::encode(&entry, 256 * 1024)?);
         Ok(Self {
-            lease,
+            source: HookSource::Plugin(lease),
             entry,
             event,
             kind,
             entry_sha256,
         })
     }
-    pub fn lease(&self) -> &PluginLease {
-        &self.lease
+
+    pub fn from_host_rule(
+        rule: &crate::config::HostHookRule,
+        run: &Run,
+        enable_revision: u64,
+    ) -> Result<Self, BoundaryError> {
+        let event = HookEvent::parse(&rule.event)?;
+        let kind = HookKind::parse(&rule.kind)?;
+        if (kind == HookKind::Check && !event.allows_check())
+            || rule.timeout_ms == 0
+            || rule.timeout_ms > 5000
+            || rule.argv.is_empty()
+            || enable_revision == 0
+        {
+            return Err(error("hook_config", "Host hook rule is invalid"));
+        }
+        let entry = HookEntry {
+            id: rule.id.clone(),
+            event: rule.event.clone(),
+            kind: rule.kind.clone(),
+            program: rule.argv[0].clone(),
+            args: rule.argv[1..].to_vec(),
+            timeout_ms: rule.timeout_ms,
+        };
+        let entry_sha256 = digest(&output::encode(&entry, 256 * 1024)?);
+        let package_digest = digest(&output::encode(rule, 256 * 1024)?);
+        let binding = Arc::new(HostHookBinding {
+            rule: rule.clone(),
+            plugin_id: "host.config".into(),
+            package_digest,
+            lease_id: format!("host:{}:{}", run.session_id.0, rule.id),
+            enable_revision,
+            session_id: run.session_id,
+            run_id: run.id,
+        });
+        Ok(Self {
+            source: HookSource::Host(binding),
+            entry,
+            event,
+            kind,
+            entry_sha256,
+        })
     }
+
+    pub fn plugin_lease(&self) -> Option<&PluginLease> {
+        match &self.source {
+            HookSource::Plugin(lease) => Some(lease),
+            HookSource::Host(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plugin_lease_arc(&self) -> Option<Arc<PluginLease>> {
+        match &self.source {
+            HookSource::Plugin(lease) => Some(Arc::clone(lease)),
+            HookSource::Host(_) => None,
+        }
+    }
+
+    pub fn host_binding(&self) -> Option<&HostHookBinding> {
+        match &self.source {
+            HookSource::Plugin(_) => None,
+            HookSource::Host(binding) => Some(binding),
+        }
+    }
+
+    pub(crate) fn plugin_id(&self) -> &str {
+        match &self.source {
+            HookSource::Plugin(lease) => &lease.record().plugin_id,
+            HookSource::Host(binding) => &binding.plugin_id,
+        }
+    }
+
+    pub(crate) fn package_digest(&self) -> &str {
+        match &self.source {
+            HookSource::Plugin(lease) => &lease.record().digest,
+            HookSource::Host(binding) => &binding.package_digest,
+        }
+    }
+
+    pub(crate) fn lease_id(&self) -> &str {
+        match &self.source {
+            HookSource::Plugin(lease) => &lease.record().lease_id,
+            HookSource::Host(binding) => &binding.lease_id,
+        }
+    }
+
+    pub(crate) fn enable_revision(&self) -> u64 {
+        match &self.source {
+            HookSource::Plugin(lease) => lease.record().enable_revision,
+            HookSource::Host(binding) => binding.enable_revision,
+        }
+    }
+
+    pub(crate) fn run_scope(&self) -> (crate::contract::SessionId, crate::contract::RunId) {
+        match &self.source {
+            HookSource::Plugin(lease) => (lease.record().session_id, lease.record().run_id),
+            HookSource::Host(binding) => (binding.session_id, binding.run_id),
+        }
+    }
+
+    pub(crate) fn matches_context(&self, context: &HookContext) -> bool {
+        if self.event != context.event {
+            return false;
+        }
+        let HookSource::Host(binding) = &self.source else {
+            return true;
+        };
+        if !binding.rule.modes.is_empty() && !binding.rule.modes.contains(&context.run.work_mode) {
+            return false;
+        }
+        if !binding.rule.tools.is_empty() {
+            let Some(tool_name) = context.data.get("tool").and_then(Value::as_str) else {
+                return false;
+            };
+            if !binding
+                .rule
+                .tools
+                .iter()
+                .any(|allowed| allowed == tool_name)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn entry(&self) -> &HookEntry {
         &self.entry
     }
@@ -144,8 +310,8 @@ impl EnabledHook {
         digest(
             format!(
                 "{}\0{}\0{}",
-                self.lease.record().plugin_id,
-                self.lease.record().digest,
+                self.plugin_id(),
+                self.package_digest(),
                 self.entry.id
             )
             .as_bytes(),

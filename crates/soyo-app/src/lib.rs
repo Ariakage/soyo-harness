@@ -560,15 +560,33 @@ pub fn build_runtime_with_health(
             .push(checkpoints.protected_path().to_owned());
     }
     runtime = runtime.with_checkpoints(checkpoints, private_paths, sandbox.write_roots.clone())?;
-    if let Some(store) = plugin_store {
-        runtime = extensions::attach(
-            runtime,
-            config,
+    let has_host_hooks = config.hooks.enabled && !config.hooks.rules.is_empty();
+    let shared_journal = if plugin_store.is_some() || has_host_hooks {
+        Some(extensions::hook_journal(
+            &config.state_dir,
             session,
-            &mut sandbox,
-            store,
             registry.clone(),
-        )?;
+        )?)
+    } else {
+        None
+    };
+    if let (Some(store), Some(journal)) = (plugin_store, shared_journal.clone()) {
+        runtime = extensions::attach(runtime, config, session, &mut sandbox, store, journal)?;
+    }
+    if has_host_hooks {
+        let journal = shared_journal.ok_or_else(|| {
+            BoundaryError::new(
+                "hook_journal_permissions",
+                "Host hook journal could not be initialized",
+            )
+        })?;
+        if sandbox.backend != soyo_core::execution::BackendKind::Host
+            && !sandbox.protected_paths.contains(&config.state_dir)
+        {
+            sandbox.protected_paths.push(config.state_dir.clone());
+        }
+        runtime =
+            runtime.with_host_hooks(config.hooks.clone(), config.environment().clone(), journal)?;
     }
     let code_intel_protected = sandbox.protected_paths.clone();
     runtime = runtime.with_execution_settings(sandbox, broker)?;

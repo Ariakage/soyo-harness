@@ -297,6 +297,27 @@ impl Operation {
         }
         Ok(operation)
     }
+    pub(crate) fn bind_host_scope(
+        &mut self,
+        binding: serde_json::Value,
+    ) -> Result<(), BoundaryError> {
+        if !binding.is_object()
+            || serde_json::to_vec(&binding)
+                .map_err(|_| failure("invalid_args", "Host execution scope cannot be encoded"))?
+                .len()
+                > 128 * 1024
+        {
+            return Err(failure("invalid_args", "Host execution scope is invalid"));
+        }
+        let Target::Exec { host_scope, .. } = &mut self.target else {
+            return Err(failure(
+                "invalid_args",
+                "Host execution scope requires an exec operation",
+            ));
+        };
+        *host_scope = Some(binding);
+        Ok(())
+    }
     pub(crate) fn bind_plugin_input(
         &mut self,
         payload_sha256: &str,

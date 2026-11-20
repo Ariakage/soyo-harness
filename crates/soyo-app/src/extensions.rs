@@ -84,13 +84,12 @@ pub(super) fn attach(
     session: &Session,
     sandbox: &mut SandboxPolicy,
     store: PluginStore,
-    secrets: Arc<SecretRegistry>,
+    journal: Arc<HookStore>,
 ) -> Result<AgentRuntime, BoundaryError> {
     let pool = Arc::new(ViewPool::open(
         &view_path(session, sandbox)?,
         ViewLimits::default(),
     )?);
-    let journal = hook_journal(&config.state_dir, session, secrets)?;
     if sandbox.backend != soyo_core::execution::BackendKind::Host
         && !sandbox.protected_paths.contains(&config.state_dir)
     {
@@ -100,7 +99,7 @@ pub(super) fn attach(
 }
 
 // Keep the opened parent alive while HookStore establishes its own stable root.
-fn hook_journal(
+pub(super) fn hook_journal(
     state: &Path,
     session: &Session,
     secrets: Arc<SecretRegistry>,

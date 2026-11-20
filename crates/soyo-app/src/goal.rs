@@ -757,6 +757,14 @@ pub fn goal_profile_fingerprint(config: &Config, profile: &str) -> Result<String
             "Goal Plugin configuration cannot be fingerprinted",
         )
     })?);
+    if config.hooks.enabled {
+        hash.update(serde_json::to_vec(&config.hooks).map_err(|_| {
+            failure(
+                "invalid_goal",
+                "Goal hook configuration cannot be fingerprinted",
+            )
+        })?);
+    }
     hash.update(serde_json::to_vec(&config.web).map_err(|_| {
         failure(
             "invalid_goal",

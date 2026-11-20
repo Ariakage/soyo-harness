@@ -538,8 +538,10 @@ impl HookHostExecutor for Executor {
                 request.ancestry.last().unwrap().invocation_id,
                 request.intent.invocation_id
             );
-            request.hook.lease().check_active()?;
-            request.hook.lease().verify_contents()?;
+            if let Some(lease) = request.hook.plugin_lease() {
+                lease.check_active()?;
+                lease.verify_contents()?;
+            }
             if request.intent.run.work_mode == WorkMode::Plan {
                 return Ok(HookBegin::NotStarted { denied: true });
             }
@@ -1088,7 +1090,9 @@ async fn host_identity_limits_and_duplicate_entries_are_validated_before_journal
     assert!(engine.fire(&context, &hooks, &NeverCancel).await.is_err());
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
     assert!(journal.rows.lock().unwrap().is_empty());
-    assert!(EnabledHook::from_lease(fixture.hooks[0].lease.clone(), "absent").is_err());
+    assert!(
+        EnabledHook::from_lease(fixture.hooks[0].plugin_lease_arc().unwrap(), "absent").is_err()
+    );
     assert!(
         HookEngine::new(
             fixture.run.clone(),
@@ -1102,4 +1106,181 @@ async fn host_identity_limits_and_duplicate_entries_are_validated_before_journal
         )
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn extended_events_and_host_hook_filters_respect_gates_and_scopes() {
+    let fixture = Fixture::with_hooks(
+        WorkMode::Work,
+        PermissionMode::Bypass,
+        &[
+            ("m-before", "model.before_request", "observer"),
+            ("m-check", "model.before_request", "check"),
+            ("m-finished", "model.finished", "observer"),
+            ("input-req", "input.required", "observer"),
+            ("compact-done", "compaction.finished", "observer"),
+        ],
+    );
+    let journal = Arc::new(Journal::default());
+
+    let allow_exec = Arc::new(Executor::new(
+        journal.clone(),
+        Behavior {
+            stdout: br#"{"decision":"pass"}"#.to_vec(),
+            ..Behavior::default()
+        },
+    ));
+    let engine = HookEngine::new(
+        fixture.run.clone(),
+        HookLimits::default(),
+        Arc::new(SecretRegistry::default()),
+        allow_exec.clone(),
+        journal.clone(),
+    )
+    .unwrap();
+    for event in [
+        HookEvent::ModelBeforeRequest,
+        HookEvent::ModelFinished,
+        HookEvent::InputRequired,
+        HookEvent::CompactionFinished,
+    ] {
+        let context = fixture.context(event);
+        let selected: Vec<_> = fixture
+            .hooks
+            .iter()
+            .filter(|h| h.event() == event)
+            .cloned()
+            .collect();
+        let outcome = engine
+            .fire(&context, &selected, &NeverCancel)
+            .await
+            .unwrap();
+        assert!(!outcome.blocked, "event {event:?} should pass");
+        assert!(!outcome.cancelled);
+    }
+
+    // model.before_request check hook can veto model dispatch.
+    let deny_journal = Arc::new(Journal::default());
+    let deny_exec = Arc::new(Executor::new(
+        deny_journal.clone(),
+        Behavior {
+            stdout: br#"{"decision":"deny","annotations":[{"level":"error","message":"blocked by gate"}]}"#.to_vec(),
+            ..Behavior::default()
+        },
+    ));
+    let deny_engine = HookEngine::new(
+        fixture.run.clone(),
+        HookLimits::default(),
+        Arc::new(SecretRegistry::default()),
+        deny_exec,
+        deny_journal,
+    )
+    .unwrap();
+    let check_only: Vec<_> = fixture
+        .hooks
+        .iter()
+        .filter(|h| h.event() == HookEvent::ModelBeforeRequest && h.kind() == HookKind::Check)
+        .cloned()
+        .collect();
+    let blocked = deny_engine
+        .fire(
+            &fixture.context(HookEvent::ModelBeforeRequest),
+            &check_only,
+            &NeverCancel,
+        )
+        .await
+        .unwrap();
+    assert!(blocked.blocked);
+
+    // Non-gate events reject `check` kind.
+    for bad_event in ["model.finished", "input.required", "compaction.finished"] {
+        let bad_rule = crate::config::HostHookRule {
+            id: format!("bad-{bad_event}"),
+            event: bad_event.into(),
+            kind: "check".into(),
+            argv: vec!["/bin/true".into()],
+            tools: Vec::new(),
+            modes: Vec::new(),
+            timeout_ms: 1000,
+            env: BTreeMap::new(),
+        };
+        assert!(EnabledHook::from_host_rule(&bad_rule, &fixture.run, 1).is_err());
+    }
+
+    // Host rules filter by work mode and tool name before invoking executor.
+    let mode_filtered = EnabledHook::from_host_rule(
+        &crate::config::HostHookRule {
+            id: "code-only-model".into(),
+            event: "model.before_request".into(),
+            kind: "observer".into(),
+            argv: vec!["/bin/echo".into()],
+            tools: Vec::new(),
+            modes: vec![WorkMode::Code],
+            timeout_ms: 1000,
+            env: BTreeMap::new(),
+        },
+        &fixture.run,
+        1,
+    )
+    .unwrap();
+    let tool_filtered = EnabledHook::from_host_rule(
+        &crate::config::HostHookRule {
+            id: "read-only-tool".into(),
+            event: "tool.before_dispatch".into(),
+            kind: "observer".into(),
+            argv: vec!["/bin/echo".into()],
+            tools: vec!["read".into()],
+            modes: Vec::new(),
+            timeout_ms: 1000,
+            env: BTreeMap::new(),
+        },
+        &fixture.run,
+        1,
+    )
+    .unwrap();
+
+    let host_journal = Arc::new(Journal::default());
+    let host_exec = Arc::new(Executor::new(host_journal.clone(), Behavior::default()));
+    let host_engine = HookEngine::new(
+        fixture.run.clone(),
+        HookLimits::default(),
+        Arc::new(SecretRegistry::default()),
+        host_exec.clone(),
+        host_journal,
+    )
+    .unwrap();
+    let work_model_ctx = fixture.context(HookEvent::ModelBeforeRequest);
+    let _ = host_engine
+        .fire(
+            &work_model_ctx,
+            std::slice::from_ref(&mode_filtered),
+            &NeverCancel,
+        )
+        .await
+        .unwrap();
+    assert_eq!(host_exec.calls.load(Ordering::SeqCst), 0);
+
+    let mut exec_tool_ctx = fixture.context(HookEvent::ToolBeforeDispatch);
+    exec_tool_ctx.data = json!({"tool": "exec"});
+    let _ = host_engine
+        .fire(
+            &exec_tool_ctx,
+            std::slice::from_ref(&tool_filtered),
+            &NeverCancel,
+        )
+        .await
+        .unwrap();
+    assert_eq!(host_exec.calls.load(Ordering::SeqCst), 0);
+
+    let mut read_tool_ctx = fixture.context(HookEvent::ToolBeforeDispatch);
+    read_tool_ctx.data = json!({"tool": "read"});
+    let _ = host_engine
+        .fire(
+            &read_tool_ctx,
+            std::slice::from_ref(&tool_filtered),
+            &NeverCancel,
+        )
+        .await
+        .unwrap();
+    assert_eq!(host_exec.calls.load(Ordering::SeqCst), 1);
 }

@@ -1,7 +1,5 @@
 use super::*;
-use crate::hooks::{
-    CleanupState, HookDecision, HookEvent, HookExecutionState, HookKind, HookStatus,
-};
+use crate::hooks::{CleanupState, HookDecision, HookExecutionState, HookKind, HookStatus};
 use serde::Serialize;
 
 pub(super) fn sha256(bytes: &[u8]) -> String {
@@ -51,10 +49,7 @@ pub(super) fn intent(
     intent: &HookIntent,
     secrets: &SecretRegistry,
 ) -> Result<String, BoundaryError> {
-    let tool_event = matches!(
-        intent.event,
-        HookEvent::ToolBeforeDispatch | HookEvent::ToolFinished
-    );
+    let tool_event = intent.event.is_tool_event();
     if !digest(&intent.invocation_id)
         || !digest(&intent.fingerprint)
         || !digest(&intent.package_digest)
@@ -75,7 +70,7 @@ pub(super) fn intent(
             .parent_call_id
             .as_ref()
             .is_some_and(|id| !text(id, 256))
-        || (intent.kind == HookKind::Check && intent.event != HookEvent::ToolBeforeDispatch)
+        || (intent.kind == HookKind::Check && !intent.event.allows_check())
         || intent.timeout_ms == 0
         || intent.timeout_ms > 5000
         || intent.output_max_bytes == 0

@@ -217,7 +217,11 @@
               "run.started",
               "run.finished",
               "tool.before_dispatch",
-              "tool.finished"
+              "tool.finished",
+              "model.before_request",
+              "model.finished",
+              "input.required",
+              "compaction.finished"
             ]
           },
           "kind": {
@@ -250,7 +254,10 @@
             "then": {
               "properties": {
                 "event": {
-                  "const": "tool.before_dispatch"
+                  "enum": [
+                    "tool.before_dispatch",
+                    "model.before_request"
+                  ]
                 }
               }
             }

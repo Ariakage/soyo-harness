@@ -25,6 +25,8 @@ mod sandbox;
 pub use sandbox::{SandboxNetworkSettings, SandboxSettings, ToolchainPreset};
 mod plugins;
 pub use plugins::PluginSettings;
+mod hooks;
+pub use hooks::{HookSettings, HostHookRule};
 mod routing;
 pub use routing::{
     DEFAULT_CIRCUIT_BREAKER_FAILURES, DEFAULT_COOLDOWN_SECONDS, OpaqueHistoryPolicy,
@@ -631,6 +633,8 @@ struct Document {
     #[serde(default)]
     plugins: PluginSettings,
     #[serde(default)]
+    hooks: HookSettings,
+    #[serde(default)]
     web: crate::web::WebSettings,
     #[serde(default)]
     browser: crate::browser::BrowserSettings,
@@ -666,6 +670,8 @@ pub struct Config {
     pub context: ContextSettings,
     pub memory: MemorySettings,
     pub plugins: PluginSettings,
+    /// Opt-in host-configured lifecycle automation hooks (`F-04`); `enabled` defaults to `false`.
+    pub hooks: HookSettings,
     pub web: crate::web::WebSettings,
     pub browser: crate::browser::BrowserSettings,
     /// Opt-in experimental JS REPL (`F-21`); `enabled` defaults to `false`.
@@ -1016,6 +1022,7 @@ pub fn load(
     doc.output_capture.limits.validate()?;
     doc.context.validate()?;
     doc.plugins.validate()?;
+    doc.hooks.validate(&env)?;
     doc.web
         .validate()
         .map_err(|_| invalid("web settings are invalid"))?;
@@ -1122,6 +1129,7 @@ pub fn load(
         context: doc.context,
         memory: doc.memory,
         plugins: doc.plugins,
+        hooks: doc.hooks,
         web: doc.web,
         browser: doc.browser,
         js_repl: doc.js_repl,
