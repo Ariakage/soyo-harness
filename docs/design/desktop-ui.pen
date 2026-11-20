@@ -68307,7 +68307,7 @@
                   "name": "Container",
                   "clip": true,
                   "width": 680,
-                  "height": 520,
+                  "height": 560,
                   "fill": "$surface-overlay",
                   "cornerRadius": "$radius-xl",
                   "stroke": "$border",
@@ -69300,6 +69300,232 @@
                                     {
                                       "type": "frame",
                                       "id": "rRRXY",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "e1V74B",
+                              "name": "Row routing",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "NyOBz",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "UEG0A",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "XGIC1",
+                                          "name": "Model routing & failover (F-16)",
+                                          "fill": "$text-primary",
+                                          "content": "Model routing & failover (F-16)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "dyvat",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "VnkMp",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "XMblb",
+                                      "name": "routing Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Role-based multi-profile routing, transient pre-stream failover with circuit breaker, and opaque history policy.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "RyTa9",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "nP3YN",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "y4Thk",
+                              "name": "Row code_intel",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "zsXRu",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "aqa34",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "A9iHM",
+                                          "name": "Project index & sandboxed LSP (F-17)",
+                                          "fill": "$text-primary",
+                                          "content": "Project index & sandboxed LSP (F-17)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "OOptY",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "fl0Ds",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "faLuj",
+                                      "name": "code_intel Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "External SQLite symbol index with read-only sandboxed LSP diagnostics, references, and SHA-verified diff previews.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "dQEZc",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "A4VNQ5",
                                       "x": 18,
                                       "y": 2,
                                       "name": "Knob On",
@@ -70428,7 +70654,7 @@
                   "name": "Container",
                   "clip": true,
                   "width": 680,
-                  "height": 520,
+                  "height": 560,
                   "fill": "$surface-overlay",
                   "cornerRadius": "$radius-xl",
                   "stroke": "$border",
@@ -71421,6 +71647,232 @@
                                     {
                                       "type": "frame",
                                       "id": "XF2UH",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "kYBtW",
+                              "name": "Row routing",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "rkPx6",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "ZTiKR",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "h5g8vA",
+                                          "name": "Model routing & failover (F-16)",
+                                          "fill": "$text-primary",
+                                          "content": "Model routing & failover (F-16)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "dMj6b",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "wTSQr",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "hhNtB",
+                                      "name": "routing Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Role-based multi-profile routing, transient pre-stream failover with circuit breaker, and opaque history policy.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "SILXG",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "dX2Yl",
+                                      "x": 18,
+                                      "y": 2,
+                                      "name": "Knob On",
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$on-accent",
+                                      "cornerRadius": "$radius-full",
+                                      "layout": "none"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "FpL3O",
+                              "name": "Row code_intel",
+                              "width": "fill_container",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "e0D5fV",
+                                  "name": "Row Left",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "e9nmnZ",
+                                      "name": "Title Row",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "JfCzE",
+                                          "name": "Project index & sandboxed LSP (F-17)",
+                                          "fill": "$text-primary",
+                                          "content": "Project index & sandboxed LSP (F-17)",
+                                          "fontFamily": "$font-sans",
+                                          "fontSize": 12,
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "x6jwF",
+                                          "name": "Enabled Pill",
+                                          "fill": "$success-surface",
+                                          "cornerRadius": "$radius-md",
+                                          "stroke": "$border-strong",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner",
+                                          "padding": [
+                                            2,
+                                            8
+                                          ],
+                                          "alignItems": "center",
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "id": "NajSQ",
+                                              "name": "Enabled",
+                                              "fill": "$success",
+                                              "content": "Enabled",
+                                              "fontFamily": "$font-sans",
+                                              "fontSize": 12,
+                                              "fontWeight": "500"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "J9Eb5K",
+                                      "name": "code_intel Desc",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "External SQLite symbol index with read-only sandboxed LSP diagnostics, references, and SHA-verified diff previews.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-sans",
+                                      "fontSize": 11,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "QDFoF",
+                                  "name": "Switch On",
+                                  "width": 36,
+                                  "height": 20,
+                                  "fill": "$accent",
+                                  "cornerRadius": "$radius-full",
+                                  "layout": "none",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "pGV5q",
                                       "x": 18,
                                       "y": 2,
                                       "name": "Knob On",

@@ -171,11 +171,11 @@
   python3 docs/design/devin_theme_gen.py --theme dark /tmp/soyo_theme_dark
   python3 docs/design/devin_theme_gen.py --theme light /tmp/soyo_theme_light
   ```
-- **[desktop-ui.pen](desktop-ui.pen)**：经 Pencil MCP 维护的仓库内 `.pen` 设计源文件（`mode: ["dark", "light"]` 48 项设计 Token 变量、绑定率 100%，含 15 帧 Soyo Dark 与右移 `+4560px` 并排的 15 帧 Soyo Light 共 **30 个画板**，新增 `15 · Settings — Experimental` / `Light` 对齐 F-09 实验性开关与布局；`.pen` 为加密格式，须通过 Pencil MCP 编辑并调用 `save` 落盘，不可用文本工具直改）。
+- **[desktop-ui.pen](desktop-ui.pen)**：经 Pencil MCP 维护的仓库内 `.pen` 设计源文件（`mode: ["dark", "light"]` 48 项设计 Token 变量、绑定率 100%，含 15 帧 Soyo Dark 与右移 `+4560px` 并排的 15 帧 Soyo Light 共 **30 个画板**，其中 `15 · Settings — Experimental` / `Light`（卡片高 `560px`）同步呈现 `js_repl`、`F-09`（`subagents`）、`F-16`（`routing`）与 `F-17`（`code_intel`）共 4 项实验开关及布局；`.pen` 为加密格式，须通过 Pencil MCP 编辑并调用 `save` 落盘，不可用文本工具直改）。
 
 ### 7.2 桌面 UI 实机渲染截图（`docs/design/screenshots/desktop/`）
 
-以下 12 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查：
+以下 12 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查；`Settings › Experimental` 两张截图已随 F-16/F-17 开关重拍覆盖 4 项开关布局：
 
 | 场景与断点 | Soyo Dark | Soyo Light |
 | :--- | :--- | :--- |
