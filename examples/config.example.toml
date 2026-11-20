@@ -114,3 +114,20 @@ enabled = true
 # [browser.network]
 # enabled = false
 
+# Controlled parent-child subagents (`F-09`) default to disabled.
+# When enabled, child subagents run at max_depth = 1 with non-escalating mode,
+# permission, sandbox, secret, and shared budget bounds.
+# [subagents]
+# enabled = false
+# max_concurrent = 4
+# max_total = 16
+# max_model_requests = 32
+# max_tool_calls = 128
+# default_timeout_seconds = 300
+# max_timeout_seconds = 900
+# max_workspace_files = 10000
+# max_workspace_bytes = 67108864
+# max_changed_files = 256
+# max_patch_bytes = 262144
+# max_summary_bytes = 32768
+

@@ -71,6 +71,9 @@ pub(crate) fn summarize_call(
     if name.starts_with("browser_") {
         return browser_call_summary(name, result);
     }
+    if name.starts_with("subagent_") {
+        return subagent_call_summary(name, arguments, result);
+    }
     if name != "exec" {
         return result.and_then(|result| {
             serde_json::to_string(result)
@@ -120,6 +123,83 @@ pub(crate) fn summarize_call(
         ok,
         truncated,
         running,
+    })
+}
+
+fn subagent_call_summary(
+    name: &str,
+    arguments: &Value,
+    result: Option<&ToolResult>,
+) -> Option<ToolSummary> {
+    let action = crate::i18n::subagent::action(name);
+    let label = arguments.get("label").and_then(Value::as_str);
+    let Some(result) = result else {
+        let mut parts = vec![action.to_owned()];
+        if let Some(label) = label {
+            parts.push(one_line(label, 32));
+        }
+        parts.push(text::RUNNING.into());
+        return Some(ToolSummary {
+            text: one_line(&parts.join(" · "), 120),
+            ok: true,
+            truncated: false,
+            running: true,
+        });
+    };
+    if !result.ok {
+        let error = result.error.as_ref()?;
+        return Some(ToolSummary {
+            text: one_line(&format!("{action} · {}", error.code), 120),
+            ok: false,
+            truncated: result.truncated,
+            running: false,
+        });
+    }
+    let Some(data) = result.data.as_ref() else {
+        return Some(ToolSummary {
+            text: action.into(),
+            ok: true,
+            truncated: result.truncated,
+            running: false,
+        });
+    };
+    let mut parts = vec![action.to_owned()];
+    if let Some(label) = data.get("label").and_then(Value::as_str).or(label) {
+        parts.push(one_line(label, 32));
+    }
+    if let Some(state) = data.get("state").and_then(Value::as_str) {
+        parts.push(one_line(state, 24));
+    }
+    if let Some(count) = data
+        .get("subagents")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+    {
+        parts.push(format!("{count} {}", crate::i18n::subagent::COUNT));
+    }
+    if let Some(done) = data.get("completed").and_then(Value::as_bool) {
+        parts.push(
+            if done {
+                crate::i18n::subagent::COMPLETED_WAIT
+            } else {
+                crate::i18n::subagent::TIMED_OUT_WAIT
+            }
+            .into(),
+        );
+    }
+    if let Some(changed) = data
+        .get("changed_files")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        && changed > 0
+    {
+        parts.push(format!("{changed} {}", text::FILES));
+    }
+    Some(ToolSummary {
+        text: one_line(&parts.join(" · "), 120),
+        ok: true,
+        truncated: result.truncated,
+        running: false,
     })
 }
 

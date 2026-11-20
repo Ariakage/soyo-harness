@@ -738,6 +738,7 @@ pub fn goal_profile_fingerprint(config: &Config, profile: &str) -> Result<String
                 "root": config.memory.root.as_deref(),
             },
             "output_capture_enabled": config.output_capture.enabled,
+            "subagents": &config.subagents,
         }))
         .map_err(|_| {
             failure(

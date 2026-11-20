@@ -75,10 +75,54 @@ fn push_scalar(parts: &mut Vec<String>, label: &str, value: &Value) {
     }
 }
 
+/// Render the approval argument block. Browser and subagent tools never include
+/// raw task/text strings; unknown tools keep a sanitized generic rendering.
+pub(crate) fn subagent_action(tool: &str, arguments: &Value) -> Option<String> {
+    let action = tool.strip_prefix("subagent_")?;
+    let Some(object) = arguments.as_object() else {
+        return Some(format!("subagent {action} · arguments withheld"));
+    };
+    let mut parts = vec![format!("subagent {action}")];
+    let mut unknown = Vec::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "subagent_id" => push_scalar(&mut parts, "id", value),
+            "label" => push_scalar(&mut parts, "label", value),
+            "mode" => push_scalar(&mut parts, "mode", value),
+            "workspace_isolation" => push_scalar(&mut parts, "isolation", value),
+            "allow_exec" => push_scalar(&mut parts, "allow_exec", value),
+            "discard" => push_scalar(&mut parts, "discard", value),
+            "discard_after" => push_scalar(&mut parts, "discard_after", value),
+            "include_patch" => push_scalar(&mut parts, "include_patch", value),
+            "wait_all" => push_scalar(&mut parts, "wait_all", value),
+            "timeout_seconds" => push_scalar(&mut parts, "timeout", value),
+            "background" => {
+                if value.as_bool() == Some(true) {
+                    parts.push("background".into());
+                }
+            }
+            "task" | "message" => match value.as_str() {
+                Some(text) => parts.push(format!("{key} {} bytes", text.len())),
+                None => parts.push(format!("{key} <structured>")),
+            },
+            "allowed_paths" | "paths" | "subagent_ids" => match value.as_array() {
+                Some(items) => parts.push(format!("{key} {} item(s)", items.len())),
+                None => parts.push(format!("{key} <structured>")),
+            },
+            other => unknown.push(other.to_owned()),
+        }
+    }
+    if !unknown.is_empty() {
+        unknown.sort();
+        parts.push(format!("additional fields: {}", unknown.join(", ")));
+    }
+    Some(parts.join(" · "))
+}
+
 /// Render the approval argument block. Browser tools never include the raw
 /// JSON; unknown and non-browser tools keep a sanitized generic rendering.
 pub(crate) fn argument_lines(tool: &str, arguments: &Value) -> String {
-    match browser_action(tool, arguments) {
+    match browser_action(tool, arguments).or_else(|| subagent_action(tool, arguments)) {
         Some(summary) => {
             let summary = safe_terminal_text(&summary)
                 .replace('\n', "\\n")
@@ -175,5 +219,28 @@ mod tests {
         assert!(lines.contains("credential slot login"));
         assert!(lines.contains("text <structured>"));
         assert!(!lines.contains("Arguments:"));
+    }
+
+    #[test]
+    fn subagent_actions_withhold_raw_prompts_and_highlight_metadata() {
+        let lines = argument_lines(
+            "subagent_spawn",
+            &json!({
+                "label": "worker-1",
+                "task": "top-secret-task-body",
+                "mode": "code",
+                "workspace_isolation": "isolated",
+                "allow_exec": true,
+                "allowed_paths": ["src/a.rs", "src/b.rs"],
+                "background": true
+            }),
+        );
+        assert!(lines.contains("Action: subagent spawn"));
+        assert!(lines.contains("label worker-1"));
+        assert!(lines.contains("isolation isolated"));
+        assert!(lines.contains("allow_exec true"));
+        assert!(lines.contains("allowed_paths 2 item(s)"));
+        assert!(lines.contains("task 20 bytes"));
+        assert!(!lines.contains("top-secret-task-body"));
     }
 }

@@ -310,7 +310,132 @@ pub(crate) fn result_named(name: &str, result: &ToolResult) -> String {
     if name.starts_with("browser_") {
         return browser_result(name, result);
     }
+    if name.starts_with("subagent_") {
+        return subagent_result(name, result);
+    }
     crate::tool_render::result(result)
+}
+
+fn subagent_result(name: &str, result: &ToolResult) -> String {
+    let safe = crate::editor::safe_text;
+    let mut lines = vec![format!(
+        "{} · {} · {}",
+        crate::i18n::subagent::SUBAGENT,
+        crate::i18n::subagent::action(name),
+        if result.ok {
+            text::COMPLETED
+        } else {
+            text::FAILED
+        }
+    )];
+    if result.truncated {
+        lines.push(text::OUTPUT_TRUNCATED.into());
+    }
+    if let Some(error) = &result.error {
+        lines.push(format!("{}: {}", text::ERROR, safe(&error.code)));
+        lines.push(format!("{}: {}", text::MESSAGE, safe(&error.message)));
+    }
+    let Some(data) = result.data.as_ref() else {
+        return lines.join("\n");
+    };
+    if let Some(id) = data
+        .get("id")
+        .or_else(|| data.get("subagent_id"))
+        .and_then(Value::as_str)
+    {
+        lines.push(format!("  {}: {}", crate::i18n::subagent::ID, safe(id)));
+    }
+    if let Some(label) = data.get("label").and_then(Value::as_str) {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::LABEL,
+            safe(label)
+        ));
+    }
+    if let Some(state) = data.get("state").and_then(Value::as_str) {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::STATE,
+            safe(state)
+        ));
+    }
+    if let Some(mode) = data.get("work_mode").and_then(Value::as_str) {
+        lines.push(format!("  {}: {}", crate::i18n::subagent::MODE, safe(mode)));
+    }
+    if let Some(iso) = data.get("isolation_kind").and_then(Value::as_str) {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::ISOLATION,
+            safe(iso)
+        ));
+    }
+    if let Some(traces) = data.get("step_traces").and_then(Value::as_array)
+        && !traces.is_empty()
+    {
+        lines.push(format!("  {}:", crate::i18n::subagent::STEPS));
+        for step in traces {
+            let tool = step.get("tool").and_then(Value::as_str).unwrap_or("tool");
+            let detail = step.get("detail").and_then(Value::as_str).unwrap_or("");
+            let status = step.get("status").and_then(Value::as_str).unwrap_or("ok");
+            if detail.is_empty() {
+                lines.push(format!("    {} -> {}", safe(tool), safe(status)));
+            } else {
+                lines.push(format!(
+                    "    {} {} -> {}",
+                    safe(tool),
+                    safe(detail),
+                    safe(status)
+                ));
+            }
+        }
+    }
+    if let Some(files) = data.get("changed_files").and_then(Value::as_array)
+        && !files.is_empty()
+    {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::CHANGED_FILES,
+            files.len()
+        ));
+        for file in files.iter().take(16) {
+            if let Some(path) = file.get("path").and_then(Value::as_str) {
+                lines.push(format!("    {}", safe(path)));
+            }
+        }
+    }
+    if let Some(receipts) = data.get("merge_receipts").and_then(Value::as_array)
+        && !receipts.is_empty()
+    {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::MERGED,
+            receipts.len()
+        ));
+    }
+    if let Some(conflicts) = data.get("conflicts").and_then(Value::as_array)
+        && !conflicts.is_empty()
+    {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::CONFLICTS,
+            conflicts.len()
+        ));
+        for conflict in conflicts.iter().take(16) {
+            if let Some(path) = conflict.get("path").and_then(Value::as_str) {
+                lines.push(format!("    {}", safe(path)));
+            }
+        }
+    }
+    if let Some(summary) = data.get("summary").and_then(Value::as_str)
+        && !summary.is_empty()
+    {
+        lines.push(format!(
+            "  {}: {}",
+            crate::i18n::subagent::SUMMARY,
+            safe(summary)
+        ));
+    }
+    lines.join("\n")
 }
 
 fn browser_result(name: &str, result: &ToolResult) -> String {

@@ -427,6 +427,8 @@ pub fn build_runtime(
     )?;
     let js_repl = config.js_repl.resolve()?;
     runtime = runtime.with_js_repl(js_repl.clone())?;
+    let subagents = config.subagents.resolve()?;
+    runtime = runtime.with_subagents(subagents)?;
     let (mut sandbox, broker) = config
         .sandbox
         .resolve_with_environment(&session.workspace, config.environment())?;

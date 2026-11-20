@@ -764,6 +764,27 @@ pub(crate) mod browser {
     }
 }
 
+pub(crate) mod subagent {
+    pub const SUBAGENT: &str = "Subagent";
+    pub const ID: &str = "ID";
+    pub const LABEL: &str = "Label";
+    pub const STATE: &str = "State";
+    pub const MODE: &str = "Mode";
+    pub const ISOLATION: &str = "Isolation";
+    pub const SUMMARY: &str = "Summary";
+    pub const STEPS: &str = "Steps";
+    pub const CHANGED_FILES: &str = "Changed files";
+    pub const MERGED: &str = "Merged";
+    pub const CONFLICTS: &str = "Conflicts";
+    pub const COUNT: &str = "Subagents";
+    pub const COMPLETED_WAIT: &str = "completed";
+    pub const TIMED_OUT_WAIT: &str = "timed out";
+
+    pub fn action(name: &str) -> &str {
+        name.strip_prefix("subagent_").unwrap_or(name)
+    }
+}
+
 pub(crate) mod summary {
     use super::common;
     use std::time::Duration;
