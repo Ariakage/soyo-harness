@@ -190,6 +190,7 @@ pub(crate) struct ParentRuntimeTemplate {
     pub known_secrets: Vec<String>,
     pub secret_source: Arc<RwLock<Option<Arc<SecretRegistry>>>>,
     pub context_settings: Arc<RwLock<Option<(ContextBudget, bool, CompactionConfig)>>>,
+    pub routing: Option<Arc<crate::provider::routing::RoutingCoordinator>>,
     pub confirmation: Option<Arc<dyn ApprovalHandler>>,
     pub limits: RuntimeLimits,
     pub parent_budget: SharedBudget,
@@ -688,6 +689,9 @@ impl SubagentSupervisor {
             timeout.min(self.template.limits.active_time),
         );
         runtime = runtime.with_shared_budget(child_budget);
+        if let Some(routing) = &self.template.routing {
+            runtime = runtime.with_routing(routing.clone());
+        }
         runtime = runtime.with_parent_tool_budget(
             self.template.parent_services.tool_budget_handle(),
             self.template.limits.tool_calls,

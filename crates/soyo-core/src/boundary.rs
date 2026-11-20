@@ -109,6 +109,13 @@ pub trait Model: Send + Sync {
     fn validate_session(&self, _session: &Session) -> Result<(), BoundaryError> {
         Ok(())
     }
+
+    /// Return the opt-in model routing coordinator configured for this runtime,
+    /// if any. Test doubles and unrouted single-model wrappers return `None`.
+    fn model_routing(&self) -> Option<&crate::provider::routing::RoutingCoordinator> {
+        None
+    }
+
     /// Start a request, possibly making network calls. Failures and cancellation
     /// return errors; retries and budgets are coordinated by the runtime.
     fn start<'a>(

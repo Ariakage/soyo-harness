@@ -230,6 +230,9 @@ impl Model for GuardedModel {
     fn validate_session(&self, session: &crate::contract::Session) -> Result<(), BoundaryError> {
         self.inner.validate_session(session)
     }
+    fn model_routing(&self) -> Option<&crate::provider::routing::RoutingCoordinator> {
+        self.inner.model_routing()
+    }
     fn start<'a>(
         &'a self,
         request: &'a ModelRequest,

@@ -7,7 +7,7 @@ use super::{
 use crate::{
     boundary::ModelRequest,
     context_builder::{
-        self, BuildInput, ContextBudget, ContextDecision, ContextView, ItemRange,
+        self, BuildInput, ContextBudget, ContextDecision, ContextView, CountingIdentity, ItemRange,
         MechanicalObservation, RequestCounter, RetainedGroup, RetentionReason, RetirementBinding,
         SourceProjectionKind, SourceWatermark,
     },
@@ -646,14 +646,30 @@ pub(super) fn fitted_request(
     config: &CompactionConfig,
     counter: Option<&dyn RequestCounter>,
 ) -> Result<Option<ModelRequest>, BoundaryError> {
+    fitted_request_with(
+        request,
+        input.context.identity,
+        summary_budget(input, config),
+        input.context.revision,
+        counter,
+    )
+}
+
+pub(super) fn fitted_request_with(
+    request: &ModelRequest,
+    identity: &CountingIdentity,
+    budget: ContextBudget,
+    revision: u64,
+    counter: Option<&dyn RequestCounter>,
+) -> Result<Option<ModelRequest>, BoundaryError> {
     let built = context_builder::build(
         BuildInput {
             request,
-            identity: input.context.identity,
-            budget: summary_budget(input, config),
+            identity,
+            budget,
             source_history: &request.history,
             history_offset: 0,
-            revision: input.context.revision,
+            revision,
             committed_view: None,
             protected_ranges: &[],
             output_projections: &[],

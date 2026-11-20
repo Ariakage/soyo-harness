@@ -23,7 +23,10 @@ mod tests;
 #[cfg(test)]
 pub(crate) mod tests_retirement;
 
-pub use counting::{CountEvidence, CountMethod, CountingIdentity, RequestCounter, TokenCount};
+pub use counting::{
+    CountEvidence, CountMethod, CountingIdentity, RequestCounter, TokenCount,
+    conservative_request_tokens,
+};
 pub use groups::{AtomicGroup, Grouping, ItemRange, group_history};
 pub use retirement::{
     GroupRetirement, MechanicalObservation, ObservationBinding, RetirementBinding, RetirementOrigin,

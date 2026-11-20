@@ -8,7 +8,9 @@ use crate::{
     },
     mode::ModeController,
     permissions::{Decision, Operation, Policy, has_exec_environment_override},
-    review::{ReviewConfig, ReviewDecisionSource, ReviewInput, SharedBudget, review_operation},
+    review::{
+        ReviewConfig, ReviewDecisionSource, ReviewInput, SharedBudget, review_operation_routed,
+    },
     tools::{
         exec::{ExecGate, ExecPlan, resolve_executable},
         read::ReadGate,
@@ -257,10 +259,14 @@ pub struct ApprovalManager {
     initial_permission_revision: u64,
     secrets: Vec<String>,
     secret_registry: OnceLock<Arc<crate::credentials::SecretRegistry>>,
+    metrics: OnceLock<Arc<crate::metrics::Metrics>>,
     state: Arc<Mutex<State>>,
     authorize_lock: tokio::sync::Mutex<()>,
 }
 impl ApprovalManager {
+    pub(crate) fn set_metrics(&self, metrics: Arc<crate::metrics::Metrics>) {
+        let _ = self.metrics.set(metrics);
+    }
     pub(crate) fn set_secret_registry(
         &self,
         registry: Arc<crate::credentials::SecretRegistry>,
@@ -330,6 +336,7 @@ impl ApprovalManager {
             initial_permission_revision,
             secrets: setup.known_secrets,
             secret_registry: OnceLock::new(),
+            metrics: OnceLock::new(),
             authorize_lock: tokio::sync::Mutex::new(()),
             state: Arc::new(Mutex::new(State {
                 pending: HashMap::new(),
@@ -524,7 +531,7 @@ impl ApprovalManager {
         }
         let mut review_config = config.clone();
         review_config.known_secrets.extend(self.current_secrets()?);
-        let review = review_operation(
+        let (review, route_decisions) = review_operation_routed(
             &self.policy,
             ReviewInput {
                 mode: binding.mode,
@@ -537,8 +544,31 @@ impl ApprovalManager {
             budget,
             &review_config,
             cancel,
+            self.metrics.get().map(Arc::as_ref),
         )
         .await?;
+        let mut activity_changes: Vec<StoreChange> = route_decisions
+            .into_iter()
+            .map(|rec| StoreChange::Activity {
+                run_id: self.run_id,
+                payload: EventPayload::ModelRouted {
+                    request_id: rec.request_id,
+                    purpose: rec.purpose,
+                    role: rec.role,
+                    profile: rec.profile,
+                    model: rec.model,
+                    protocol: rec.protocol,
+                    reason: rec.reason,
+                    fallback_from: rec.fallback_from,
+                    excluded: rec
+                        .excluded
+                        .into_iter()
+                        .map(|e| format!("{}:{}", e.profile, e.reason))
+                        .collect(),
+                    migration: rec.migration,
+                },
+            })
+            .collect();
         let source = match review.source {
             ReviewDecisionSource::Rule => ReviewSource::Rule,
             ReviewDecisionSource::Model => ReviewSource::Model,
@@ -553,17 +583,16 @@ impl ApprovalManager {
             Decision::Deny => "deny",
             Decision::ModelReview => "model_review",
         };
-        self.store
-            .commit(&[StoreChange::Activity {
-                run_id: self.run_id,
-                payload: EventPayload::PermissionReviewed {
-                    call_id: input.call.call_id.clone(),
-                    decision: decision.into(),
-                    source,
-                    reason: review.reason.clone(),
-                },
-            }])
-            .await?;
+        activity_changes.push(StoreChange::Activity {
+            run_id: self.run_id,
+            payload: EventPayload::PermissionReviewed {
+                call_id: input.call.call_id.clone(),
+                decision: decision.into(),
+                source,
+                reason: review.reason.clone(),
+            },
+        });
+        self.store.commit(&activity_changes).await?;
         if cancel.is_cancelled() {
             return Err(failure("cancelled", "authorization cancelled"));
         }

@@ -145,6 +145,9 @@ pub fn execution(
     if names.iter().any(|name| name.starts_with("skill_")) {
         sections.push(("extensions", include_str!("../prompts/v1/extensions.md")));
     }
+    if names.iter().any(|name| name.starts_with("code_")) {
+        sections.push(("code_intel", include_str!("../prompts/v1/code-intel.md")));
+    }
     if names.contains("todo_write") {
         sections.push((
             "task_tracking",

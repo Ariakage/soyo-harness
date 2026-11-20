@@ -196,14 +196,31 @@ impl AgentRuntime {
                 unreachable!();
             };
             let store: Arc<dyn Store> = buffered_store.clone();
-            self.dispatcher.execute_with_cancel_on_store(
-                call,
-                context,
-                permit.clone(),
-                &batch_cancel,
-                false,
-                store,
-            )
+            let permit_clone = permit.clone();
+            let batch_cancel_ref = &batch_cancel;
+            async move {
+                if crate::code_intel::is_code_intel_tool(&call.name) {
+                    self.execute_parallel_code_intel_on_store(
+                        call,
+                        context,
+                        permit_clone,
+                        batch_cancel_ref,
+                        store,
+                    )
+                    .await
+                } else {
+                    self.dispatcher
+                        .execute_with_cancel_on_store(
+                            call,
+                            context,
+                            permit_clone,
+                            batch_cancel_ref,
+                            false,
+                            store,
+                        )
+                        .await
+                }
+            }
         }));
         tokio::pin!(operation);
         let mut interrupted: Option<BoundaryError> = None;

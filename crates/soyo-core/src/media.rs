@@ -85,6 +85,18 @@ impl MediaAttachments {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+    pub fn required_capabilities(&self) -> MediaCapabilities {
+        let mut caps = MediaCapabilities::default();
+        for media in self.items.values() {
+            match media.kind {
+                MediaKind::Image => caps.image = true,
+                MediaKind::Audio => caps.audio = true,
+                MediaKind::Video => caps.video = true,
+                MediaKind::File => {}
+            }
+        }
+        caps
+    }
     pub fn insert(&mut self, media: LoadedMedia) -> Result<(), BoundaryError> {
         let reference = media
             .reference
@@ -551,6 +563,42 @@ pub fn text_references(text: &str) -> BTreeSet<String> {
 
 pub fn has_media(text: &str) -> bool {
     !markers(text).is_empty()
+}
+
+/// Detect which media modalities a conversation history references without
+/// gating against the currently pinned session profile (`F-16` routing).
+pub fn history_required_capabilities(
+    history: &[HistoryItem],
+    store: Option<&OutputStore>,
+    session_id: SessionId,
+) -> MediaCapabilities {
+    let mut caps = MediaCapabilities::default();
+    for item in history {
+        match item {
+            HistoryItem::UserText(text) => {
+                for marker in markers(text) {
+                    match marker.kind {
+                        MediaKind::Image => caps.image = true,
+                        MediaKind::Audio => caps.audio = true,
+                        MediaKind::Video => caps.video = true,
+                        MediaKind::File => {}
+                    }
+                }
+            }
+            HistoryItem::ToolResult { result, .. } => {
+                for reference in &result.media_refs {
+                    if let Some(store) = store
+                        && parse_reference(reference).is_ok()
+                        && let Ok((MediaKind::Image, _)) = store.media_info(session_id, reference)
+                    {
+                        caps.image = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    caps
 }
 
 fn ensure_supported(kind: MediaKind, capabilities: MediaCapabilities) -> Result<(), BoundaryError> {

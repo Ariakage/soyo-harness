@@ -1210,6 +1210,7 @@ async fn usage_metrics_since_returns_metrics_joined_with_run_start()
                     execution_cost: None,
                     review_cost: None,
                     compaction_cost: None,
+                    ..RunMetrics::default()
                 },
             },
         ])

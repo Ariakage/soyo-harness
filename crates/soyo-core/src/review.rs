@@ -4,11 +4,14 @@
 use crate::{
     boundary::{Cancellation, Model, ModelRequest, ModelUpdate},
     contract::{BoundaryError, ErrorInfo, HistoryItem, ModelPurpose, PermissionMode, WorkMode},
+    metrics::Metrics,
     permissions::{Decision, Operation, Policy},
+    provider::routing::{ModelRole, RouteDecisionRecord, RouteRequirements},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeSet,
     future::Future,
     sync::{Arc, Mutex},
     time::Duration,
@@ -388,6 +391,23 @@ pub async fn review_operation(
     config: &ReviewConfig,
     cancel: &dyn Cancellation,
 ) -> Result<ReviewOutcome, BoundaryError> {
+    let (outcome, _) =
+        review_operation_routed(policy, input, model, budget, config, cancel, None).await?;
+    Ok(outcome)
+}
+
+/// Variant used internally by [`ApprovalManager`] that also returns per-attempt
+/// model route decisions (`ModelRouted` audit records) when opt-in routing is
+/// enabled (`F-16`).
+pub(crate) async fn review_operation_routed(
+    policy: &Policy,
+    input: ReviewInput<'_>,
+    model: &dyn Model,
+    budget: &SharedBudget,
+    config: &ReviewConfig,
+    cancel: &dyn Cancellation,
+    metrics: Option<&Metrics>,
+) -> Result<(ReviewOutcome, Vec<RouteDecisionRecord>), BoundaryError> {
     if cancel.is_cancelled() {
         return Err(failure("cancelled", "review cancelled"));
     }
@@ -407,11 +427,14 @@ pub async fn review_operation(
         &input.arguments,
     );
     if initial.decision != Decision::ModelReview {
-        return Ok(ReviewOutcome {
-            decision: initial.decision,
-            reason: initial.reason.into(),
-            source: ReviewDecisionSource::Rule,
-        });
+        return Ok((
+            ReviewOutcome {
+                decision: initial.decision,
+                reason: initial.reason.into(),
+                source: ReviewDecisionSource::Rule,
+            },
+            Vec::new(),
+        ));
     }
     let normalized = input.operation.review_arguments(input.arguments)?;
     // If an operation contains a known secret, do not ask the model to approve
@@ -419,25 +442,215 @@ pub async fn review_operation(
     let encoded = serde_json::to_string(&normalized)
         .map_err(|_| failure("invalid_args", "cannot encode review arguments"))?;
     if crate::redaction::contains_secret(&encoded, &config.known_secrets) {
-        return Ok(ReviewOutcome {
-            decision: Decision::Ask,
-            reason: "review_sensitive_data".into(),
-            source: ReviewDecisionSource::HumanFallback,
-        });
+        return Ok((
+            ReviewOutcome {
+                decision: Decision::Ask,
+                reason: "review_sensitive_data".into(),
+                source: ReviewDecisionSource::HumanFallback,
+            },
+            Vec::new(),
+        ));
     }
     let mut data = json!({"tool": input.operation.tool_name(), "arguments": normalized, "work_mode": input.mode, "permissions": input.permissions, "goal_summary": input.goal_summary});
     if crate::redaction::redact(&mut data, &config.known_secrets).is_err() {
-        return Ok(ReviewOutcome {
-            decision: Decision::Ask,
-            reason: "review_sensitive_data".into(),
-            source: ReviewDecisionSource::HumanFallback,
-        });
+        return Ok((
+            ReviewOutcome {
+                decision: Decision::Ask,
+                reason: "review_sensitive_data".into(),
+                source: ReviewDecisionSource::HumanFallback,
+            },
+            Vec::new(),
+        ));
     }
+    let instructions = crate::prompt::review_instructions();
+    let payload_history = vec![HistoryItem::UserText(data.to_string())];
+    let routing = model.model_routing().filter(|r| r.is_enabled());
+    let mut route_decisions = Vec::new();
+
+    if let Some(coordinator) = routing {
+        let probe = ModelRequest {
+            request_id: "probe".into(),
+            purpose: ModelPurpose::Review,
+            profile: String::new(),
+            instructions: instructions.into(),
+            dynamic_instructions: None,
+            max_output_tokens: config.max_output_tokens,
+            history: payload_history.clone(),
+            media: Default::default(),
+            tools: vec![],
+        };
+        let estimated_input_tokens = crate::context_builder::conservative_request_tokens(&probe)?;
+        let reqs = RouteRequirements {
+            role: ModelRole::Review,
+            purpose: ModelPurpose::Review,
+            work_mode: input.mode,
+            session_profile: config.execution_profile.clone(),
+            review_profile: config.review_profile.clone(),
+            tools_required: false,
+            required_media: Default::default(),
+            estimated_input_tokens,
+            extra_safety_tokens: u64::from(config.max_output_tokens.unwrap_or(512)),
+            task_type: Some("review".into()),
+            prefer_reasoning: false,
+        };
+        let mut attempted = BTreeSet::new();
+        let mut fallback_from: Option<String> = None;
+        let mut same_profile_attempts = 0usize;
+
+        for _step in 0..8usize {
+            if cancel.is_cancelled() {
+                return Err(failure("cancelled", "review cancelled"));
+            }
+            let spent = metrics.map(Metrics::spent_by_currency).unwrap_or_default();
+            let plan = coordinator.plan(&reqs, &[], &spent);
+            let cand = plan
+                .eligible
+                .iter()
+                .find(|c| !attempted.contains(&c.profile))
+                .or_else(|| {
+                    if same_profile_attempts < 2 {
+                        plan.eligible.first()
+                    } else {
+                        None
+                    }
+                });
+            let Some(cand) = cand.cloned() else {
+                return Ok((
+                    ReviewOutcome {
+                        decision: Decision::Ask,
+                        reason: "review_unavailable".into(),
+                        source: ReviewDecisionSource::HumanFallback,
+                    },
+                    route_decisions,
+                ));
+            };
+            attempted.insert(cand.profile.clone());
+            let request_id = uuid::Uuid::now_v7().to_string();
+            let decision_record = RouteDecisionRecord {
+                request_id: request_id.clone(),
+                purpose: ModelPurpose::Review,
+                role: ModelRole::Review.as_str().to_owned(),
+                profile: cand.profile.clone(),
+                model: cand.model.clone(),
+                protocol: cand.protocol,
+                reason: if fallback_from.is_some() {
+                    "failover".into()
+                } else {
+                    cand.source.to_owned()
+                },
+                fallback_from: fallback_from.clone(),
+                excluded: plan.excluded.clone(),
+                migration: None,
+            };
+            if let Some(m) = metrics {
+                m.record_route(decision_record.clone());
+            }
+            route_decisions.push(decision_record);
+
+            budget.consume()?;
+            let request = ModelRequest {
+                request_id,
+                purpose: ModelPurpose::Review,
+                profile: cand.profile.clone(),
+                instructions: instructions.into(),
+                dynamic_instructions: None,
+                max_output_tokens: config.max_output_tokens,
+                history: payload_history.clone(),
+                media: Default::default(),
+                tools: vec![],
+            };
+            let started = Instant::now();
+            let mut received = false;
+            let result = run_review_attempt(
+                model,
+                &request,
+                cancel,
+                budget,
+                config,
+                started,
+                &mut received,
+            )
+            .await;
+            match result {
+                Ok(parsed) => {
+                    coordinator.health().record_success(&cand.profile);
+                    return Ok((interpret_review_response(parsed, config), route_decisions));
+                }
+                Err(error) => {
+                    if matches!(
+                        error.0.code.as_str(),
+                        "cancelled" | "limit_reached" | "budget_error"
+                    ) {
+                        return Err(error);
+                    }
+                    let retryable = error.is_transient_model_error();
+                    if retryable {
+                        coordinator.health().record_transient_failure(
+                            &cand.profile,
+                            error.code(),
+                            error.retry_after(),
+                            coordinator.settings(),
+                        );
+                    }
+                    if !retryable || received {
+                        return Ok((
+                            ReviewOutcome {
+                                decision: Decision::Ask,
+                                reason: "review_unavailable".into(),
+                                source: ReviewDecisionSource::HumanFallback,
+                            },
+                            route_decisions,
+                        ));
+                    }
+                    fallback_from = Some(cand.profile.clone());
+                    let refreshed = coordinator.plan(&reqs, &[], &spent);
+                    let has_other = refreshed
+                        .eligible
+                        .iter()
+                        .any(|c| !attempted.contains(&c.profile));
+                    if !has_other {
+                        if same_profile_attempts >= 2 || refreshed.eligible.is_empty() {
+                            return Ok((
+                                ReviewOutcome {
+                                    decision: Decision::Ask,
+                                    reason: "review_unavailable".into(),
+                                    source: ReviewDecisionSource::HumanFallback,
+                                },
+                                route_decisions,
+                            ));
+                        }
+                        let delay = (Duration::from_secs(1 << same_profile_attempts)
+                            + jitter(config.retry_jitter_max))
+                        .max(error.1.unwrap_or_default().min(Duration::from_secs(30)));
+                        same_profile_attempts += 1;
+                        bounded(
+                            async {
+                                sleep(delay).await;
+                                Ok(())
+                            },
+                            cancel,
+                            budget,
+                            budget.remaining()?.saturating_add(Duration::from_secs(1)),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        return Ok((
+            ReviewOutcome {
+                decision: Decision::Ask,
+                reason: "review_unavailable".into(),
+                source: ReviewDecisionSource::HumanFallback,
+            },
+            route_decisions,
+        ));
+    }
+
     let profile = config
         .review_profile
         .as_ref()
         .unwrap_or(&config.execution_profile);
-    let instructions = crate::prompt::review_instructions();
     for attempt in 0..=2usize {
         if cancel.is_cancelled() {
             return Err(failure("cancelled", "review cancelled"));
@@ -450,107 +663,24 @@ pub async fn review_operation(
             instructions: instructions.into(),
             dynamic_instructions: None,
             max_output_tokens: config.max_output_tokens,
-            history: vec![HistoryItem::UserText(data.to_string())],
+            history: payload_history.clone(),
             media: Default::default(),
             tools: vec![],
         };
         let started = Instant::now();
         let mut received = false;
-        let result: Result<Option<String>, BoundaryError> = async {
-            let mut stream = bounded(
-                model.start(&request, cancel),
-                cancel,
-                budget,
-                if config.total_timeout.is_zero() {
-                    config.connect_timeout
-                } else {
-                    config.connect_timeout.min(config.total_timeout)
-                },
-            )
-            .await?;
-            loop {
-                let remaining = if config.total_timeout.is_zero() {
-                    config.idle_timeout
-                } else {
-                    config
-                        .idle_timeout
-                        .min(config.total_timeout.saturating_sub(started.elapsed()))
-                };
-                match bounded(
-                    stream.next(cancel),
-                    cancel,
-                    budget,
-                    config.idle_timeout.min(remaining),
-                )
-                .await?
-                {
-                    Some(ModelUpdate::TextDelta(_)) => {
-                        received = true;
-                    }
-                    Some(ModelUpdate::Progress | ModelUpdate::ThinkingDelta { .. }) => {
-                        received = true
-                    }
-                    Some(ModelUpdate::Finished { items, .. }) => {
-                        let mut text = String::new();
-                        for item in items {
-                            match item {
-                                HistoryItem::AssistantText(s) => {
-                                    if text.len().saturating_add(s.len()) > 64 * 1024 {
-                                        return Ok(None);
-                                    }
-                                    text.push_str(&s);
-                                }
-                                HistoryItem::ProviderItem { .. } => {}
-                                _ => return Ok(None),
-                            }
-                        }
-                        return Ok(Some(text));
-                    }
-                    Some(ModelUpdate::OutputLimitTruncated { .. }) | None => return Ok(None),
-                }
-            }
-        }
+        let result = run_review_attempt(
+            model,
+            &request,
+            cancel,
+            budget,
+            config,
+            started,
+            &mut received,
+        )
         .await;
         match result {
-            Ok(Some(text)) => {
-                let candidate = extract_fenced_json(&text);
-                if let Ok(parsed) = serde_json::from_str::<ModelDecision>(candidate)
-                    && !parsed.reason.trim().is_empty()
-                    && parsed.reason.chars().count() <= 512
-                {
-                    let mut reason = Value::String(parsed.reason);
-                    if crate::redaction::redact(&mut reason, &config.known_secrets).is_err() {
-                        return Ok(ReviewOutcome {
-                            decision: Decision::Ask,
-                            reason: "review_sensitive_data".into(),
-                            source: ReviewDecisionSource::HumanFallback,
-                        });
-                    }
-                    let reason = reason.as_str().unwrap_or_default().to_owned();
-                    let decision = match parsed.decision {
-                        ModelChoice::Allow => Decision::Allow,
-                        ModelChoice::Ask => Decision::Ask,
-                        ModelChoice::Deny => Decision::Deny,
-                    };
-                    return Ok(ReviewOutcome {
-                        decision,
-                        reason,
-                        source: ReviewDecisionSource::Model,
-                    });
-                }
-                return Ok(ReviewOutcome {
-                    decision: Decision::Ask,
-                    reason: "review_invalid".into(),
-                    source: ReviewDecisionSource::HumanFallback,
-                });
-            }
-            Ok(None) => {
-                return Ok(ReviewOutcome {
-                    decision: Decision::Ask,
-                    reason: "review_invalid".into(),
-                    source: ReviewDecisionSource::HumanFallback,
-                });
-            }
+            Ok(parsed) => return Ok((interpret_review_response(parsed, config), route_decisions)),
             Err(error) => {
                 if matches!(
                     error.0.code.as_str(),
@@ -567,11 +697,14 @@ pub async fn review_operation(
                         | "model_connect_timeout"
                 );
                 if !retryable || received || attempt == 2 {
-                    return Ok(ReviewOutcome {
-                        decision: Decision::Ask,
-                        reason: "review_unavailable".into(),
-                        source: ReviewDecisionSource::HumanFallback,
-                    });
+                    return Ok((
+                        ReviewOutcome {
+                            decision: Decision::Ask,
+                            reason: "review_unavailable".into(),
+                            source: ReviewDecisionSource::HumanFallback,
+                        },
+                        route_decisions,
+                    ));
                 }
                 let delay = (Duration::from_secs(1 << attempt) + jitter(config.retry_jitter_max))
                     .max(error.1.unwrap_or_default().min(Duration::from_secs(30)));
@@ -588,11 +721,115 @@ pub async fn review_operation(
             }
         }
     }
-    Ok(ReviewOutcome {
+    Ok((
+        ReviewOutcome {
+            decision: Decision::Ask,
+            reason: "review_unavailable".into(),
+            source: ReviewDecisionSource::HumanFallback,
+        },
+        route_decisions,
+    ))
+}
+
+async fn run_review_attempt(
+    model: &dyn Model,
+    request: &ModelRequest,
+    cancel: &dyn Cancellation,
+    budget: &SharedBudget,
+    config: &ReviewConfig,
+    started: Instant,
+    received: &mut bool,
+) -> Result<Option<String>, BoundaryError> {
+    let mut stream = bounded(
+        model.start(request, cancel),
+        cancel,
+        budget,
+        if config.total_timeout.is_zero() {
+            config.connect_timeout
+        } else {
+            config.connect_timeout.min(config.total_timeout)
+        },
+    )
+    .await?;
+    loop {
+        let remaining = if config.total_timeout.is_zero() {
+            config.idle_timeout
+        } else {
+            config
+                .idle_timeout
+                .min(config.total_timeout.saturating_sub(started.elapsed()))
+        };
+        match bounded(
+            stream.next(cancel),
+            cancel,
+            budget,
+            config.idle_timeout.min(remaining),
+        )
+        .await?
+        {
+            Some(ModelUpdate::TextDelta(_)) => {
+                *received = true;
+            }
+            Some(ModelUpdate::Progress | ModelUpdate::ThinkingDelta { .. }) => *received = true,
+            Some(ModelUpdate::Finished { items, .. }) => {
+                let mut text = String::new();
+                for item in items {
+                    match item {
+                        HistoryItem::AssistantText(s) => {
+                            if text.len().saturating_add(s.len()) > 64 * 1024 {
+                                return Ok(None);
+                            }
+                            text.push_str(&s);
+                        }
+                        HistoryItem::ProviderItem { .. } => {}
+                        _ => return Ok(None),
+                    }
+                }
+                return Ok(Some(text));
+            }
+            Some(ModelUpdate::OutputLimitTruncated { .. }) | None => return Ok(None),
+        }
+    }
+}
+
+fn interpret_review_response(parsed: Option<String>, config: &ReviewConfig) -> ReviewOutcome {
+    let Some(text) = parsed else {
+        return ReviewOutcome {
+            decision: Decision::Ask,
+            reason: "review_invalid".into(),
+            source: ReviewDecisionSource::HumanFallback,
+        };
+    };
+    let candidate = extract_fenced_json(&text);
+    if let Ok(parsed) = serde_json::from_str::<ModelDecision>(candidate)
+        && !parsed.reason.trim().is_empty()
+        && parsed.reason.chars().count() <= 512
+    {
+        let mut reason = Value::String(parsed.reason);
+        if crate::redaction::redact(&mut reason, &config.known_secrets).is_err() {
+            return ReviewOutcome {
+                decision: Decision::Ask,
+                reason: "review_sensitive_data".into(),
+                source: ReviewDecisionSource::HumanFallback,
+            };
+        }
+        let reason = reason.as_str().unwrap_or_default().to_owned();
+        let decision = match parsed.decision {
+            ModelChoice::Allow => Decision::Allow,
+            ModelChoice::Ask => Decision::Ask,
+            ModelChoice::Deny => Decision::Deny,
+        };
+        return ReviewOutcome {
+            decision,
+            reason,
+            source: ReviewDecisionSource::Model,
+        };
+    }
+    ReviewOutcome {
         decision: Decision::Ask,
-        reason: "review_unavailable".into(),
+        reason: "review_invalid".into(),
         source: ReviewDecisionSource::HumanFallback,
-    })
+    }
 }
 
 #[cfg(test)]

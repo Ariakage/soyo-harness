@@ -3,6 +3,8 @@
 mod batch;
 #[path = "../runtime_checkpoint.rs"]
 mod checkpoint;
+#[path = "../runtime_code_intel.rs"]
+mod code_intel;
 #[path = "../runtime_context.rs"]
 mod context;
 #[path = "../runtime_memory.rs"]
@@ -127,6 +129,7 @@ fn invalid_tool_request(error: &BoundaryError) -> bool {
 }
 fn is_parallel_read_tool_name(name: &str) -> bool {
     crate::registry::is_local_read_tool(name)
+        || crate::code_intel::is_code_intel_tool(name)
         || matches!(
             name,
             "output_read" | "output_search" | "tool_search" | "tool_describe"
@@ -351,6 +354,9 @@ pub struct AgentRuntime {
         >,
     >,
     subagents: Option<Arc<crate::subagent::supervisor::SubagentSupervisor>>,
+    code_intel: Option<Arc<crate::code_intel::CodeIntelState>>,
+    routing: Option<Arc<crate::provider::routing::RoutingCoordinator>>,
+    last_history_profile: Mutex<Option<String>>,
     started_at: std::time::SystemTime,
 }
 
@@ -502,6 +508,7 @@ pub struct RuntimeHandle {
     services: Arc<services::RuntimeServices>,
     context_state: Option<Arc<context::ContextState>>,
     skill_state: Option<std::sync::Weak<skills::SkillState>>,
+    code_intel: Option<std::sync::Weak<crate::code_intel::CodeIntelState>>,
     steers: SteerQueue,
 }
 impl RuntimeHandle {
@@ -550,6 +557,9 @@ impl RuntimeHandle {
             .and_then(std::sync::Weak::upgrade)
             .map_or(Ok(()), |state| state.clear_plugin_leases());
         let services = self.services.shutdown(self.dispatcher.as_ref()).await;
+        if let Some(code_intel) = self.code_intel.as_ref().and_then(std::sync::Weak::upgrade) {
+            code_intel.shutdown().await;
+        }
         background?;
         skills?;
         services
@@ -561,6 +571,15 @@ impl RuntimeHandle {
         self.jobs.events()
     }
 }
+struct PreparedTurnRequest {
+    request: ModelRequest,
+    context_record: Option<crate::project_context::ContextRecord>,
+    memory_frame: Option<managed_memory::MemoryFrame>,
+    skill_frame: Option<crate::skills::ActiveSkillSet>,
+    route_decision: Option<crate::provider::routing::RouteDecisionRecord>,
+    route_plan: Option<crate::provider::routing::RoutePlan>,
+}
+
 impl AgentRuntime {
     /// Register a host-controlled external adapter under the shared tool policy.
     pub fn register_external(
@@ -612,6 +631,9 @@ impl AgentRuntime {
         let setup_exec = setup.exec.clone();
         let setup_known_secrets = setup.known_secrets.clone();
         let metrics = Arc::new(Metrics::default());
+        if let Some(routing) = raw_model.model_routing() {
+            metrics.register_profiles(routing.pricing_meta());
+        }
         let secret_source = secrets::source();
         let store: Arc<dyn Store> = Arc::new(RuntimeStore {
             inner: setup.store,
@@ -656,6 +678,7 @@ impl AgentRuntime {
         } else {
             dispatcher
         });
+        dispatcher.set_metrics(metrics.clone());
         let jobs = Arc::new(
             BackgroundJobs::new(
                 dispatcher.clone(),
@@ -717,6 +740,9 @@ impl AgentRuntime {
             setup_known_secrets,
             context_settings_slot: Arc::new(std::sync::RwLock::new(None)),
             subagents: None,
+            code_intel: None,
+            routing: None,
+            last_history_profile: Mutex::new(None),
             started_at: std::time::SystemTime::now(),
         })
     }
@@ -728,6 +754,7 @@ impl AgentRuntime {
             services: self.services.clone(),
             context_state: self.context_state.clone(),
             skill_state: self.skill_state.as_ref().map(Arc::downgrade),
+            code_intel: self.code_intel.as_ref().map(Arc::downgrade),
             steers: self.steers.clone(),
         }
     }
@@ -739,6 +766,28 @@ impl AgentRuntime {
     ) -> Self {
         self.metrics.pricing(execution, review);
         self
+    }
+    /// Attach opt-in model routing & circuit-breaker coordination (`F-16`).
+    pub fn with_routing(
+        mut self,
+        routing: Arc<crate::provider::routing::RoutingCoordinator>,
+    ) -> Self {
+        self.metrics.register_profiles(routing.pricing_meta());
+        self.routing = Some(routing);
+        self
+    }
+    /// Register per-profile pricing and protocol metadata for metrics attribution.
+    pub fn with_profile_pricing(
+        self,
+        profiles: std::collections::BTreeMap<String, crate::metrics::ProfilePricingMeta>,
+    ) -> Self {
+        self.metrics.register_profiles(profiles);
+        self
+    }
+    fn effective_routing(&self) -> Option<&crate::provider::routing::RoutingCoordinator> {
+        self.routing
+            .as_deref()
+            .or_else(|| self.model.model_routing())
     }
     pub fn with_secret_registry(
         self,
@@ -803,6 +852,7 @@ impl AgentRuntime {
             known_secrets: self.setup_known_secrets.clone(),
             secret_source: self.secret_source.clone(),
             context_settings: self.context_settings_slot.clone(),
+            routing: self.routing.clone(),
             confirmation: self.confirmation.clone(),
             limits: self.limits.clone(),
             parent_budget: self.budget.clone(),
@@ -1049,6 +1099,9 @@ impl AgentRuntime {
         if self.subagents.is_some() {
             stable.extend(crate::subagent::definitions(mode, self.read_only));
         }
+        if self.code_intel.is_some() {
+            stable.extend(crate::code_intel::definitions());
+        }
         if (self.read_only || mode == WorkMode::Plan || self.dispatcher.is_exec_disabled())
             && let Some(definition) = stable
                 .iter_mut()
@@ -1203,15 +1256,10 @@ impl AgentRuntime {
         session: &mut Session,
         mode: WorkMode,
         continuation_tail: &[HistoryItem],
-    ) -> Result<
-        Option<(
-            ModelRequest,
-            Option<crate::project_context::ContextRecord>,
-            Option<managed_memory::MemoryFrame>,
-            Option<crate::skills::ActiveSkillSet>,
-        )>,
-        BoundaryError,
-    > {
+        attempted: &std::collections::BTreeSet<String>,
+        same_profile_retries: usize,
+        fallback_from: Option<&str>,
+    ) -> Result<Option<PreparedTurnRequest>, BoundaryError> {
         let environment_facts = self.services.facts(mode).await?;
         let memory_frame = self.memory_frame(session).await?;
         let skill_frame = self.skill_frame(session).await?;
@@ -1236,13 +1284,13 @@ impl AgentRuntime {
         )?);
         let request_id = uuid::Uuid::now_v7().to_string();
         let mut record = None;
-        let mut history = vec![crate::prompt::runtime_context_at(
+        let mut header_history = vec![crate::prompt::runtime_context_at(
             session,
             &run,
             self.started_at,
         )?];
         if let Some(facts) = environment_facts {
-            history.push(HistoryItem::UserText(facts));
+            header_history.push(HistoryItem::UserText(facts));
         }
         if let Some(state) = &self.project_context {
             let mut state = state.lock().map_err(|_| {
@@ -1257,10 +1305,10 @@ impl AgentRuntime {
             record = Some(context_record);
             let mut context = serde_json::json!({"soyo_project_context_v1": snapshot});
             crate::redaction::redact(&mut context, &self.review.known_secrets)?;
-            history.push(HistoryItem::UserText(context.to_string()));
+            header_history.push(HistoryItem::UserText(context.to_string()));
         }
         if self.personal_context.preferences.is_some() || self.personal_context.memory.is_some() {
-            history.push(HistoryItem::UserText(
+            header_history.push(HistoryItem::UserText(
                 serde_json::json!({
                     "soyo_personal_context_v1": {
                         "preferences": self.personal_context.preferences,
@@ -1271,16 +1319,153 @@ impl AgentRuntime {
             ));
         }
         if let Some(text) = memory_frame.as_ref().and_then(|frame| frame.text.as_ref()) {
-            history.push(HistoryItem::UserText(text.clone()));
+            header_history.push(HistoryItem::UserText(text.clone()));
         }
         if let Some(skills) = &skill_frame {
-            history.push(HistoryItem::UserText(skills.context_data().to_string()));
+            header_history.push(HistoryItem::UserText(skills.context_data().to_string()));
         }
-        history.extend(session.history.iter().cloned());
+        if let Some(code_intel_envelope) = self.code_intel_context_envelope().await? {
+            header_history.push(HistoryItem::UserText(code_intel_envelope));
+        }
+
+        let mut routed_target: Option<context::RoutedTarget> = None;
+        let mut migrated_history: Option<Vec<HistoryItem>> = None;
+        let mut effective_continuation = continuation_tail.to_vec();
+        let mut route_decision: Option<crate::provider::routing::RouteDecisionRecord> = None;
+        let mut route_plan: Option<crate::provider::routing::RoutePlan> = None;
+        let mut selected_profile = session.profile.clone();
+
+        if let Some(coord) = self.effective_routing().filter(|r| r.is_enabled()) {
+            let mut probe_history = header_history.clone();
+            let tail_slice = if self.context_state.is_some()
+                && let Ok(Some(cp)) = self.store.context_checkpoint(session.id).await
+                && cp.view.covered_prefix <= session.history.len()
+            {
+                &session.history[cp.view.covered_prefix..]
+            } else {
+                &session.history[..]
+            };
+            probe_history.extend(tail_slice.iter().cloned());
+            probe_history.extend(continuation_tail.iter().cloned());
+            let probe = ModelRequest {
+                request_id: request_id.clone(),
+                purpose: ModelPurpose::Execution,
+                profile: session.profile.clone(),
+                instructions: instructions.clone(),
+                dynamic_instructions: dynamic_instructions.clone(),
+                max_output_tokens: None,
+                history: probe_history,
+                media: Default::default(),
+                tools: tools.clone(),
+            };
+            let estimated_input_tokens =
+                crate::context_builder::conservative_request_tokens(&probe)?;
+            let required_media = crate::media::history_required_capabilities(
+                &session.history,
+                self.media_store.as_deref(),
+                session.id,
+            );
+            let history_source = self
+                .last_history_profile
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+            let role =
+                crate::provider::routing::ModelRole::from_request(ModelPurpose::Execution, mode);
+            let reqs = crate::provider::routing::RouteRequirements {
+                role,
+                purpose: ModelPurpose::Execution,
+                work_mode: mode,
+                session_profile: session.profile.clone(),
+                review_profile: self.review.review_profile.clone(),
+                tools_required: !tools.is_empty(),
+                required_media,
+                estimated_input_tokens,
+                extra_safety_tokens: 0,
+                task_type: None,
+                prefer_reasoning: false,
+            };
+            let spent = self.metrics.spent_by_currency();
+            let plan =
+                coord.plan_with_source(&reqs, &session.history, &spent, history_source.as_deref());
+            let cand = plan
+                .eligible
+                .iter()
+                .find(|c| !attempted.contains(&c.profile))
+                .or_else(|| {
+                    (same_profile_retries < 2)
+                        .then(|| plan.eligible.first())
+                        .flatten()
+                })
+                .cloned();
+            let Some(cand) = cand else {
+                return Err(coord.empty_plan_error(&plan));
+            };
+            selected_profile = cand.profile.clone();
+            routed_target = coord
+                .candidate_meta(&cand.profile)
+                .map(|meta| context::RoutedTarget {
+                    profile: meta.name.clone(),
+                    protocol: meta.protocol,
+                    model: meta.model.clone(),
+                    media_capabilities: meta.multimodal,
+                    context_window_tokens: meta.context_window_tokens,
+                    max_output_tokens: meta.max_output_tokens,
+                });
+            let source_profile = history_source.as_deref().unwrap_or(&session.profile);
+            let mut migration_summary = cand.migration.as_ref().map(|m| m.summary());
+            if cand.migration.is_some() {
+                let (compat, info) = crate::provider::routing::project_compatible_history(
+                    &session.history,
+                    &cand.profile,
+                    cand.protocol,
+                    source_profile,
+                    coord.settings().opaque_history,
+                )?;
+                if let Some(info) = info {
+                    migration_summary = Some(info.summary());
+                }
+                migrated_history = Some(compat);
+                if !effective_continuation.is_empty() {
+                    let (compat_tail, _) = crate::provider::routing::project_compatible_history(
+                        &effective_continuation,
+                        &cand.profile,
+                        cand.protocol,
+                        source_profile,
+                        coord.settings().opaque_history,
+                    )?;
+                    effective_continuation = compat_tail;
+                }
+            }
+            route_decision = Some(crate::provider::routing::RouteDecisionRecord {
+                request_id: request_id.clone(),
+                purpose: ModelPurpose::Execution,
+                role: plan.role.as_str().to_owned(),
+                profile: cand.profile.clone(),
+                model: cand.model.clone(),
+                protocol: cand.protocol,
+                reason: if fallback_from.is_some() {
+                    "failover".into()
+                } else {
+                    cand.source.to_owned()
+                },
+                fallback_from: fallback_from.map(str::to_owned),
+                excluded: plan.excluded.clone(),
+                migration: migration_summary,
+            });
+            route_plan = Some(plan);
+        }
+
+        let mut history = header_history;
+        if let Some(compat) = &migrated_history {
+            history.extend(compat.iter().cloned());
+        } else {
+            history.extend(session.history.iter().cloned());
+        }
         let request = ModelRequest {
             request_id,
             purpose: ModelPurpose::Execution,
-            profile: session.profile.clone(),
+            profile: selected_profile,
             instructions,
             dynamic_instructions,
             max_output_tokens: None,
@@ -1294,10 +1479,12 @@ impl AgentRuntime {
                 request,
                 memory_frame.as_ref(),
                 skill_frame.as_ref(),
+                routed_target.as_ref(),
+                migrated_history.as_deref(),
             )
             .await?;
-        if !continuation_tail.is_empty() {
-            request.history.extend_from_slice(continuation_tail);
+        if !effective_continuation.is_empty() {
+            request.history.extend(effective_continuation);
         }
         if self
             .context_state
@@ -1306,7 +1493,14 @@ impl AgentRuntime {
         {
             return Ok(None);
         }
-        Ok(Some((request, record, memory_frame, skill_frame)))
+        Ok(Some(PreparedTurnRequest {
+            request,
+            context_record: record,
+            memory_frame,
+            skill_frame,
+            route_decision,
+            route_plan,
+        }))
     }
 
     async fn stream_model_attempt(
@@ -1436,16 +1630,34 @@ impl AgentRuntime {
         let mut continuation_count = 0usize;
         let mut continuation_tail = Vec::new();
         let mut accumulated_text = String::new();
+        let mut attempted = std::collections::BTreeSet::new();
+        let mut same_profile_retries = 0usize;
+        let mut fallback_from: Option<String> = None;
         loop {
             self.check()?;
             self.services.refresh(self).await?;
             let (snap, mode_lease) = self.acquire_shared_mode(session).await?;
-            let Some((request, record, memory_frame, skill_frame)) = self
-                .build_model_request(session, snap.current, &continuation_tail)
+            let Some(prepared) = self
+                .build_model_request(
+                    session,
+                    snap.current,
+                    &continuation_tail,
+                    &attempted,
+                    same_profile_retries,
+                    fallback_from.as_deref(),
+                )
                 .await?
             else {
                 continue;
             };
+            let PreparedTurnRequest {
+                request,
+                context_record: record,
+                memory_frame,
+                skill_frame,
+                route_decision,
+                route_plan,
+            } = prepared;
             if self
                 .context_state
                 .as_ref()
@@ -1455,13 +1667,37 @@ impl AgentRuntime {
                 return Ok(Vec::new());
             }
             secrets::model_request(&request, &self.secret_source)?;
+            let mut pre_changes = Vec::new();
+            if let Some(decision) = route_decision.clone() {
+                self.metrics.record_route(decision.clone());
+                pre_changes.push(StoreChange::Activity {
+                    run_id: self.run.id,
+                    payload: EventPayload::ModelRouted {
+                        request_id: decision.request_id,
+                        purpose: decision.purpose,
+                        role: decision.role,
+                        profile: decision.profile,
+                        model: decision.model,
+                        protocol: decision.protocol,
+                        reason: decision.reason,
+                        fallback_from: decision.fallback_from,
+                        excluded: decision
+                            .excluded
+                            .into_iter()
+                            .map(|e| format!("{}:{}", e.profile, e.reason))
+                            .collect(),
+                        migration: decision.migration,
+                    },
+                });
+            }
             if let Some(record) = record {
-                self.store
-                    .commit(&[StoreChange::ProjectContext {
-                        run_id: self.run.id,
-                        record,
-                    }])
-                    .await?;
+                pre_changes.push(StoreChange::ProjectContext {
+                    run_id: self.run.id,
+                    record,
+                });
+            }
+            if !pre_changes.is_empty() {
+                self.store.commit(&pre_changes).await?;
             }
             self.bind_memory_request(&request.request_id, memory_frame.as_ref())?;
             if let (Some(state), Some(frame)) = (&self.skill_state, &skill_frame) {
@@ -1492,11 +1728,24 @@ impl AgentRuntime {
                             "model completed without text or tool calls",
                         ));
                     }
+                    if let Some(coord) = self.effective_routing().filter(|r| r.is_enabled()) {
+                        coord.health().record_success(&request.profile);
+                        if items
+                            .iter()
+                            .any(|item| matches!(item, HistoryItem::ProviderItem { .. }))
+                            && let Ok(mut guard) = self.last_history_profile.lock()
+                        {
+                            *guard = Some(request.profile.clone());
+                        }
+                    }
                     let items = secrets::model_response(items, &self.secret_source)?;
                     let merged = merge_continued_items(accumulated_text, items);
                     return secrets::model_response(merged, &self.secret_source);
                 }
                 Ok(AttemptResponse::Truncated(items)) => {
+                    if let Some(coord) = self.effective_routing().filter(|r| r.is_enabled()) {
+                        coord.health().record_success(&request.profile);
+                    }
                     let redacted = secrets::model_response(items, &self.secret_source)?;
                     let chunk_text = collect_assistant_text(&redacted);
                     accumulated_text.push_str(&chunk_text);
@@ -1512,12 +1761,60 @@ impl AgentRuntime {
                     }
                     continuation_count += 1;
                     attempt = 0;
+                    same_profile_retries = 0;
                     continuation_tail.extend(redacted);
                     continuation_tail
                         .push(HistoryItem::UserText(OUTPUT_CONTINUATION_PROMPT.into()));
                 }
                 Err(err) => {
-                    if self
+                    if let Some(coord) = self.effective_routing().filter(|r| r.is_enabled()) {
+                        if err.is_transient_model_error() {
+                            coord.health().record_transient_failure(
+                                &request.profile,
+                                err.code(),
+                                err.retry_after(),
+                                coord.settings(),
+                            );
+                        }
+                        if received || !err.is_transient_model_error() {
+                            if received || !accumulated_text.is_empty() {
+                                let combined = format!("{accumulated_text}{partial}");
+                                self.commit_partial_history(session, combined).await?;
+                            }
+                            return Err(err);
+                        }
+                        attempted.insert(request.profile.clone());
+                        fallback_from = Some(request.profile.clone());
+                        let eligible = route_plan.as_ref().map(|p| &p.eligible[..]).unwrap_or(&[]);
+                        let has_untried = eligible.iter().any(|c| {
+                            !attempted.contains(&c.profile)
+                                && coord.health().cooldown_remaining(&c.profile).is_none()
+                        });
+                        if has_untried {
+                            continue;
+                        }
+                        let any_healthy = eligible
+                            .iter()
+                            .any(|c| coord.health().cooldown_remaining(&c.profile).is_none());
+                        if !any_healthy || same_profile_retries >= 2 {
+                            return Err(err);
+                        }
+                        let retry_idx = same_profile_retries as u32;
+                        same_profile_retries += 1;
+                        if !self
+                            .handle_model_failure(
+                                session,
+                                retry_idx,
+                                received,
+                                &accumulated_text,
+                                partial,
+                                err,
+                            )
+                            .await?
+                        {
+                            break;
+                        }
+                    } else if self
                         .handle_model_failure(
                             session,
                             attempt,
@@ -1533,6 +1830,10 @@ impl AgentRuntime {
                 }
             }
         }
+        Err(BoundaryError::new(
+            error_codes::MODEL_UNAVAILABLE,
+            "model turn could not complete",
+        ))
     }
 
     async fn confirm(&self, request: &ApprovalRequest) -> Result<Option<bool>, BoundaryError> {
@@ -2828,6 +3129,11 @@ impl AgentRuntime {
                 .execute_checkpoint(session, call, &context, progress)
                 .await;
         }
+        if crate::code_intel::is_code_intel_tool(&call.name) {
+            return self
+                .execute_code_intel(session, call, &context, progress)
+                .await;
+        }
         if let Some(kind) = match call.name.as_str() {
             "background_start" => Some(BackgroundToolKind::Start),
             "background_status" => Some(BackgroundToolKind::Status),
@@ -3172,6 +3478,7 @@ impl AgentRuntime {
         tail_calls: &[ToolCall],
         previous: &mut Option<(String, serde_json::Value, u8)>,
     ) -> Result<bool, BoundaryError> {
+        self.invalidate_code_intel_for_call(call, result).await;
         let finished = self
             .services
             .fire_hooks(
@@ -3334,6 +3641,9 @@ impl AgentRuntime {
             .as_ref()
             .map_or(Ok(()), |state| state.clear_plugin_leases());
         let service_cleanup = self.services.shutdown(self.dispatcher.as_ref()).await;
+        if let Some(code_intel) = &self.code_intel {
+            code_intel.shutdown().await;
+        }
         cleanup?;
         skill_cleanup?;
         let unfinished = unfinished?;

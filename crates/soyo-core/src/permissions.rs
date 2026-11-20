@@ -579,6 +579,21 @@ impl Operation {
         }
         Self::managed("subagent_merge", paths, binding, false, review)
     }
+
+    pub fn code_intel(
+        tool: &str,
+        paths: Vec<PathBuf>,
+        binding: String,
+        review: serde_json::Value,
+    ) -> Result<Self, BoundaryError> {
+        if !crate::code_intel::is_code_intel_tool(tool) || paths.is_empty() {
+            return Err(failure(
+                "invalid_args",
+                "Invalid code intelligence operation",
+            ));
+        }
+        Self::managed(tool, paths, binding, true, review)
+    }
 }
 fn normalize_target(workspace: &Path, path: &Path) -> Result<PathBuf, BoundaryError> {
     let input = if path.is_absolute() {

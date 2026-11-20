@@ -4,15 +4,30 @@ use crate::{
         Cancellation, Model, ModelRequest, ModelStream, ModelUpdate, Operation, StoreChange,
     },
     config::Pricing,
-    contract::{Artifact, BoundaryError, ModelPurpose, Session, ToolResult, Usage},
+    contract::{Artifact, BoundaryError, ModelProtocol, ModelPurpose, Session, ToolResult, Usage},
+    provider::routing::RouteDecisionRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
     time::Instant,
 };
 use tracing::Instrument;
+
+/// Per-profile request, token, and cost attribution within one Run (`F-16`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProfileAttribution {
+    pub model: String,
+    pub protocol: Option<ModelProtocol>,
+    pub execution_requests: u64,
+    pub review_requests: u64,
+    pub compaction_requests: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<CostEstimate>,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunMetrics {
@@ -31,6 +46,10 @@ pub struct RunMetrics {
     pub review_cost: Option<CostEstimate>,
     #[serde(default)]
     pub compaction_cost: Option<CostEstimate>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub by_profile: BTreeMap<String, ProfileAttribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_decisions: Vec<RouteDecisionRecord>,
 }
 /// An estimate in millionths of the explicitly configured currency; it is not a bill.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,7 +173,79 @@ impl Totals {
             estimated: self.estimated || self.input_unknown || self.output_unknown || incomplete,
         })
     }
+    /// Lower-bound known tokens from completed requests even if a sibling attempt failed.
+    fn known_usage(&self) -> Option<Usage> {
+        if self.completed == 0 {
+            return None;
+        }
+        Some(Usage {
+            input_tokens: Some(self.input),
+            output_tokens: Some(self.output),
+            cached_input_tokens: self.has_cached_input.then_some(self.cached_input),
+            estimated: self.estimated || self.completed != self.requests,
+        })
+    }
 }
+#[derive(Clone)]
+pub struct ProfilePricingMeta {
+    pub model: String,
+    pub protocol: ModelProtocol,
+    pub pricing: Option<Pricing>,
+}
+
+#[derive(Default)]
+struct ProfileState {
+    model: String,
+    protocol: Option<ModelProtocol>,
+    execution: Totals,
+    review: Totals,
+    compaction: Totals,
+    pricing: Option<Pricing>,
+}
+impl ProfileState {
+    fn totals_mut(&mut self, purpose: ModelPurpose) -> &mut Totals {
+        match purpose {
+            ModelPurpose::Execution => &mut self.execution,
+            ModelPurpose::Review => &mut self.review,
+            ModelPurpose::Compaction => &mut self.compaction,
+        }
+    }
+    fn combined_usage(&self) -> Option<Usage> {
+        let e = self.execution.usage();
+        let r = self.review.usage();
+        let c = self.compaction.usage();
+        combine_usages([&e, &r, &c].into_iter().flatten())
+    }
+    fn combined_known_usage(&self) -> Option<Usage> {
+        let e = self.execution.known_usage();
+        let r = self.review.known_usage();
+        let c = self.compaction.known_usage();
+        combine_usages([&e, &r, &c].into_iter().flatten())
+    }
+}
+fn combine_usages<'a>(items: impl Iterator<Item = &'a Usage>) -> Option<Usage> {
+    let usages: Vec<&Usage> = items.collect();
+    if usages.is_empty() {
+        return None;
+    }
+    let sum = |field: fn(&Usage) -> Option<u64>| {
+        usages
+            .iter()
+            .try_fold(0u64, |total, usage| total.checked_add(field(usage)?))
+    };
+    let input_tokens = sum(|u| u.input_tokens);
+    let output_tokens = sum(|u| u.output_tokens);
+    let cached_input_tokens = sum(|u| u.cached_input_tokens);
+    Some(Usage {
+        input_tokens,
+        output_tokens,
+        cached_input_tokens,
+        estimated: usages.iter().any(|u| u.estimated)
+            || input_tokens.is_none()
+            || output_tokens.is_none(),
+    })
+}
+
 #[derive(Default)]
 struct State {
     started: Option<Instant>,
@@ -167,6 +258,9 @@ struct State {
     artifacts: Vec<Artifact>,
     execution_pricing: Option<Pricing>,
     review_pricing: Option<Pricing>,
+    profile_catalog: BTreeMap<String, ProfilePricingMeta>,
+    by_profile: BTreeMap<String, ProfileState>,
+    route_decisions: Vec<RouteDecisionRecord>,
 }
 #[derive(Default)]
 pub(crate) struct Metrics {
@@ -178,6 +272,58 @@ impl Metrics {
             state.execution_pricing = execution;
             state.review_pricing = review;
         }
+    }
+    pub fn register_profiles(&self, profiles: BTreeMap<String, ProfilePricingMeta>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.profile_catalog = profiles;
+        }
+    }
+    pub fn record_route(&self, decision: RouteDecisionRecord) {
+        if let Ok(mut state) = self.state.lock()
+            && state.route_decisions.len() < 512
+        {
+            state.route_decisions.push(decision);
+        }
+    }
+    pub fn spent_by_currency(&self) -> BTreeMap<String, u64> {
+        let mut out: BTreeMap<String, u64> = BTreeMap::new();
+        let Ok(state) = self.state.lock() else {
+            return out;
+        };
+        if !state.by_profile.is_empty() {
+            for entry in state.by_profile.values() {
+                if let Some(cost) = estimate(
+                    entry.pricing.as_ref(),
+                    entry.combined_known_usage().as_ref(),
+                ) {
+                    let slot = out.entry(cost.currency).or_insert(0);
+                    *slot = slot.saturating_add(cost.microunits);
+                }
+            }
+            return out;
+        }
+        if let Some(cost) = estimate(
+            state.execution_pricing.as_ref(),
+            state.execution.known_usage().as_ref(),
+        ) {
+            let slot = out.entry(cost.currency).or_insert(0);
+            *slot = slot.saturating_add(cost.microunits);
+        }
+        if let Some(cost) = estimate(
+            state.execution_pricing.as_ref(),
+            state.compaction.known_usage().as_ref(),
+        ) {
+            let slot = out.entry(cost.currency).or_insert(0);
+            *slot = slot.saturating_add(cost.microunits);
+        }
+        if let Some(cost) = estimate(
+            state.review_pricing.as_ref(),
+            state.review.known_usage().as_ref(),
+        ) {
+            let slot = out.entry(cost.currency).or_insert(0);
+            *slot = slot.saturating_add(cost.microunits);
+        }
+        out
     }
     pub fn start(&self) {
         if let Ok(mut state) = self.state.lock() {
@@ -205,9 +351,45 @@ impl Metrics {
             state.tools = state.tools.saturating_add(child.tool_calls);
             state.executions = state.executions.saturating_add(child.tool_executions);
             state.artifacts.extend(artifacts.iter().cloned());
+            for (name, attr) in &child.by_profile {
+                let fallback_pricing = state
+                    .profile_catalog
+                    .get(name)
+                    .and_then(|m| m.pricing.clone());
+                let entry = state.by_profile.entry(name.clone()).or_default();
+                if entry.model.is_empty() {
+                    entry.model = attr.model.clone();
+                }
+                entry.protocol = entry.protocol.or(attr.protocol);
+                if entry.pricing.is_none() {
+                    entry.pricing = fallback_pricing;
+                }
+                if attr.execution_requests > 0 {
+                    entry
+                        .execution
+                        .merge(attr.execution_requests, attr.usage.as_ref());
+                    entry.review.merge(attr.review_requests, None);
+                    entry.compaction.merge(attr.compaction_requests, None);
+                } else if attr.review_requests > 0 {
+                    entry
+                        .review
+                        .merge(attr.review_requests, attr.usage.as_ref());
+                    entry.compaction.merge(attr.compaction_requests, None);
+                } else {
+                    entry
+                        .compaction
+                        .merge(attr.compaction_requests, attr.usage.as_ref());
+                }
+            }
+            for rec in &child.route_decisions {
+                if state.route_decisions.len() >= 512 {
+                    break;
+                }
+                state.route_decisions.push(rec.clone());
+            }
         }
     }
-    fn request(&self, purpose: ModelPurpose) {
+    fn request_for_profile(&self, purpose: ModelPurpose, profile: &str) {
         if let Ok(mut state) = self.state.lock() {
             let totals = match purpose {
                 ModelPurpose::Execution => &mut state.execution,
@@ -215,16 +397,44 @@ impl Metrics {
                 ModelPurpose::Compaction => &mut state.compaction,
             };
             totals.requests = totals.requests.saturating_add(1);
+            if !profile.is_empty() {
+                let meta = state.profile_catalog.get(profile).cloned();
+                let fallback_pricing = match purpose {
+                    ModelPurpose::Review => state.review_pricing.clone(),
+                    ModelPurpose::Execution | ModelPurpose::Compaction => {
+                        state.execution_pricing.clone()
+                    }
+                };
+                let entry = state.by_profile.entry(profile.to_owned()).or_default();
+                if let Some(meta) = meta {
+                    if entry.model.is_empty() {
+                        entry.model = meta.model;
+                    }
+                    entry.protocol.get_or_insert(meta.protocol);
+                    if entry.pricing.is_none() {
+                        entry.pricing = meta.pricing.or(fallback_pricing);
+                    }
+                } else if entry.pricing.is_none() {
+                    entry.pricing = fallback_pricing;
+                }
+                entry.totals_mut(purpose).requests =
+                    entry.totals_mut(purpose).requests.saturating_add(1);
+            }
         }
     }
-    fn finish(&self, purpose: ModelPurpose, usage: Option<Usage>) {
+    fn finish_for_profile(&self, purpose: ModelPurpose, profile: &str, usage: Option<Usage>) {
         if let Ok(mut state) = self.state.lock() {
             match purpose {
                 ModelPurpose::Execution => &mut state.execution,
                 ModelPurpose::Review => &mut state.review,
                 ModelPurpose::Compaction => &mut state.compaction,
             }
-            .finish(usage);
+            .finish(usage.clone());
+            if !profile.is_empty()
+                && let Some(entry) = state.by_profile.get_mut(profile)
+            {
+                entry.totals_mut(purpose).finish(usage);
+            }
         }
     }
     pub fn observe(&self, changes: &[StoreChange]) {
@@ -261,30 +471,62 @@ impl Metrics {
         let execution = state.execution.usage();
         let review = state.review.usage();
         let compaction = state.compaction.usage();
-        let usages: Vec<_> = [&execution, &review, &compaction]
-            .into_iter()
-            .flatten()
-            .collect();
-        let sum = |field: fn(&Usage) -> Option<u64>| {
-            usages
-                .iter()
-                .try_fold(0u64, |total, usage| total.checked_add(field(usage)?))
-        };
-        let total = if usages.is_empty() {
-            None
-        } else {
-            let input_tokens = sum(|usage| usage.input_tokens);
-            let output_tokens = sum(|usage| usage.output_tokens);
-            let cached_input_tokens = sum(|usage| usage.cached_input_tokens);
-            Some(Usage {
-                input_tokens,
-                output_tokens,
-                cached_input_tokens,
-                estimated: usages.iter().any(|usage| usage.estimated)
-                    || input_tokens.is_none()
-                    || output_tokens.is_none(),
+        let total = combine_usages([&execution, &review, &compaction].into_iter().flatten());
+        let by_profile: BTreeMap<String, ProfileAttribution> = state
+            .by_profile
+            .iter()
+            .map(|(name, entry)| {
+                let usage = entry.combined_usage();
+                let cost = estimate(entry.pricing.as_ref(), usage.as_ref());
+                (
+                    name.clone(),
+                    ProfileAttribution {
+                        model: entry.model.clone(),
+                        protocol: entry.protocol,
+                        execution_requests: entry.execution.requests,
+                        review_requests: entry.review.requests,
+                        compaction_requests: entry.compaction.requests,
+                        usage,
+                        cost,
+                    },
+                )
             })
+            .collect();
+        let purpose_cost = |select: fn(&ProfileState) -> &Totals,
+                            fallback: Option<&Pricing>,
+                            usage: Option<&Usage>| {
+            if state.by_profile.is_empty() {
+                return estimate(fallback, usage);
+            }
+            let items: Vec<Option<CostEstimate>> = state
+                .by_profile
+                .values()
+                .filter(|entry| select(entry).requests > 0)
+                .map(|entry| {
+                    let pricing = entry.pricing.as_ref().or(fallback);
+                    estimate(pricing, select(entry).usage().as_ref())
+                })
+                .collect();
+            if items.is_empty() {
+                return estimate(fallback, usage);
+            }
+            sum_costs(items.into_iter())
         };
+        let execution_cost = purpose_cost(
+            |entry| &entry.execution,
+            state.execution_pricing.as_ref(),
+            execution.as_ref(),
+        );
+        let review_cost = purpose_cost(
+            |entry| &entry.review,
+            state.review_pricing.as_ref(),
+            review.as_ref(),
+        );
+        let compaction_cost = purpose_cost(
+            |entry| &entry.compaction,
+            state.execution_pricing.as_ref(),
+            compaction.as_ref(),
+        );
         Some((
             RunMetrics {
                 execution_requests: state.execution.requests,
@@ -296,20 +538,41 @@ impl Metrics {
                 execution_usage: execution,
                 review_usage: review,
                 compaction_usage: compaction,
-                compaction_cost: estimate(
-                    state.execution_pricing.as_ref(),
-                    state.compaction.usage().as_ref(),
-                ),
-                execution_cost: estimate(
-                    state.execution_pricing.as_ref(),
-                    state.execution.usage().as_ref(),
-                ),
-                review_cost: estimate(state.review_pricing.as_ref(), state.review.usage().as_ref()),
+                compaction_cost,
+                execution_cost,
+                review_cost,
+                by_profile,
+                route_decisions: state.route_decisions.clone(),
             },
             total,
             state.artifacts.clone(),
         ))
     }
+}
+fn sum_costs(items: impl Iterator<Item = Option<CostEstimate>>) -> Option<CostEstimate> {
+    let mut currency: Option<String> = None;
+    let mut microunits = 0u64;
+    let mut rounded = false;
+    let mut count = 0usize;
+    for item in items {
+        let cost = item?;
+        if let Some(existing) = &currency {
+            if existing != &cost.currency {
+                return None;
+            }
+        } else {
+            currency = Some(cost.currency.clone());
+        }
+        microunits = microunits.checked_add(cost.microunits)?;
+        rounded |= cost.rounded_up;
+        count += 1;
+    }
+    (count > 0).then(|| CostEstimate {
+        currency: currency.unwrap_or_default(),
+        microunits,
+        rounded_up: rounded,
+        estimated: true,
+    })
 }
 fn estimate(pricing: Option<&Pricing>, usage: Option<&Usage>) -> Option<CostEstimate> {
     let pricing = pricing?;
@@ -345,6 +608,7 @@ pub(crate) struct MeasuredModel {
 struct Completion {
     metrics: Arc<Metrics>,
     purpose: ModelPurpose,
+    profile: String,
     done: bool,
     span: tracing::Span,
     started: Instant,
@@ -354,7 +618,8 @@ struct Completion {
 impl Drop for Completion {
     fn drop(&mut self) {
         if !self.done {
-            self.metrics.finish(self.purpose, None);
+            self.metrics
+                .finish_for_profile(self.purpose, &self.profile, None);
         }
         self.span.in_scope(|| {
             tracing::info!(target: "soyo::model", event = "model.finished", status = self.status,
@@ -377,13 +642,17 @@ impl Model for MeasuredModel {
     fn validate_session(&self, session: &Session) -> Result<(), BoundaryError> {
         self.inner.validate_session(session)
     }
+    fn model_routing(&self) -> Option<&crate::provider::routing::RoutingCoordinator> {
+        self.inner.model_routing()
+    }
     fn start<'a>(
         &'a self,
         request: &'a ModelRequest,
         cancel: &'a dyn Cancellation,
     ) -> Operation<'a, Box<dyn ModelStream>> {
         Box::pin(async move {
-            self.metrics.request(request.purpose);
+            self.metrics
+                .request_for_profile(request.purpose, &request.profile);
             let purpose = match request.purpose {
                 ModelPurpose::Execution => "execution",
                 ModelPurpose::Review => "review",
@@ -394,6 +663,7 @@ impl Model for MeasuredModel {
             let mut completion = Completion {
                 metrics: self.metrics.clone(),
                 purpose: request.purpose,
+                profile: request.profile.clone(),
                 done: false,
                 span: span.clone(),
                 started: Instant::now(),
@@ -431,9 +701,11 @@ impl ModelStream for MeasuredStream {
             ) = &next
                 && !self.completion.done
             {
-                self.completion
-                    .metrics
-                    .finish(self.completion.purpose, usage.clone());
+                self.completion.metrics.finish_for_profile(
+                    self.completion.purpose,
+                    &self.completion.profile,
+                    usage.clone(),
+                );
                 self.completion.done = true;
                 self.completion.status = "completed";
             }
@@ -535,9 +807,10 @@ mod tests {
     #[test]
     fn merge_child_aggregates_usage_and_propagates_unknowns() {
         let parent = Metrics::default();
-        parent.request(ModelPurpose::Execution);
-        parent.finish(
+        parent.request_for_profile(ModelPurpose::Execution, "");
+        parent.finish_for_profile(
             ModelPurpose::Execution,
+            "",
             Some(Usage {
                 input_tokens: Some(100),
                 output_tokens: Some(25),
@@ -570,6 +843,7 @@ mod tests {
             execution_cost: None,
             review_cost: None,
             compaction_cost: None,
+            ..RunMetrics::default()
         };
         let artifacts = vec![Artifact {
             path: "src/lib.rs".into(),

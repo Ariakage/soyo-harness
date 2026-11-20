@@ -25,6 +25,13 @@ mod sandbox;
 pub use sandbox::{SandboxNetworkSettings, SandboxSettings, ToolchainPreset};
 mod plugins;
 pub use plugins::PluginSettings;
+mod routing;
+pub use routing::{
+    DEFAULT_CIRCUIT_BREAKER_FAILURES, DEFAULT_COOLDOWN_SECONDS, OpaqueHistoryPolicy,
+    ProfileCapabilities, RoleRoutingConfig, RoutingSettings,
+};
+mod code_intel;
+pub use code_intel::{CodeIntelSettings, LspServerSettings, LspSettings};
 
 fn invalid(message: &'static str) -> BoundaryError {
     BoundaryError(
@@ -263,6 +270,10 @@ pub struct Profile {
     /// Optional explicit rates; excluded from the provider identity fingerprint.
     #[serde(default, skip_serializing)]
     pub pricing: Option<Pricing>,
+    /// Optional explicit capability metadata (`tools`, `reasoning`, `task_types`);
+    /// excluded when default so legacy profile fingerprints stay byte-identical.
+    #[serde(default, skip_serializing_if = "ProfileCapabilities::is_default")]
+    pub capabilities: ProfileCapabilities,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -323,6 +334,8 @@ struct RawProfile {
     #[serde(default, alias = "anthropic_offical_provider")]
     anthropic_official_provider: bool,
     pricing: Option<Pricing>,
+    #[serde(default)]
+    capabilities: ProfileCapabilities,
 }
 impl TryFrom<RawProfile> for Profile {
     type Error = &'static str;
@@ -364,6 +377,7 @@ impl TryFrom<RawProfile> for Profile {
             prompt_cache: raw.prompt_cache,
             anthropic_official_provider: raw.anthropic_official_provider,
             pricing: raw.pricing,
+            capabilities: raw.capabilities,
         })
     }
 }
@@ -624,6 +638,10 @@ struct Document {
     js_repl: crate::js_repl::JsReplSettings,
     #[serde(default)]
     subagents: crate::subagent::SubagentSettings,
+    #[serde(default)]
+    routing: RoutingSettings,
+    #[serde(default)]
+    code_intel: CodeIntelSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -654,6 +672,10 @@ pub struct Config {
     pub js_repl: crate::js_repl::JsReplSettings,
     /// Opt-in controlled parent-child subagents (`F-09`); `enabled` defaults to `false`.
     pub subagents: crate::subagent::SubagentSettings,
+    /// Opt-in multi-profile model routing and bounded failover (`F-16`); `enabled` defaults to `false`.
+    pub routing: RoutingSettings,
+    /// Opt-in project indexing and sandboxed LSP code intelligence (`F-17`); `enabled` defaults to `false`.
+    pub code_intel: CodeIntelSettings,
     env: Environment,
 }
 impl Config {
@@ -1001,6 +1023,7 @@ pub fn load(
         .validate()
         .map_err(|_| invalid("browser settings are invalid"))?;
     doc.subagents.validate()?;
+    doc.code_intel.validate(&env)?;
     if doc
         .review
         .max_output_tokens
@@ -1012,8 +1035,10 @@ pub fn load(
         if name.trim().is_empty() {
             return Err(invalid("profile name cannot be empty"));
         }
+        p.capabilities.validate()?;
         validate_profile(p, &env)?;
     }
+    doc.routing.validate(&doc.profiles)?;
     if doc
         .review
         .profile
@@ -1101,6 +1126,8 @@ pub fn load(
         browser: doc.browser,
         js_repl: doc.js_repl,
         subagents: doc.subagents,
+        routing: doc.routing,
+        code_intel: doc.code_intel,
         env,
     })
 }

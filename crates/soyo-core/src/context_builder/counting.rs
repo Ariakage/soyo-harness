@@ -260,6 +260,11 @@ pub(super) fn request_fingerprint(
     .map(|measurement| measurement.sha256)
 }
 
+/// Conservative serialized-byte token estimate with no network I/O (`F-16`).
+pub fn conservative_request_tokens(request: &ModelRequest) -> Result<u64, BoundaryError> {
+    Ok(measure(&request_view(request), MAX_SERIALIZED_BYTES)?.bytes)
+}
+
 fn component(bytes: u64) -> ComponentCount {
     ComponentCount {
         serialized_bytes: bytes,

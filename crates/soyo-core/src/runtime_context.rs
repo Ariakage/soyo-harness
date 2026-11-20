@@ -123,6 +123,7 @@ type MediaKey = Vec<(bool, Vec<String>)>;
 struct ProjectedMediaCounter<'a> {
     runtime: &'a AgentRuntime,
     session_id: crate::contract::SessionId,
+    media_capabilities: crate::config::MediaCapabilities,
     inner: Option<&'a dyn context_builder::RequestCounter>,
     snapshot: Mutex<Option<(MediaKey, std::sync::Arc<crate::media::MediaAttachments>)>>,
 }
@@ -159,7 +160,7 @@ impl ProjectedMediaCounter<'_> {
                 &request.history,
                 self.runtime.media_store.as_ref(),
                 self.session_id,
-                self.runtime.media_capabilities,
+                self.media_capabilities,
             )?;
             *slot = Some((key, std::sync::Arc::new(media)));
         }
@@ -183,6 +184,16 @@ impl context_builder::RequestCounter for ProjectedMediaCounter<'_> {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct RoutedTarget {
+    pub profile: String,
+    pub protocol: crate::contract::ModelProtocol,
+    pub model: String,
+    pub media_capabilities: crate::config::MediaCapabilities,
+    pub context_window_tokens: u64,
+    pub max_output_tokens: u32,
+}
+
 impl AgentRuntime {
     pub(super) async fn context_request(
         &self,
@@ -190,10 +201,27 @@ impl AgentRuntime {
         mut request: ModelRequest,
         memory_frame: Option<&super::managed_memory::MemoryFrame>,
         skill_frame: Option<&crate::skills::ActiveSkillSet>,
+        routed: Option<&RoutedTarget>,
+        migrated_history: Option<&[HistoryItem]>,
     ) -> Result<ModelRequest, BoundaryError> {
+        let effective_profile = routed
+            .map(|target| target.profile.as_str())
+            .unwrap_or(session.profile.as_str());
+        let effective_protocol = routed
+            .map(|target| target.protocol)
+            .unwrap_or(session.protocol);
+        let effective_model = routed
+            .map(|target| target.model.as_str())
+            .unwrap_or(session.model.as_str());
+        let effective_media_caps = routed
+            .map(|target| target.media_capabilities)
+            .unwrap_or(self.media_capabilities);
+        request.profile = effective_profile.to_owned();
+
         let media_counter = ProjectedMediaCounter {
             runtime: self,
             session_id: session.id,
+            media_capabilities: effective_media_caps,
             inner: self.model.request_counter(),
             snapshot: Mutex::new(None),
         };
@@ -203,6 +231,7 @@ impl AgentRuntime {
         let Some(state) = &self.context_state else {
             return media_counter.attach(request);
         };
+        let effective_history: &[HistoryItem] = migrated_history.unwrap_or(&session.history);
         let model = ModeBoundCompactionModel {
             inner: self.model.clone(),
             modes: self.modes.clone(),
@@ -214,10 +243,29 @@ impl AgentRuntime {
         };
         model.check_sources()?;
         let identity = CountingIdentity {
-            protocol: session.protocol,
-            model: session.model.clone(),
+            protocol: effective_protocol,
+            model: effective_model.to_owned(),
             adapter_version: crate::provider::COUNTING_ADAPTER_VERSION.into(),
         };
+        let mut effective_budget = state.budget;
+        if let Some(target) = routed
+            && target.context_window_tokens != effective_budget.window_tokens
+        {
+            let window = target.context_window_tokens.max(16);
+            let margin = effective_budget.safety_margin.min(window / 4);
+            let reserve = effective_budget
+                .output_reserve
+                .min(u64::from(target.max_output_tokens))
+                .min((window.saturating_sub(margin)) / 2)
+                .max(1);
+            effective_budget.window_tokens = window;
+            effective_budget.safety_margin = margin;
+            effective_budget.output_reserve = reserve;
+            if let Some(trigger) = effective_budget.trigger_tokens {
+                let cap = window.saturating_sub(1).saturating_sub(margin);
+                effective_budget.trigger_tokens = Some(trigger.min(cap).max(1));
+            }
+        }
         let records = secrets::redact(
             self.store.output_references(session.id).await?,
             &self.secret_source,
@@ -236,7 +284,7 @@ impl AgentRuntime {
                 .push(record);
         }
         let mut projections = Vec::new();
-        for (source_index, item) in session.history.iter().enumerate() {
+        for (source_index, item) in effective_history.iter().enumerate() {
             if let HistoryItem::ToolResult { call_id, result } = item
                 && let Some(outputs) = by_call.get(call_id)
                 && serde_json::to_vec(result)
@@ -254,15 +302,19 @@ impl AgentRuntime {
                 });
             }
         }
-        let retirements = self.memory_retirements(session).await?;
+        let retirements = if migrated_history.is_none() {
+            self.memory_retirements(session).await?
+        } else {
+            Vec::new()
+        };
         if !retirements.is_empty() && self.jobs.running_count()? != 0 {
             self.jobs.cancel_and_drain().await?;
             self.check()?;
         }
         if !retirements.is_empty() {
-            let latest_todo = session.history.iter().enumerate().rev().find_map(|(index,item)| match item {
+            let latest_todo = effective_history.iter().enumerate().rev().find_map(|(index,item)| match item {
                 HistoryItem::ToolResult {call_id,result} if crate::tools::todo::result_todos(result).is_some()
-                    && session.history[..index].iter().any(|item| matches!(item,HistoryItem::ToolCall(call) if call.call_id == *call_id && call.name == "todo_write")) => Some(index),
+                    && effective_history[..index].iter().any(|item| matches!(item,HistoryItem::ToolCall(call) if call.call_id == *call_id && call.name == "todo_write")) => Some(index),
                 _ => None,
             });
             if latest_todo.is_some_and(|index| {
@@ -282,26 +334,30 @@ impl AgentRuntime {
         let versions = self.context_versions()?;
         model.check_sources()?;
         let stored = self.store.context_checkpoint(session.id).await?;
-        let current_view = stored
-            .as_ref()
-            .filter(|checkpoint| {
-                checkpoint.validate().is_ok()
-                    && checkpoint.record.context_versions == versions
-                    && checkpoint.view.identity == identity
-                    && checkpoint.view.profile == session.profile
-            })
-            .map(|checkpoint| checkpoint.view.clone());
+        let current_view = if migrated_history.is_some() {
+            None
+        } else {
+            stored
+                .as_ref()
+                .filter(|checkpoint| {
+                    checkpoint.validate().is_ok()
+                        && checkpoint.record.context_versions == versions
+                        && checkpoint.view.identity == identity
+                        && checkpoint.view.profile == effective_profile
+                })
+                .map(|checkpoint| checkpoint.view.clone())
+        };
         let view = current_view;
         *state
             .view
             .lock()
             .map_err(|_| error("context_view", "Context view lock failed"))? = view.clone();
-        let protected = if self.jobs.running_count()? == 0 || session.history.is_empty() {
+        let protected = if self.jobs.running_count()? == 0 || effective_history.is_empty() {
             Vec::new()
         } else {
             vec![ItemRange {
                 start: view.as_ref().map_or(0, |view| view.covered_prefix),
-                end: session.history.len(),
+                end: effective_history.len(),
             }]
         };
         request
@@ -327,12 +383,15 @@ impl AgentRuntime {
             dynamic.push_str(&checkpoint_section);
         }
         let make_input = |view| BuildInput {
-            history_offset: request.history.len().saturating_sub(session.history.len()),
+            history_offset: request
+                .history
+                .len()
+                .saturating_sub(effective_history.len()),
             request: &request,
             identity: &identity,
-            budget: state.budget,
-            source_history: &session.history,
-            revision: session.history.len() as u64,
+            budget: effective_budget,
+            source_history: effective_history,
+            revision: effective_history.len() as u64,
             committed_view: view,
             protected_ranges: &protected,
             output_projections: &projections,
@@ -361,7 +420,7 @@ impl AgentRuntime {
             // wording may be corrected later and is not all permanently active.
             let required = Vec::new();
             let mut references = Vec::new();
-            for (index, item) in session.history.iter().enumerate().take(prefix_end) {
+            for (index, item) in effective_history.iter().enumerate().take(prefix_end) {
                 if let HistoryItem::ToolResult { call_id, .. } = item
                     && !retirements.iter().any(|retirement| {
                         index >= retirement.range.start && index < retirement.range.end
@@ -378,9 +437,10 @@ impl AgentRuntime {
                 }
             }
             let known_secrets = secrets::snapshot(&self.secret_source)?;
+            let spent = self.metrics.spent_by_currency();
             let prepared = state
                 .coordinator
-                .prepare(
+                .prepare_routed(
                     crate::compaction::CompactionInput {
                         context: make_input(view.as_ref()),
                         session_id: session.id,
@@ -397,6 +457,7 @@ impl AgentRuntime {
                     &self.budget,
                     counter,
                     self.cancel.as_ref(),
+                    &spent,
                 )
                 .await;
             let mut prepared = match prepared {
@@ -412,13 +473,39 @@ impl AgentRuntime {
             let current_versions = self.context_versions()?;
             prepared.verify_current(
                 session.id,
-                &session.history,
-                session.history.len() as u64,
-                &session.profile,
+                effective_history,
+                effective_history.len() as u64,
+                effective_profile,
                 &identity,
                 &current_versions,
             )?;
             secrets::model_request(&prepared.projected_request, &self.secret_source)?;
+            for rec in &prepared.route_decisions {
+                self.metrics.record_route(rec.clone());
+            }
+            let mut route_changes: Vec<crate::boundary::StoreChange> = prepared
+                .route_decisions
+                .iter()
+                .map(|rec| crate::boundary::StoreChange::Activity {
+                    run_id: self.run.id,
+                    payload: crate::contract::EventPayload::ModelRouted {
+                        request_id: rec.request_id.clone(),
+                        purpose: rec.purpose,
+                        role: rec.role.clone(),
+                        profile: rec.profile.clone(),
+                        model: rec.model.clone(),
+                        protocol: rec.protocol,
+                        reason: rec.reason.clone(),
+                        fallback_from: rec.fallback_from.clone(),
+                        excluded: rec
+                            .excluded
+                            .iter()
+                            .map(|e| format!("{}:{}", e.profile, e.reason))
+                            .collect(),
+                        migration: rec.migration.clone(),
+                    },
+                })
+                .collect();
             prepared.record.previous_checkpoint = stored
                 .as_ref()
                 .map(|checkpoint| checkpoint.view.checkpoint_id.clone());
@@ -426,12 +513,15 @@ impl AgentRuntime {
                 view: prepared.view,
                 record: prepared.record,
             };
-            self.store
-                .commit(&[crate::boundary::StoreChange::ContextCheckpoint {
+            if migrated_history.is_none() {
+                route_changes.push(crate::boundary::StoreChange::ContextCheckpoint {
                     run_id: self.run.id,
                     checkpoint: Box::new(checkpoint.clone()),
-                }])
-                .await?;
+                });
+            }
+            if !route_changes.is_empty() {
+                self.store.commit(&route_changes).await?;
+            }
             *state
                 .view
                 .lock()
@@ -590,6 +680,9 @@ impl crate::boundary::Model for ModeBoundCompactionModel {
     }
     fn request_counter(&self) -> Option<&dyn context_builder::RequestCounter> {
         self.inner.request_counter()
+    }
+    fn model_routing(&self) -> Option<&crate::provider::routing::RoutingCoordinator> {
+        self.inner.model_routing()
     }
     fn start<'a>(
         &'a self,

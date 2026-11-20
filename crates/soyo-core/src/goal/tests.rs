@@ -112,6 +112,7 @@ fn metrics() -> RunMetrics {
         execution_cost: None,
         review_cost: None,
         compaction_cost: None,
+        ..RunMetrics::default()
     }
 }
 

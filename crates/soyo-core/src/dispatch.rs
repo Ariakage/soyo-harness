@@ -370,6 +370,9 @@ impl ToolDispatcher {
     pub(crate) fn permission_fingerprint(&self) -> String {
         self.policy.fingerprint()
     }
+    pub(crate) fn files(&self) -> &Arc<ReadTools> {
+        &self.files
+    }
     pub(crate) fn protect_host_paths(
         &self,
         paths: Vec<std::path::PathBuf>,
@@ -938,6 +941,9 @@ impl ToolDispatcher {
             )
         })
     }
+    pub(crate) fn set_metrics(&self, metrics: Arc<crate::metrics::Metrics>) {
+        self.manager.set_metrics(metrics);
+    }
     /// Remove side-effecting operations before exposing a non-durable store.
     pub(crate) fn restrict_to_read_only(mut self) -> Self {
         self.read_only = true;
@@ -1100,6 +1106,8 @@ impl ToolDispatcher {
                 }
                 _ => return Err(failure("unknown_tool", "unsupported subagent tool")),
             }
+        } else if crate::code_intel::is_code_intel_tool(&call.name) {
+            crate::code_intel::validate_call(&context.workspace, call)?
         } else if let Some(entry) = self.registered(&call.name)? {
             entry.validate_arguments(call)?;
             if self.read_only
@@ -1196,6 +1204,12 @@ impl ToolDispatcher {
                     return false;
                 }
                 Operation::tool_discovery(&call.name)
+            }
+            name if crate::code_intel::is_code_intel_tool(name) => {
+                let Ok(op) = crate::code_intel::validate_call(&context.workspace, call) else {
+                    return false;
+                };
+                Ok(op)
             }
             _ => return false,
         };

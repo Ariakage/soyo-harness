@@ -179,14 +179,17 @@ pub mod error_codes {
     pub const BUDGET_ERROR: &str = "budget_error";
     pub const CANCELLED: &str = "cancelled";
     pub const CHECKPOINT_ERROR: &str = "checkpoint_error";
+    pub const CODE_INTEL_ERROR: &str = "code_intel_error";
     pub const CONFLICT: &str = "conflict";
     pub const CONTEXT_BUDGET: &str = "context_budget";
     pub const CONTEXT_LIMIT: &str = "context_limit";
+    pub const COST_BUDGET_EXCEEDED: &str = "cost_budget_exceeded";
     pub const DURABILITY_REQUIRED: &str = "durability_required";
     pub const EDIT_CONFLICT: &str = "edit_conflict";
     pub const EXECUTABLE_NOT_FOUND: &str = "executable_not_found";
     pub const GOAL_BUDGET: &str = "goal_budget";
     pub const GOAL_WORKSPACE_BUSY: &str = "goal_workspace_busy";
+    pub const HISTORY_MIGRATION_REQUIRED: &str = "history_migration_required";
     pub const HOOK_DENIED: &str = "hook_denied";
     pub const HOST_PROTECTION_UNAVAILABLE: &str = "host_protection_unavailable";
     pub const INCOMPLETE_MODEL_RESPONSE: &str = "incomplete_model_response";
@@ -201,6 +204,7 @@ pub mod error_codes {
     pub const INVALID_WORKER_REQUEST: &str = "invalid_worker_request";
     pub const INVALID_WORKSPACE: &str = "invalid_workspace";
     pub const LIMIT_REACHED: &str = "limit_reached";
+    pub const LSP_ERROR: &str = "lsp_error";
     pub const MEMORY_ERROR: &str = "memory_error";
     pub const MODE_BUSY: &str = "mode_busy";
     pub const MODE_DENIED: &str = "mode_denied";
@@ -209,9 +213,11 @@ pub mod error_codes {
     pub const MODEL_CONNECT_TIMEOUT: &str = "model_connect_timeout";
     pub const MODEL_ERROR: &str = "model_error";
     pub const MODEL_TIMEOUT: &str = "model_timeout";
+    pub const MODEL_UNAVAILABLE: &str = "model_unavailable";
     pub const NEEDS_AUTH: &str = "needs_auth";
     pub const NEEDS_CONFIRMATION: &str = "needs_confirmation";
     pub const NEEDS_INPUT: &str = "needs_input";
+    pub const NEW_SESSION_REQUIRED: &str = "new_session_required";
     pub const NOT_EXECUTED: &str = "not_executed";
     pub const OUTCOME_UNKNOWN: &str = "outcome_unknown";
     pub const OUTPUT_LIMIT: &str = "output_limit";
@@ -237,6 +243,7 @@ pub mod error_codes {
     pub const SKILL_CONTEXT_CHANGED: &str = "skill_context_changed";
     pub const SKILL_ERROR: &str = "skill_error";
     pub const STALE_APPROVAL: &str = "stale_approval";
+    pub const STALE_INDEX: &str = "stale_index";
     pub const STEERING_ERROR: &str = "steering_error";
     pub const STORAGE_ERROR: &str = "storage_error";
     pub const STORAGE_SENSITIVE_DATA: &str = "storage_sensitive_data";
@@ -546,6 +553,22 @@ pub enum EventPayload {
     ModeChangeRequested { from: WorkMode, to: WorkMode },
     #[serde(rename = "mode.changed")]
     ModeChanged { from: WorkMode, to: WorkMode },
+    #[serde(rename = "model.routed")]
+    ModelRouted {
+        request_id: String,
+        purpose: ModelPurpose,
+        role: String,
+        profile: String,
+        model: String,
+        protocol: ModelProtocol,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_from: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        excluded: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        migration: Option<String>,
+    },
     #[serde(rename = "model.started")]
     ModelStarted {
         request_id: String,

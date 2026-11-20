@@ -271,6 +271,7 @@ pub struct PreparedCompaction {
     pub view: ContextView,
     pub record: CompactionRecord,
     pub projected_request: ModelRequest,
+    pub route_decisions: Vec<crate::provider::routing::RouteDecisionRecord>,
 }
 impl PreparedCompaction {
     pub fn verify_current(
@@ -367,6 +368,26 @@ impl CompactionCoordinator {
         counter: Option<&dyn RequestCounter>,
         cancel: &dyn Cancellation,
     ) -> Result<PreparedCompaction, BoundaryError> {
+        self.prepare_routed(
+            input,
+            model,
+            budget,
+            counter,
+            cancel,
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+    }
+
+    pub(crate) async fn prepare_routed(
+        &self,
+        input: CompactionInput<'_>,
+        model: &dyn Model,
+        budget: &SharedBudget,
+        counter: Option<&dyn RequestCounter>,
+        cancel: &dyn Cancellation,
+        spent_by_currency: &std::collections::BTreeMap<String, u64>,
+    ) -> Result<PreparedCompaction, BoundaryError> {
         if cancel.is_cancelled() {
             return Err(error("cancelled", "Compaction was cancelled"));
         }
@@ -402,12 +423,21 @@ impl CompactionCoordinator {
             return Ok(prepared);
         }
         let result = self
-            .prepare_inner(&input, model, budget, counter, cancel, started)
+            .prepare_inner(
+                &input,
+                model,
+                budget,
+                counter,
+                cancel,
+                started,
+                spent_by_currency,
+            )
             .await;
         *state = Some((key, result.clone()));
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn prepare_inner(
         &self,
         input: &CompactionInput<'_>,
@@ -416,6 +446,7 @@ impl CompactionCoordinator {
         counter: Option<&dyn RequestCounter>,
         cancel: &dyn Cancellation,
         started: Instant,
+        spent_by_currency: &std::collections::BTreeMap<String, u64>,
     ) -> Result<PreparedCompaction, BoundaryError> {
         let plan = planning::plan(input, &self.config, counter)?;
         let deadline = started + self.config.operation_timeout;
@@ -428,6 +459,8 @@ impl CompactionCoordinator {
             input,
             deadline,
             calls: Vec::new(),
+            spent_by_currency,
+            route_decisions: Vec::new(),
         };
         let chunks = planning::split(
             &plan.units,
@@ -561,6 +594,7 @@ impl CompactionCoordinator {
             view,
             record,
             projected_request: rebuilt.request,
+            route_decisions: runner.route_decisions,
         })
     }
 }

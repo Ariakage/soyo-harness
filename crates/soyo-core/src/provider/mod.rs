@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod chat;
 pub mod responses;
 pub mod router;
+pub mod routing;
 pub mod transport;
 
 use crate::{

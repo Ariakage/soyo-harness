@@ -11,6 +11,7 @@ pub mod background;
 pub mod boundary;
 pub mod browser;
 pub mod checkpoint;
+pub mod code_intel;
 pub mod command_analysis;
 pub mod compaction;
 pub mod config;

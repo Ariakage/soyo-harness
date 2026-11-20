@@ -454,6 +454,12 @@ pub fn is_managed_tool(name: &str) -> bool {
             | "checkpoint_accept"
             | "checkpoint_restore"
             | "subagent_merge"
+            | "code_search_symbols"
+            | "code_file_outline"
+            | "code_definition"
+            | "code_references"
+            | "code_diagnostics"
+            | "code_edit_suggestions"
     )
 }
 
@@ -480,7 +486,16 @@ pub fn is_known_rule_tool(name: &str) -> bool {
 
 pub fn builtin_effect(name: &str) -> Option<ToolEffect> {
     Some(match name {
-        "read_file" | "list_dir" | "find_files" | "search_text" => ToolEffect::FileRead,
+        "read_file"
+        | "list_dir"
+        | "find_files"
+        | "search_text"
+        | "code_search_symbols"
+        | "code_file_outline"
+        | "code_definition"
+        | "code_references"
+        | "code_diagnostics"
+        | "code_edit_suggestions" => ToolEffect::FileRead,
         "write_file" | "edit_file" | "apply_patch" => ToolEffect::FileWrite,
         "exec" => ToolEffect::Process,
         // The sandboxed REPL worker is a managed subprocess; scripts cannot
