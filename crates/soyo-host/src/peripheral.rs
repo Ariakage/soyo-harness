@@ -611,18 +611,21 @@ impl HostService {
     }
 
     /// Experimental feature toggles surfaced in desktop Settings. Flags
-    /// persist `[js_repl].enabled` into `config.toml` (preserving comments via
-    /// `toml_edit`) and update the loaded configuration so newly built
-    /// sessions observe the value without a restart.
+    /// persist `[js_repl].enabled` and `[subagents].enabled` into `config.toml`
+    /// (preserving comments via `toml_edit`) and update the loaded configuration
+    /// so newly built sessions observe the value without a restart.
     pub async fn get_experimental_settings(&self) -> Result<ExperimentalSettingsDto, DesktopError> {
         let cfg = require_config_clone(self).await?;
         Ok(ExperimentalSettingsDto {
             js_repl_enabled: cfg.js_repl.enabled,
+            subagents_enabled: cfg.subagents.enabled,
         })
     }
 
-    pub async fn set_js_repl_enabled(
+    async fn set_experimental_flag(
         &self,
+        section: &'static str,
+        apply: fn(&mut soyo_core::config::Config, bool),
         enabled: bool,
     ) -> Result<ExperimentalSettingsDto, DesktopError> {
         let _ = require_idle_config_clone(self).await?;
@@ -632,13 +635,30 @@ impl HostService {
             .as_mut()
             .ok_or_else(|| DesktopError::new("invalid_config", "Configuration is not loaded"))?;
         let config_path = cfg.config_path.clone();
-        offload_boundary(move || persist_js_repl_flag(&config_path, enabled))
+        offload_boundary(move || persist_toml_bool_flag(&config_path, section, "enabled", enabled))
             .await
             .map_err(|e| DesktopError::new(e.code(), e.to_string()))?;
-        cfg.js_repl.enabled = enabled;
+        apply(cfg, enabled);
         Ok(ExperimentalSettingsDto {
             js_repl_enabled: cfg.js_repl.enabled,
+            subagents_enabled: cfg.subagents.enabled,
         })
+    }
+
+    pub async fn set_js_repl_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.set_experimental_flag("js_repl", |cfg, val| cfg.js_repl.enabled = val, enabled)
+            .await
+    }
+
+    pub async fn set_subagents_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.set_experimental_flag("subagents", |cfg, val| cfg.subagents.enabled = val, enabled)
+            .await
     }
 
     /// Toggle one managed-memory setting (`set_memory_setting`).
@@ -1467,7 +1487,12 @@ fn merge_setup_config(
 /// Persist `[js_repl].enabled` into `config_path`, preserving the rest of the
 /// document via `toml_edit`. Creates the config file when it does not exist so
 /// a toggle flipped before first setup still sticks across restarts.
-fn persist_js_repl_flag(config_path: &Path, enabled: bool) -> Result<(), BoundaryError> {
+fn persist_toml_bool_flag(
+    config_path: &Path,
+    section: &str,
+    key: &str,
+    enabled: bool,
+) -> Result<(), BoundaryError> {
     let text = fs::read_to_string(config_path).unwrap_or_default();
     let base = if text.trim().is_empty() {
         "schema_version = 1\n".to_owned()
@@ -1484,13 +1509,16 @@ fn persist_js_repl_flag(config_path: &Path, enabled: bool) -> Result<(), Boundar
                 BoundaryError::new("config_io", "Cannot place schema_version in configuration")
             })?;
     }
-    if !doc.get("js_repl").is_some_and(|item| item.is_table()) {
-        doc["js_repl"] = toml_edit::Item::Table(toml_edit::Table::new());
+    if !doc.get(section).is_some_and(|item| item.is_table()) {
+        doc[section] = toml_edit::Item::Table(toml_edit::Table::new());
     }
-    let Some(table) = doc["js_repl"].as_table_mut() else {
-        return Err(BoundaryError::new("config_io", "Invalid js_repl section"));
+    let Some(table) = doc[section].as_table_mut() else {
+        return Err(BoundaryError::new(
+            "config_io",
+            format!("Invalid {section} section"),
+        ));
     };
-    table["enabled"] = toml_edit::value(enabled);
+    table[key] = toml_edit::value(enabled);
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|_| BoundaryError::new("config_io", "Cannot create config directory"))?;

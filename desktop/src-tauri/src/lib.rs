@@ -79,6 +79,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         peripheral_commands::goal_start,
         peripheral_commands::get_experimental_settings,
         peripheral_commands::set_js_repl_enabled,
+        peripheral_commands::set_subagents_enabled,
     ])
 }
 

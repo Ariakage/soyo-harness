@@ -65,6 +65,44 @@ pub fn command_text(arguments: &Value) -> Option<String> {
 }
 
 pub fn approval_action(name: &str, arguments: &Value) -> Option<String> {
+    if name.starts_with("subagent_") {
+        let detail = match name {
+            "subagent_spawn" => {
+                let mut parts = Vec::new();
+                if let Some(label) = arguments.get("label").and_then(Value::as_str) {
+                    parts.push(format!("label={}", one_line(label, 32)));
+                }
+                if let Some(iso) = arguments.get("workspace_isolation").and_then(Value::as_str) {
+                    parts.push(format!("isolation={iso}"));
+                }
+                if arguments.get("allow_exec").and_then(Value::as_bool) == Some(true) {
+                    parts.push("allow_exec=true".into());
+                }
+                (!parts.is_empty()).then(|| parts.join(", "))
+            }
+            "subagent_merge" => {
+                let mut parts = Vec::new();
+                if let Some(id) = arguments.get("subagent_id").and_then(Value::as_str) {
+                    parts.push(format!("id={}", one_line(id, 32)));
+                }
+                if let Some(paths) = arguments.get("paths").and_then(Value::as_array) {
+                    parts.push(format!("{} files", paths.len()));
+                }
+                if arguments.get("discard_after").and_then(Value::as_bool) == Some(true) {
+                    parts.push("discard_after=true".into());
+                }
+                (!parts.is_empty()).then(|| parts.join(", "))
+            }
+            _ => arguments
+                .get("subagent_id")
+                .and_then(Value::as_str)
+                .map(|id| format!("id={}", one_line(id, 32))),
+        };
+        return Some(match detail {
+            Some(detail) => format!("{name} ({detail})"),
+            None => name.to_owned(),
+        });
+    }
     if !name.starts_with("browser_") {
         return None;
     }
@@ -123,7 +161,24 @@ fn append_value(lines: &mut Vec<String>, label: &str, value: &Value, indent: usi
 
 pub fn call(name: &str, arguments: &Value, elapsed: Option<Duration>) -> String {
     let mut lines = Vec::new();
-    if name == "exec" {
+    if name.starts_with("subagent_") {
+        lines.push("Arguments:".into());
+        if let Some(map) = arguments.as_object() {
+            for (k, v) in map {
+                if matches!(k.as_str(), "task" | "message") {
+                    if let Some(text) = v.as_str() {
+                        lines.push(format!("  {k}: ({} bytes)", text.len()));
+                    } else {
+                        lines.push(format!("  {k}: <structured>"));
+                    }
+                } else if !k.starts_with("__soyo_") && !k.starts_with("__saya_") {
+                    append_value(&mut lines, k, v, 2);
+                }
+            }
+        } else {
+            append_value(&mut lines, "Arguments", arguments, 0);
+        }
+    } else if name == "exec" {
         lines.push("Command:".into());
         lines.push(format!(
             "  {}",
@@ -212,6 +267,67 @@ pub fn result(result: &ToolResult) -> String {
     lines.join("\n")
 }
 
+fn subagent_result_lines(result: &ToolResult) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Status: {}{}",
+        if result.ok { "succeeded" } else { "failed" },
+        if result.truncated { " (truncated)" } else { "" }
+    ));
+    if let Some(error) = &result.error {
+        lines.push(format!("Error: {} — {}", error.code, error.message));
+    }
+    let Some(data) = &result.data else {
+        return lines.join("\n");
+    };
+    for (key, label) in [
+        ("id", "Subagent"),
+        ("subagent_id", "Subagent"),
+        ("label", "Label"),
+        ("state", "State"),
+        ("work_mode", "Mode"),
+        ("isolation_kind", "Isolation"),
+    ] {
+        if let Some(val) = data.get(key).and_then(Value::as_str) {
+            lines.push(format!("{label}: {val}"));
+        }
+    }
+    if let Some(traces) = data.get("step_traces").and_then(Value::as_array) {
+        for trace in traces {
+            let tool = trace.get("tool").and_then(Value::as_str).unwrap_or("tool");
+            let detail = trace.get("detail").and_then(Value::as_str).unwrap_or("");
+            let status = trace.get("status").and_then(Value::as_str).unwrap_or("ok");
+            let detail = if detail.is_empty() {
+                "-"
+            } else {
+                &one_line(detail, 80)
+            };
+            lines.push(format!("{tool} {detail} -> {status}"));
+        }
+    }
+    for (key, label) in [
+        ("changed_files", "Changed files"),
+        ("merge_receipts", "Merged files"),
+        ("conflicts", "Conflicts"),
+        ("subagents", "Subagents"),
+    ] {
+        if let Some(arr) = data.get(key).and_then(Value::as_array)
+            && !arr.is_empty()
+        {
+            append_value(&mut lines, label, &Value::Array(arr.clone()), 0);
+        }
+    }
+    if let Some(summary) = data.get("summary").and_then(Value::as_str)
+        && !summary.is_empty()
+    {
+        lines.push(format!("Summary: {}", one_line(summary, 240)));
+    }
+    if !result.media_refs.is_empty() {
+        lines.push(format!("Artifacts: {}", result.media_refs.join(", ")));
+    }
+    lines.join("\n")
+}
+
 pub fn call_and_result(
     name: &str,
     arguments: &Value,
@@ -219,7 +335,11 @@ pub fn call_and_result(
     elapsed: Option<Duration>,
 ) -> String {
     let call_part = call(name, arguments, elapsed);
-    let result_part = result(tool_result);
+    let result_part = if name.starts_with("subagent_") {
+        subagent_result_lines(tool_result)
+    } else {
+        result(tool_result)
+    };
     if call_part.is_empty() {
         result_part
     } else {
@@ -233,6 +353,42 @@ pub fn summarize_call(
     tool_result: Option<&ToolResult>,
     elapsed: Option<Duration>,
 ) -> Option<String> {
+    if name.starts_with("subagent_") {
+        let action = name.strip_prefix("subagent_").unwrap_or(name);
+        let mut parts = vec![format!("subagent {action}")];
+        if let Some(label) = tool_result
+            .and_then(|r| r.data.as_ref())
+            .and_then(|d| d.get("label"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                arguments
+                    .and_then(|a| a.get("label"))
+                    .and_then(Value::as_str)
+            })
+        {
+            parts.push(one_line(label, 32));
+        }
+        if let Some(elapsed) = elapsed {
+            parts.push(format_duration(elapsed));
+        }
+        if let Some(res) = tool_result {
+            if !res.ok
+                && let Some(err) = &res.error
+            {
+                parts.push(one_line(&err.code, 28));
+            } else if let Some(state) = res
+                .data
+                .as_ref()
+                .and_then(|d| d.get("state"))
+                .and_then(Value::as_str)
+            {
+                parts.push(one_line(state, 24));
+            }
+        } else {
+            parts.push("running".into());
+        }
+        return Some(one_line(&parts.join(" · "), 120));
+    }
     if name == "exec" {
         let cmd = arguments.and_then(command_text)?;
         let mut parts = vec![one_line(&cmd, 64)];

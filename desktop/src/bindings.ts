@@ -65,6 +65,7 @@ export const commands = {
 	goalStart: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_start", { goalId })),
 	getExperimentalSettings: () => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("get_experimental_settings")),
 	setJsReplEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_js_repl_enabled", { enabled })),
+	setSubagentsEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_subagents_enabled", { enabled })),
 };
 
 /* Types */
@@ -335,6 +336,7 @@ export type ErrorInfoDto = {
  */
 export type ExperimentalSettingsDto = {
 	js_repl_enabled: boolean,
+	subagents_enabled: boolean,
 };
 
 export type ExportFormatDto = "json" | "markdown";

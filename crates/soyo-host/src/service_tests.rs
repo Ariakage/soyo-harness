@@ -1450,9 +1450,11 @@ scopes = ["docs:read"]
 
         let initial = state.get_experimental_settings().await.unwrap();
         assert!(!initial.js_repl_enabled);
+        assert!(!initial.subagents_enabled);
 
         let updated = state.set_js_repl_enabled(true).await.unwrap();
         assert!(updated.js_repl_enabled);
+        assert!(!updated.subagents_enabled);
         let text = std::fs::read_to_string(&cfg_path).unwrap();
         assert!(text.contains("[js_repl]"), "{text}");
         assert!(text.contains("enabled = true"), "{text}");
@@ -1464,13 +1466,35 @@ scopes = ["docs:read"]
     }
 
     #[tokio::test]
+    async fn subagents_toggle_persists_to_config_toml() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = test_config(root.path());
+        let cfg_path = cfg.config_path.clone();
+        let state = HostService::with_config(cfg);
+
+        let initial = state.get_experimental_settings().await.unwrap();
+        assert!(!initial.subagents_enabled);
+
+        let updated = state.set_subagents_enabled(true).await.unwrap();
+        assert!(updated.subagents_enabled);
+        let text = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(text.contains("[subagents]"), "{text}");
+        assert!(text.contains("enabled = true"), "{text}");
+
+        let again = state.set_subagents_enabled(false).await.unwrap();
+        assert!(!again.subagents_enabled);
+        let text = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(text.contains("enabled = false"), "{text}");
+    }
+
+    #[tokio::test]
     async fn goal_create_list_status_and_report_via_service() {
         let root = tempfile::tempdir().unwrap();
         let cfg = test_config(root.path());
         let state = HostService::with_config(cfg);
 
         let created = state
-            .goal_create("ship it".into(), vec!["it works".into()], None)
+            .goal_create("ship it", vec!["it works".into()], None)
             .await
             .unwrap();
         assert_eq!(created.status, "draft");

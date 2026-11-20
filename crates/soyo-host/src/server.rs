@@ -721,6 +721,14 @@ async fn dispatch(
             };
             r.await.and_then(ok)
         }
+        "set_subagents_enabled" => {
+            let r = async {
+                service
+                    .set_subagents_enabled(param_bool(&params, "enabled")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
         "list_credentials" => service.list_credentials().await.and_then(ok),
         "import_credential" => {
             let r = async {

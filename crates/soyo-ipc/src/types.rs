@@ -1231,4 +1231,5 @@ pub struct GoalReportDto {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ExperimentalSettingsDto {
     pub js_repl_enabled: bool,
+    pub subagents_enabled: bool,
 }

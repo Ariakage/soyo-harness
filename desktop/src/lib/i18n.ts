@@ -363,6 +363,8 @@ export interface UiMessages {
     subtitle: string;
     jsRepl: string;
     jsReplDesc: string;
+    subagents: string;
+    subagentsDesc: string;
     enabled: string;
     disabled: string;
     appliesNewSessions: string;
@@ -1043,6 +1045,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         subtitle: "Opt-in capabilities under active development. Saved to config.toml; applies to newly created sessions.",
         jsRepl: "JavaScript REPL (js_repl)",
         jsReplDesc: "Sandboxed read-only JS orchestration; each bridged call still passes normal authorization and approval.",
+        subagents: "Multi-agent subagents (F-09)",
+        subagentsDesc: "Bounded parent-child subagent orchestration (max_depth = 1) with isolated worktrees and shared budgets.",
         enabled: "Enabled",
         disabled: "Disabled",
         appliesNewSessions: "Applies to new sessions",
@@ -1747,6 +1751,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         subtitle: "开发中的可选能力。开关写入 config.toml，作用于之后创建的会话。",
         jsRepl: "JavaScript REPL（js_repl）",
         jsReplDesc: "沙箱内只读 JS 编排；每次桥接调用仍走常规授权与审批。",
+        subagents: "多 Agent 协作（subagents）",
+        subagentsDesc: "受控父子 Agent 编排（max_depth = 1），支持独立工作树/目录副本与共享预算。",
         enabled: "已启用",
         disabled: "已停用",
         appliesNewSessions: "对新会话生效",
@@ -2443,13 +2449,15 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       jobFallback: "任務",
     },
       experimentalPanel: {
-        header: "实验性功能",
-        subtitle: "開發中的可選能力。開關作用于之後建立的會話，不回寫 config.toml。",
+        header: "實驗性功能",
+        subtitle: "開發中的可選能力。開關寫入 config.toml，套用至之後建立的會話。",
         jsRepl: "JavaScript REPL（js_repl）",
-        jsReplDesc: "沙箱内唯讀 JS 編排；每次橋接呼叫仍走常规授權与審批。",
+        jsReplDesc: "沙箱內唯讀 JS 編排；每次橋接呼叫仍走常規授權與審批。",
+        subagents: "多 Agent 協作（subagents）",
+        subagentsDesc: "受控父子 Agent 編排（max_depth = 1），支援獨立工作樹/目錄副本與共享預算。",
         enabled: "已啟用",
         disabled: "已停用",
-        appliesNewSessions: "对新會話生效",
+        appliesNewSessions: "對新會話生效",
       },
       goals: {
         title: "目标",

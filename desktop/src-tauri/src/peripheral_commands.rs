@@ -459,3 +459,12 @@ pub async fn set_js_repl_enabled(
 ) -> Result<ExperimentalSettingsDto, DesktopError> {
     state.set_js_repl_enabled(enabled).await
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_subagents_enabled(
+    state: State<'_, DesktopState>,
+    enabled: bool,
+) -> Result<ExperimentalSettingsDto, DesktopError> {
+    state.set_subagents_enabled(enabled).await
+}

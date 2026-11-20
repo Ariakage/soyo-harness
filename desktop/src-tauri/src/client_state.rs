@@ -543,6 +543,14 @@ impl DesktopState {
             .await
     }
 
+    pub async fn set_subagents_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.call_rpc("set_subagents_enabled", &json!({ "enabled": enabled }))
+            .await
+    }
+
     pub async fn toggle_mcp_server(
         &self,
         name: &str,

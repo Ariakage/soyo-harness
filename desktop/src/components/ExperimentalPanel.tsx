@@ -24,11 +24,14 @@ export function ExperimentalPanel() {
     void load();
   }, [load]);
 
-  const toggle = async () => {
+  const toggleFlag = async (flag: "js_repl" | "subagents") => {
     if (!settings || busy) return;
     setBusy(true);
     setStatusMessage(null);
-    const res = await commands.setJsReplEnabled(!settings.js_repl_enabled);
+    const res =
+      flag === "js_repl"
+        ? await commands.setJsReplEnabled(!settings.js_repl_enabled)
+        : await commands.setSubagentsEnabled(!settings.subagents_enabled);
     if (res.status === "ok") {
       setSettings(res.data);
     } else {
@@ -36,6 +39,27 @@ export function ExperimentalPanel() {
     }
     setBusy(false);
   };
+
+  const rows: {
+    key: "js_repl" | "subagents";
+    title: string;
+    desc: string;
+    enabled: boolean;
+  }[] = [
+    {
+      key: "js_repl",
+      title: t.experimentalPanel.jsRepl,
+      desc: t.experimentalPanel.jsReplDesc,
+      enabled: settings?.js_repl_enabled ?? false,
+    },
+    {
+      key: "subagents",
+      title: t.experimentalPanel.subagents,
+      desc: t.experimentalPanel.subagentsDesc,
+      enabled: settings?.subagents_enabled ?? false,
+    },
+  ];
+  const anyEnabled = rows.some((row) => row.enabled);
 
   return (
     <div className="space-y-4 text-xs" data-testid="experimental-panel">
@@ -52,43 +76,43 @@ export function ExperimentalPanel() {
         <p className="text-[11px] text-[var(--text-tertiary)]">
           {t.experimentalPanel.subtitle}
         </p>
-        <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--border)] px-2.5 py-2">
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex items-center gap-2 text-[var(--text-primary)]">
-              <span>{t.experimentalPanel.jsRepl}</span>
-              {settings && (
-                <Pill tone={settings.js_repl_enabled ? "success" : "neutral"}>
-                  {settings.js_repl_enabled
-                    ? t.experimentalPanel.enabled
-                    : t.experimentalPanel.disabled}
-                </Pill>
-              )}
-            </div>
-            <p className="text-[11px] text-[var(--text-tertiary)]">
-              {t.experimentalPanel.jsReplDesc}
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings?.js_repl_enabled ?? false}
-            aria-label={t.experimentalPanel.jsRepl}
-            disabled={!settings || busy}
-            onClick={() => void toggle()}
-            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-              settings?.js_repl_enabled
-                ? "bg-[var(--accent)]"
-                : "bg-[var(--border)]"
-            } ${!settings || busy ? "opacity-50" : ""}`}
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--border)] px-2.5 py-2"
           >
-            <span
-              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                settings?.js_repl_enabled ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </button>
-        </div>
-        {settings?.js_repl_enabled && (
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex items-center gap-2 text-[var(--text-primary)]">
+                <span>{row.title}</span>
+                {settings && (
+                  <Pill tone={row.enabled ? "success" : "neutral"}>
+                    {row.enabled ? t.experimentalPanel.enabled : t.experimentalPanel.disabled}
+                  </Pill>
+                )}
+              </div>
+              <p className="text-[11px] text-[var(--text-tertiary)]">{row.desc}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              data-testid={`experimental-toggle-${row.key}`}
+              aria-checked={row.enabled}
+              aria-label={row.title}
+              disabled={!settings || busy}
+              onClick={() => void toggleFlag(row.key)}
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                row.enabled ? "bg-[var(--accent)]" : "bg-[var(--border)]"
+              } ${!settings || busy ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0 h-4 w-4 rounded-full bg-white shadow-xs transition-transform ${
+                  row.enabled ? "translate-x-[18px]" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        ))}
+        {anyEnabled && (
           <p className="text-[11px] text-[var(--text-tertiary)]">
             {t.experimentalPanel.appliesNewSessions}
           </p>
