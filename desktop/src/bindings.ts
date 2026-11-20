@@ -47,6 +47,24 @@ export const commands = {
 	setAvatar: (sourcePath: string | null) => typedError<DesktopPrefsDto_Serialize, DesktopError>(__TAURI_INVOKE("set_avatar", { sourcePath })),
 	getGlobalPrompt: () => typedError<GlobalPromptDto_Serialize, DesktopError>(__TAURI_INVOKE("get_global_prompt")),
 	setGlobalPrompt: (content: string) => typedError<GlobalPromptDto_Serialize, DesktopError>(__TAURI_INVOKE("set_global_prompt", { content })),
+	goalList: () => typedError<GoalDto_Serialize[], DesktopError>(__TAURI_INVOKE("goal_list")),
+	goalJobs: () => typedError<GoalJobDto_Serialize[], DesktopError>(__TAURI_INVOKE("goal_jobs")),
+	goalStatus: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_status", { goalId })),
+	goalCreate: (objective: string, acceptance: string[], budget: GoalBudgetDto | null) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_create", { objective, acceptance, budget })),
+	goalPlan: (goalId: string, planJson: string | null) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_plan", { goalId, planJson })),
+	goalConfirm: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_confirm", { goalId })),
+	goalSetVerifier: (goalId: string, stepId: string, argv: string[], cwd: string | null, timeoutSeconds: number | null, maxOutputBytes: number | null, clear: boolean) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_set_verifier", { goalId, stepId, argv, cwd, timeoutSeconds, maxOutputBytes, clear })),
+	goalPause: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_pause", { goalId })),
+	goalResume: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_resume", { goalId })),
+	goalCancel: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_cancel", { goalId })),
+	goalVerify: (goalId: string, criterion: string, summary: string | null) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_verify", { goalId, criterion, summary })),
+	goalResolve: (goalId: string, stepId: string, retry: boolean) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_resolve", { goalId, stepId, retry })),
+	goalReplan: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_replan", { goalId })),
+	goalReport: (goalId: string, format: string) => typedError<GoalReportDto, DesktopError>(__TAURI_INVOKE("goal_report", { goalId, format })),
+	goalContinue: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_continue", { goalId })),
+	goalStart: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_start", { goalId })),
+	getExperimentalSettings: () => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("get_experimental_settings")),
+	setJsReplEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_js_repl_enabled", { enabled })),
 };
 
 /* Types */
@@ -311,6 +329,14 @@ export type ErrorInfoDto = {
 	message: string,
 };
 
+/**
+ *  Experimental feature toggles surfaced in Settings. Each flag mutates the
+ *  helper's loaded configuration and applies to newly created sessions.
+ */
+export type ExperimentalSettingsDto = {
+	js_repl_enabled: boolean,
+};
+
 export type ExportFormatDto = "json" | "markdown";
 
 export type ExportResultDto = {
@@ -363,6 +389,220 @@ export type GlobalPromptDto_Serialize = {
 	path: string,
 	/**  Path the content was read from, when a legacy file was used. */
 	source_path: string | null,
+};
+
+/**  Explicit finite-continuation authorization stamped at `goal_start`. */
+export type GoalAuthorizationDto = {
+	auto: boolean,
+	mode: string,
+	permissions: string,
+	authorized_at: string,
+};
+
+/**  Bounded Goal budget; `None` fields fall back to `GoalBudget::default()`. */
+export type GoalBudgetDto = {
+	max_runs: number,
+	max_model_requests: number,
+	max_tool_calls: number,
+	max_active_seconds: number,
+	max_tokens: number,
+	max_planning_attempts: number,
+	max_verification_attempts: number,
+	max_replans: number,
+};
+
+/**
+ *  One acceptance criterion as rendered by desktop clients. `verified` is
+ *  resolved against durable evidence by the helper.
+ */
+export type GoalCriterionDto = {
+	id: string,
+	text: string,
+	verification: string,
+	verified: boolean,
+};
+
+/**
+ *  Complete Goal projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`plan`/`continue`/`start`/`verify`), if any.
+ */
+export type GoalDto = GoalDto_Serialize | GoalDto_Deserialize;
+
+/**
+ *  Complete Goal projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`plan`/`continue`/`start`/`verify`), if any.
+ */
+export type GoalDto_Deserialize = {
+	goal_id: string,
+	session_id: string,
+	objective: string,
+	workspace: string,
+	profile: string,
+	mode: string,
+	permissions: string,
+	status: string,
+	phase: string,
+	wait_reason?: string | null,
+	current_step?: string | null,
+	acceptance: GoalCriterionDto[],
+	steps: GoalStepDto_Deserialize[],
+	budget: GoalBudgetDto,
+	usage: GoalUsageDto,
+	authorization?: GoalAuthorizationDto | null,
+	verifiers_confirmed: boolean,
+	failure?: string | null,
+	running_action?: string | null,
+	created_at: string,
+	updated_at: string,
+};
+
+/**
+ *  Complete Goal projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`plan`/`continue`/`start`/`verify`), if any.
+ */
+export type GoalDto_Serialize = {
+	goal_id: string,
+	session_id: string,
+	objective: string,
+	workspace: string,
+	profile: string,
+	mode: string,
+	permissions: string,
+	status: string,
+	phase: string,
+	wait_reason: string | null,
+	current_step: string | null,
+	acceptance: GoalCriterionDto[],
+	steps: GoalStepDto_Serialize[],
+	budget: GoalBudgetDto,
+	usage: GoalUsageDto,
+	authorization: GoalAuthorizationDto | null,
+	verifiers_confirmed: boolean,
+	failure: string | null,
+	running_action: string | null,
+	created_at: string,
+	updated_at: string,
+};
+
+/**  In-flight helper Goal job surfaced for badges and stop controls. */
+export type GoalJobDto = GoalJobDto_Serialize | GoalJobDto_Deserialize;
+
+/**  In-flight helper Goal job surfaced for badges and stop controls. */
+export type GoalJobDto_Deserialize = {
+	goal_id: string,
+	action: string,
+	state: string,
+	error?: string | null,
+};
+
+/**  In-flight helper Goal job surfaced for badges and stop controls. */
+export type GoalJobDto_Serialize = {
+	goal_id: string,
+	action: string,
+	state: string,
+	error: string | null,
+};
+
+/**  Rendered Goal report; `format` is `json` or `markdown`. */
+export type GoalReportDto = {
+	goal_id: string,
+	format: string,
+	content: string,
+};
+
+/**  One planned Goal step with its execution and verification evidence. */
+export type GoalStepDto = GoalStepDto_Serialize | GoalStepDto_Deserialize;
+
+/**  One planned Goal step with its execution and verification evidence. */
+export type GoalStepDto_Deserialize = {
+	step_id: string,
+	ordinal: number,
+	title: string,
+	instruction: string,
+	mode: string,
+	status: string,
+	depends_on: string[],
+	attempts: number,
+	run_id?: string | null,
+	verifier?: GoalVerifierDto_Deserialize | null,
+	last_verification?: GoalStepVerificationDto_Deserialize | null,
+	last_status?: string | null,
+	last_error?: string | null,
+};
+
+/**  One planned Goal step with its execution and verification evidence. */
+export type GoalStepDto_Serialize = {
+	step_id: string,
+	ordinal: number,
+	title: string,
+	instruction: string,
+	mode: string,
+	status: string,
+	depends_on: string[],
+	attempts: number,
+	run_id: string | null,
+	verifier: GoalVerifierDto_Serialize | null,
+	last_verification: GoalStepVerificationDto_Serialize | null,
+	last_status: string | null,
+	last_error: string | null,
+};
+
+/**  Latest host verification outcome for a step. */
+export type GoalStepVerificationDto = GoalStepVerificationDto_Serialize | GoalStepVerificationDto_Deserialize;
+
+/**  Latest host verification outcome for a step. */
+export type GoalStepVerificationDto_Deserialize = {
+	status: string,
+	attempt: number,
+	exit_code?: number | null,
+	duration_ms: number,
+	error?: string | null,
+	stdout_excerpt: string,
+	stderr_excerpt: string,
+};
+
+/**  Latest host verification outcome for a step. */
+export type GoalStepVerificationDto_Serialize = {
+	status: string,
+	attempt: number,
+	exit_code: number | null,
+	duration_ms: number,
+	error: string | null,
+	stdout_excerpt: string,
+	stderr_excerpt: string,
+};
+
+/**  Durable usage counters accumulated across planning, runs and reviews. */
+export type GoalUsageDto = {
+	runs: number,
+	model_requests: number,
+	tool_calls: number,
+	active_seconds: number,
+	input_tokens: number,
+	output_tokens: number,
+	token_usage_unknown: boolean,
+	planning_attempts: number,
+	verification_attempts: number,
+	replans: number,
+};
+
+/**  Structured host verifier command attached to a Goal step. */
+export type GoalVerifierDto = GoalVerifierDto_Serialize | GoalVerifierDto_Deserialize;
+
+/**  Structured host verifier command attached to a Goal step. */
+export type GoalVerifierDto_Deserialize = {
+	argv: string[],
+	cwd?: string | null,
+	timeout_seconds: number,
+	max_output_bytes: number,
+};
+
+/**  Structured host verifier command attached to a Goal step. */
+export type GoalVerifierDto_Serialize = {
+	argv: string[],
+	cwd: string | null,
+	timeout_seconds: number,
+	max_output_bytes: number,
 };
 
 export type HelperStatusDto = HelperStatusDto_Serialize | HelperStatusDto_Deserialize;

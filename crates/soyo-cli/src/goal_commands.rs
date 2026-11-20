@@ -3,22 +3,15 @@
 use super::{Cancel, Cli, Terminal, personal_context, safe_output, signals};
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Value, json};
-use soyo_app::{
-    goal::{
-        GoalRunContext, account_planning, configured_auto_goal, continue_once,
-        goal_profile_fingerprint, now_ms, plan_goal, verify_criterion,
-    },
-    new_session, session,
-};
+use soyo_app::goal::{GoalRunContext, configured_auto_goal, continue_once, now_ms};
 use soyo_core::{
     approvals::Preauthorizations,
     boundary::Cancellation,
     config::{Config, Output},
     contract::{BoundaryError, ErrorInfo, PermissionMode},
     goal::{
-        AcceptanceCriterion, GoalAuthorization, GoalBudget, GoalId, GoalPhase, GoalPlan,
-        GoalRecord, GoalSeed, GoalStatus, GoalStore, GoalWaitReason, StepId, StepVerifier,
-        VerificationSpec, goal_report_json, goal_report_markdown,
+        GoalBudget, GoalId, GoalPhase, GoalPlan, GoalRecord, GoalStatus, GoalStore, GoalWaitReason,
+        StepId, StepVerifier,
     },
 };
 use std::{
@@ -212,13 +205,7 @@ fn secrets(config: &Config) -> Result<Vec<String>, BoundaryError> {
 }
 
 fn store(config: &Config) -> Result<GoalStore, BoundaryError> {
-    session::check_roots(config, &config.cwd, config.mode).map_err(|_| {
-        failure(
-            "plan_write_denied",
-            "PLAN Goal storage must be outside the current workspace",
-        )
-    })?;
-    GoalStore::open(&config.data_dir, secrets(config)?)
+    soyo_app::goal::open_goal_store(config)
 }
 
 fn print_value(config: &Config, value: &Value, text: impl FnOnce()) {
@@ -326,45 +313,9 @@ async fn create_goal(
     budget: &GoalBudgetArgs,
     config: &Config,
 ) -> Result<Value, BoundaryError> {
-    if objective.trim().is_empty() {
-        return Err(failure("invalid_goal", "Goal objective cannot be empty"));
-    }
-    let mut selected = config.clone();
-    selected.mode = config.mode;
-    let mut new = new_session(&selected)
-        .map_err(|_| failure("invalid_goal", "Goal session configuration is invalid"))?;
-    new.work_mode = config.mode;
-    let prepared = session::create(&selected, new)
-        .await
-        .map_err(|_| failure("goal_session", "Goal session cannot be created"))?;
-    let session_id = prepared.session.id;
-    let workspace = prepared.session.workspace.clone();
-    drop(prepared);
-    let profile = selected
-        .profile
-        .clone()
-        .ok_or_else(|| failure("invalid_goal", "Goal profile is not selected"))?;
-    let mut goal = GoalRecord::new(GoalSeed {
-        session_id,
-        objective: objective.to_owned(),
-        workspace,
-        profile,
-        mode: selected.mode,
-        permissions: selected.permissions_mode,
-        budget: budget.resolve(),
-        now: soyo_app::events::timestamp()?,
-    })?;
-    goal.acceptance = acceptance
-        .iter()
-        .enumerate()
-        .map(|(index, text)| AcceptanceCriterion {
-            id: format!("criterion-{}", index + 1),
-            text: text.clone(),
-            verification: VerificationSpec::Manual,
-        })
-        .collect();
-    goal.validate()?;
-    let goal = store(config)?.create(goal).await?;
+    let goal =
+        soyo_app::goal::create_goal(config, objective, acceptance.to_vec(), budget.resolve())
+            .await?;
     Ok(json!({"schema_version":1,"data":{"goal":goal}}))
 }
 
@@ -373,77 +324,18 @@ async fn plan(
     plan_file: Option<&PathBuf>,
     config: &Config,
 ) -> Result<Value, BoundaryError> {
-    let store = store(config)?;
-    let mut goal = store.load(goal_id).await?;
-    let lease = store
-        .acquire_lease(
-            goal.id,
-            format!("plan-{}", now_ms()),
-            now_ms(),
-            Some(300_000),
-        )
-        .await?;
-    let result = async {
-        if goal.usage.planning_attempts >= goal.budget.max_planning_attempts {
-            goal.status = GoalStatus::LimitReached;
-            goal.phase = GoalPhase::Finished;
-            goal.updated_at = soyo_app::events::timestamp()?;
-            let revision = goal.revision;
-            store.save(goal, revision).await?;
-            return Err(failure("goal_budget", "Goal planning budget is exhausted"));
-        }
-        goal.usage.planning_attempts = goal.usage.planning_attempts.saturating_add(1);
-        if plan_file.is_none() {
-            if goal.usage.model_requests >= goal.budget.max_model_requests {
-                goal.status = GoalStatus::LimitReached;
-                goal.phase = GoalPhase::Finished;
-                goal.updated_at = soyo_app::events::timestamp()?;
-                let revision = goal.revision;
-                store.save(goal, revision).await?;
-                return Err(failure(
-                    "goal_budget",
-                    "Goal model-request budget is exhausted",
-                ));
-            }
-            goal.usage.model_requests = goal.usage.model_requests.saturating_add(1);
-        }
-        goal.updated_at = soyo_app::events::timestamp()?;
-        let revision = goal.revision;
-        goal = store.save(goal, revision).await?;
-        let plan = if let Some(path) = plan_file {
-            GoalPlan::parse(&bounded_file(path)?)?
-        } else {
-            let cancel = Arc::new(Cancel::new());
-            let _signals = start_signals(cancel.clone())?;
-            let existing = goal.acceptance.clone();
-            let outcome = plan_goal(config, &goal, existing, cancel.as_ref()).await?;
-            account_planning(&mut goal, &outcome, soyo_app::events::timestamp()?)?;
-            let revision = goal.revision;
-            goal = store.save(goal, revision).await?;
-            outcome.plan
-        };
-        if !goal.acceptance.is_empty() && plan.acceptance != goal.acceptance {
-            return Err(failure(
-                "invalid_goal_plan",
-                "plan changed caller-supplied acceptance criteria",
-            ));
-        }
-        goal.apply_plan(plan, soyo_app::events::timestamp()?)?;
-        let revision = goal.revision;
-        goal = store.save(goal, revision).await?;
-        Ok(json!({"schema_version":1,"data":{"goal":goal,"confirmation_required":true}}))
-    }
-    .await;
-    let _ = store.release_lease(&lease).await;
-    result
+    let supplied = plan_file
+        .map(|path| GoalPlan::parse(&bounded_file(path)?))
+        .transpose()?;
+    let cancel = Arc::new(Cancel::new());
+    let _signals = start_signals(cancel.clone())?;
+    let goal =
+        soyo_app::goal::run_goal_planning(config, goal_id, supplied, cancel.as_ref()).await?;
+    Ok(json!({"schema_version":1,"data":{"goal":goal,"confirmation_required":true}}))
 }
 
 async fn confirm(goal_id: GoalId, config: &Config) -> Result<Value, BoundaryError> {
-    let store = store(config)?;
-    let mut goal = store.load(goal_id).await?;
-    goal.confirm_plan(soyo_app::events::timestamp()?)?;
-    let revision = goal.revision;
-    let goal = store.save(goal, revision).await?;
+    let goal = soyo_app::goal::confirm_goal_plan(config, goal_id).await?;
     Ok(json!({"schema_version":1,"data":{"goal":goal}}))
 }
 
@@ -488,10 +380,7 @@ async fn set_verifier(
         verifier.validate()?;
         Some(verifier)
     };
-    let store = store(config)?;
-    let goal = store
-        .set_step_verifier(goal_id, step_id, verifier, soyo_app::events::timestamp()?)
-        .await?;
+    let goal = soyo_app::goal::assign_step_verifier(config, goal_id, step_id, verifier).await?;
     Ok(json!({"schema_version":1,"data":{"goal":goal,"confirmation_required":true}}))
 }
 
@@ -662,44 +551,15 @@ async fn start(
             "Use --auto to explicitly authorize finite automatic continuation",
         ));
     }
-    if config.permissions_mode == PermissionMode::Manual {
-        return Err(failure(
-            "goal_authorization",
-            "finite automatic continuation requires auto or bypass permissions",
-        ));
-    }
     let store = store(config)?;
     let mut goal = store.load(goal_id).await?;
-    if !goal.verifiers_confirmed() {
-        return Err(failure(
-            "goal_verifier_unconfirmed",
-            "Goal step verifiers require explicit confirmation before automatic start",
-        ));
-    }
-    if goal.status != GoalStatus::Ready {
-        return Err(failure(
-            "invalid_goal_state",
-            "Goal must be confirmed and ready before automatic start",
-        ));
-    }
     goal.mode = config.mode;
     for step in &mut goal.steps {
         if step.status == soyo_core::goal::StepStatus::Pending {
             step.mode = config.mode;
         }
     }
-    goal.authorization = Some(GoalAuthorization {
-        auto: true,
-        mode: config.mode,
-        permissions: config.permissions_mode,
-        config_fingerprint: {
-            let owned = config.clone();
-            let profile = goal.profile.clone();
-            soyo_app::offload_boundary(move || goal_profile_fingerprint(&owned, &profile)).await?
-        },
-        authorized_at: soyo_app::events::timestamp()?,
-    });
-    goal.updated_at = soyo_app::events::timestamp()?;
+    soyo_app::goal::authorize_auto_goal(config, &mut goal).await?;
     let revision = goal.revision;
     goal = store.save(goal, revision).await?;
     let cancel = Arc::new(Cancel::new());
@@ -768,10 +628,12 @@ async fn report(
     config: &Config,
 ) -> Result<Value, BoundaryError> {
     let goal = store(config)?.load(goal_id).await?;
-    let bytes = match format {
-        GoalReportFormat::Json => goal_report_json(&goal)?,
-        GoalReportFormat::Markdown => goal_report_markdown(&goal)?,
-    };
+    let bytes = soyo_app::goal::report_goal(
+        config,
+        goal_id,
+        matches!(format, GoalReportFormat::Markdown),
+    )
+    .await?;
     if let Some(target) = file {
         let cancel = Arc::new(Cancel::new());
         let target = if target.is_absolute() {
@@ -814,16 +676,7 @@ async fn control(
             ));
         }
     };
-    let store = store(config)?;
-    let goal = store
-        .transition(
-            goal_id,
-            transition,
-            phase,
-            reason,
-            soyo_app::events::timestamp()?,
-        )
-        .await?;
+    let goal = soyo_app::goal::transition_goal(config, goal_id, transition, phase, reason).await?;
     Ok(json!({"schema_version":1,"data":{"goal":goal}}))
 }
 
@@ -860,7 +713,7 @@ pub async fn run(action: &GoalAction, cli: &Cli, config: &Config) -> Result<u8, 
             .await?
         }
         GoalAction::List => {
-            let goals = store(config)?.list().await?;
+            let goals = soyo_app::goal::list_goals(config).await?;
             let value = json!({"schema_version":1,"data":{"goals":goals.clone()}});
             print_value(config, &value, || {
                 for goal in goals {
@@ -875,7 +728,7 @@ pub async fn run(action: &GoalAction, cli: &Cli, config: &Config) -> Result<u8, 
             return Ok(0);
         }
         GoalAction::Status { goal_id } => {
-            let goal = store(config)?.load(parse_goal(goal_id)?).await?;
+            let goal = soyo_app::goal::load_goal(config, parse_goal(goal_id)?).await?;
             let value = json!({"schema_version":1,"data":{"goal":goal.clone()}});
             print_value(config, &value, || goal_text(&goal));
             return Ok(0);
@@ -947,9 +800,8 @@ pub async fn run(action: &GoalAction, cli: &Cli, config: &Config) -> Result<u8, 
         } => {
             let cancel = Arc::new(Cancel::new());
             let _signals = start_signals(cancel.clone())?;
-            let goal = verify_criterion(
+            let goal = soyo_app::goal::verify_goal_criterion(
                 config,
-                &store(config)?,
                 parse_goal(goal_id)?,
                 criterion,
                 summary.clone(),
@@ -963,20 +815,17 @@ pub async fn run(action: &GoalAction, cli: &Cli, config: &Config) -> Result<u8, 
             step_id,
             retry,
         } => {
-            let goal = store(config)?
-                .resolve_unknown_step(
-                    parse_goal(goal_id)?,
-                    parse_step(step_id)?,
-                    *retry,
-                    soyo_app::events::timestamp()?,
-                )
-                .await?;
+            let goal = soyo_app::goal::resolve_goal_step(
+                config,
+                parse_goal(goal_id)?,
+                parse_step(step_id)?,
+                *retry,
+            )
+            .await?;
             json!({"schema_version":1,"data":{"goal":goal}})
         }
         GoalAction::Replan { goal_id } => {
-            let goal = store(config)?
-                .replan_failed_step(parse_goal(goal_id)?, soyo_app::events::timestamp()?)
-                .await?;
+            let goal = soyo_app::goal::replan_goal(config, parse_goal(goal_id)?).await?;
             json!({"schema_version":1,"data":{"goal":goal}})
         }
         GoalAction::Report {

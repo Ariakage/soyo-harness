@@ -240,6 +240,7 @@ impl DesktopInner {
 pub struct HostService {
     pub inner: Arc<AsyncMutex<DesktopInner>>,
     pub active_controls: Arc<StdMutex<HashMap<RunId, ActiveControl>>>,
+    pub goal_jobs: Arc<StdMutex<HashMap<String, crate::goal::GoalJob>>>,
     pub active_clients: Arc<AtomicUsize>,
     pub attachment_scope: Arc<StdMutex<ActiveAttachmentScope>>,
     pub staged_drafts: Arc<StdMutex<HashMap<String, StagedDraft>>>,
@@ -439,6 +440,7 @@ impl HostService {
                         connection_sessions: HashMap::new(),
                     })),
                     active_controls: Arc::new(StdMutex::new(HashMap::new())),
+                    goal_jobs: Arc::new(StdMutex::new(HashMap::new())),
                     active_clients: Arc::new(AtomicUsize::new(0)),
                     attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
                     staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
@@ -467,6 +469,7 @@ impl HostService {
                 connection_sessions: HashMap::new(),
             })),
             active_controls: Arc::new(StdMutex::new(HashMap::new())),
+            goal_jobs: Arc::new(StdMutex::new(HashMap::new())),
             active_clients: Arc::new(AtomicUsize::new(0)),
             attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
             staged_drafts: Arc::new(StdMutex::new(HashMap::new())),

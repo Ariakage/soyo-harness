@@ -10,7 +10,7 @@ use soyo_ipc::{
     socket::{
         HelperPidRecord, HelperTarget, process_exe_path, process_started_id, verify_peer_euid,
     },
-    types::{DesktopError, DesktopStreamEnvelope},
+    types::{DesktopError, DesktopStreamEnvelope, GoalBudgetDto},
 };
 use std::{
     fs::{self, OpenOptions},
@@ -587,6 +587,137 @@ async fn dispatch(
                 let name = param_string(&params, "name")?.to_owned();
                 let enabled = param_bool(&params, "enabled")?;
                 service.toggle_mcp_server(&name, enabled).await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_list" => service.goal_list().await.and_then(ok),
+        "goal_jobs" => service.goal_jobs().await.and_then(ok),
+        "goal_status" => {
+            let r = async { service.goal_status(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "goal_create" => {
+            let r = async {
+                let objective = param_string(&params, "objective")?.to_owned();
+                let acceptance =
+                    param_deser::<Vec<String>>(&params, "acceptance").unwrap_or_default();
+                let budget = param_opt(&params, "budget")
+                    .map(|_| param_deser::<GoalBudgetDto>(&params, "budget"))
+                    .transpose()?;
+                service.goal_create(&objective, acceptance, budget).await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_plan" => {
+            let r = async {
+                let plan = param_opt_str(&params, "plan")
+                    .map(|raw| {
+                        soyo_core::goal::GoalPlan::parse(raw).map_err(|err| {
+                            DesktopError::new("invalid_params", err.message().to_owned())
+                        })
+                    })
+                    .transpose()?;
+                service
+                    .goal_plan(param_string(&params, "goal_id")?, plan)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_confirm" => {
+            let r = async {
+                service
+                    .goal_confirm(param_string(&params, "goal_id")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_set_verifier" => {
+            let r = async {
+                let argv = param_opt(&params, "argv")
+                    .map(|_| param_deser::<Vec<String>>(&params, "argv"))
+                    .transpose()?
+                    .unwrap_or_default();
+                service
+                    .goal_set_verifier(
+                        param_string(&params, "goal_id")?,
+                        param_string(&params, "step_id")?,
+                        argv,
+                        param_opt_str(&params, "cwd").map(str::to_owned),
+                        param_opt(&params, "timeout_seconds").and_then(Value::as_u64),
+                        param_opt(&params, "max_output_bytes").and_then(Value::as_u64),
+                        param_bool(&params, "clear").unwrap_or(false),
+                    )
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_pause" => {
+            let r = async { service.goal_pause(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "goal_resume" => {
+            let r = async { service.goal_resume(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "goal_cancel" => {
+            let r = async { service.goal_cancel(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "goal_verify" => {
+            let r = async {
+                service
+                    .goal_verify(
+                        param_string(&params, "goal_id")?,
+                        param_string(&params, "criterion")?,
+                        param_opt_str(&params, "summary").map(str::to_owned),
+                    )
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_resolve" => {
+            let r = async {
+                service
+                    .goal_resolve(
+                        param_string(&params, "goal_id")?,
+                        param_string(&params, "step_id")?,
+                        param_bool(&params, "retry")?,
+                    )
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_replan" => {
+            let r = async { service.goal_replan(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "goal_report" => {
+            let r = async {
+                let markdown = param_opt_str(&params, "format") == Some("markdown");
+                service
+                    .goal_report(param_string(&params, "goal_id")?, markdown)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_continue" => {
+            let r = async {
+                service
+                    .goal_continue(param_string(&params, "goal_id")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "goal_start" => {
+            let r = async { service.goal_start(param_string(&params, "goal_id")?).await };
+            r.await.and_then(ok)
+        }
+        "get_experimental_settings" => service.get_experimental_settings().await.and_then(ok),
+        "set_js_repl_enabled" => {
+            let r = async {
+                service
+                    .set_js_repl_enabled(param_bool(&params, "enabled")?)
+                    .await
             };
             r.await.and_then(ok)
         }

@@ -1079,3 +1079,156 @@ pub struct SetupEnvironmentParams {
     pub permission_mode: Option<PermissionModeDto>,
     pub work_mode: Option<WorkModeDto>,
 }
+
+/// One acceptance criterion as rendered by desktop clients. `verified` is
+/// resolved against durable evidence by the helper.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalCriterionDto {
+    pub id: String,
+    pub text: String,
+    pub verification: String,
+    pub verified: bool,
+}
+
+/// Structured host verifier command attached to a Goal step.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalVerifierDto {
+    pub argv: Vec<String>,
+    pub cwd: Option<String>,
+    #[specta(type = Number)]
+    pub timeout_seconds: u64,
+    #[specta(type = Number)]
+    pub max_output_bytes: usize,
+}
+
+/// Latest host verification outcome for a step.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalStepVerificationDto {
+    pub status: String,
+    pub attempt: u32,
+    pub exit_code: Option<i32>,
+    #[specta(type = Number)]
+    pub duration_ms: u64,
+    pub error: Option<String>,
+    pub stdout_excerpt: String,
+    pub stderr_excerpt: String,
+}
+
+/// One planned Goal step with its execution and verification evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalStepDto {
+    pub step_id: String,
+    pub ordinal: u32,
+    pub title: String,
+    pub instruction: String,
+    pub mode: String,
+    pub status: String,
+    pub depends_on: Vec<String>,
+    pub attempts: u32,
+    pub run_id: Option<String>,
+    pub verifier: Option<GoalVerifierDto>,
+    pub last_verification: Option<GoalStepVerificationDto>,
+    pub last_status: Option<String>,
+    pub last_error: Option<String>,
+}
+
+/// Bounded Goal budget; `None` fields fall back to `GoalBudget::default()`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalBudgetDto {
+    #[specta(type = Number)]
+    pub max_runs: u32,
+    #[specta(type = Number)]
+    pub max_model_requests: u64,
+    #[specta(type = Number)]
+    pub max_tool_calls: u64,
+    #[specta(type = Number)]
+    pub max_active_seconds: u64,
+    #[specta(type = Number)]
+    pub max_tokens: u64,
+    #[specta(type = Number)]
+    pub max_planning_attempts: u32,
+    #[specta(type = Number)]
+    pub max_verification_attempts: u32,
+    #[specta(type = Number)]
+    pub max_replans: u32,
+}
+
+/// Durable usage counters accumulated across planning, runs and reviews.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalUsageDto {
+    pub runs: u32,
+    #[specta(type = Number)]
+    pub model_requests: u64,
+    #[specta(type = Number)]
+    pub tool_calls: u64,
+    #[specta(type = Number)]
+    pub active_seconds: u64,
+    #[specta(type = Number)]
+    pub input_tokens: u64,
+    #[specta(type = Number)]
+    pub output_tokens: u64,
+    pub token_usage_unknown: bool,
+    pub planning_attempts: u32,
+    pub verification_attempts: u32,
+    pub replans: u32,
+}
+
+/// Explicit finite-continuation authorization stamped at `goal_start`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalAuthorizationDto {
+    pub auto: bool,
+    pub mode: String,
+    pub permissions: String,
+    pub authorized_at: String,
+}
+
+/// Complete Goal projection for the desktop surface. `running_action` names
+/// the in-flight helper job (`plan`/`continue`/`start`/`verify`), if any.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalDto {
+    pub goal_id: String,
+    pub session_id: String,
+    pub objective: String,
+    pub workspace: String,
+    pub profile: String,
+    pub mode: String,
+    pub permissions: String,
+    pub status: String,
+    pub phase: String,
+    pub wait_reason: Option<String>,
+    pub current_step: Option<String>,
+    pub acceptance: Vec<GoalCriterionDto>,
+    pub steps: Vec<GoalStepDto>,
+    pub budget: GoalBudgetDto,
+    pub usage: GoalUsageDto,
+    pub authorization: Option<GoalAuthorizationDto>,
+    pub verifiers_confirmed: bool,
+    pub failure: Option<String>,
+    pub running_action: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// In-flight helper Goal job surfaced for badges and stop controls.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalJobDto {
+    pub goal_id: String,
+    pub action: String,
+    pub state: String,
+    pub error: Option<String>,
+}
+
+/// Rendered Goal report; `format` is `json` or `markdown`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct GoalReportDto {
+    pub goal_id: String,
+    pub format: String,
+    pub content: String,
+}
+
+/// Experimental feature toggles surfaced in Settings. Each flag mutates the
+/// helper's loaded configuration and applies to newly created sessions.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ExperimentalSettingsDto {
+    pub js_repl_enabled: bool,
+}

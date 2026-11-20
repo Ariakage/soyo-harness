@@ -1009,3 +1009,345 @@ pub async fn run_step_verifier(
     }
     outcome
 }
+
+// === Shared Goal workflows ===
+//
+// Lifecycle orchestration shared by the CLI `soyo goal` commands, the TUI
+// `/goal` surface and the desktop helper RPCs so Goal semantics stay
+// identical on every front end. These functions own no presentation state:
+// they open the durable store, apply the transition and return the record.
+
+fn goal_secrets(config: &Config) -> Result<Vec<String>, BoundaryError> {
+    config
+        .secret_env_names()
+        .iter()
+        .map(|name| config.secret(name).map(str::to_owned))
+        .collect()
+}
+
+/// Open the durable Goal store. PLAN-mode safety is preserved: storage must
+/// live outside the current workspace roots.
+pub fn open_goal_store(config: &Config) -> Result<GoalStore, BoundaryError> {
+    session::check_roots(config, &config.cwd, config.mode).map_err(|_| {
+        failure(
+            "plan_write_denied",
+            "PLAN Goal storage must be outside the current workspace",
+        )
+    })?;
+    GoalStore::open(&config.data_dir, goal_secrets(config)?)
+}
+
+/// List every persisted Goal in stable store order.
+pub async fn list_goals(config: &Config) -> Result<Vec<GoalRecord>, BoundaryError> {
+    open_goal_store(config)?.list().await
+}
+
+/// Load one Goal record by id.
+pub async fn load_goal(config: &Config, goal_id: GoalId) -> Result<GoalRecord, BoundaryError> {
+    open_goal_store(config)?.load(goal_id).await
+}
+
+/// Create a Goal and its dedicated session. `acceptance` seeds immutable
+/// manual-evidence criteria; the planner may not replace them later.
+pub async fn create_goal(
+    config: &Config,
+    objective: &str,
+    acceptance: Vec<String>,
+    budget: soyo_core::goal::GoalBudget,
+) -> Result<GoalRecord, BoundaryError> {
+    if objective.trim().is_empty() {
+        return Err(failure("invalid_goal", "Goal objective cannot be empty"));
+    }
+    let mut selected = config.clone();
+    selected.mode = config.mode;
+    let mut new = crate::new_session(&selected)
+        .map_err(|_| failure("invalid_goal", "Goal session configuration is invalid"))?;
+    new.work_mode = config.mode;
+    let prepared = session::create(&selected, new)
+        .await
+        .map_err(|_| failure("goal_session", "Goal session cannot be created"))?;
+    let session_id = prepared.session.id;
+    let workspace = prepared.session.workspace.clone();
+    drop(prepared);
+    let profile = selected
+        .profile
+        .clone()
+        .ok_or_else(|| failure("invalid_goal", "Goal profile is not selected"))?;
+    let mut goal = GoalRecord::new(soyo_core::goal::GoalSeed {
+        session_id,
+        objective: objective.to_owned(),
+        workspace,
+        profile,
+        mode: selected.mode,
+        permissions: selected.permissions_mode,
+        budget,
+        now: timestamp()?,
+    })?;
+    goal.acceptance = acceptance
+        .iter()
+        .enumerate()
+        .map(|(index, text)| AcceptanceCriterion {
+            id: format!("criterion-{}", index + 1),
+            text: text.clone(),
+            verification: VerificationSpec::Manual,
+        })
+        .collect();
+    goal.validate()?;
+    open_goal_store(config)?.create(goal).await
+}
+
+/// Produce and persist a structured plan. With `plan` the caller-supplied
+/// document is stored directly (no model call, no model-request accounting);
+/// otherwise the planning model is asked once and its usage is accounted.
+/// Planning and model budgets are enforced before any call.
+pub async fn run_goal_planning(
+    config: &Config,
+    goal_id: GoalId,
+    plan: Option<GoalPlan>,
+    cancel: &dyn Cancellation,
+) -> Result<GoalRecord, BoundaryError> {
+    let store = open_goal_store(config)?;
+    let mut goal = store.load(goal_id).await?;
+    let lease = store
+        .acquire_lease(
+            goal.id,
+            format!("plan-{}", now_ms()),
+            now_ms(),
+            Some(300_000),
+        )
+        .await?;
+    let result = async {
+        if goal.usage.planning_attempts >= goal.budget.max_planning_attempts {
+            goal.status = GoalStatus::LimitReached;
+            goal.phase = soyo_core::goal::GoalPhase::Finished;
+            goal.updated_at = timestamp()?;
+            let revision = goal.revision;
+            store.save(goal, revision).await?;
+            return Err(failure("goal_budget", "Goal planning budget is exhausted"));
+        }
+        goal.usage.planning_attempts = goal.usage.planning_attempts.saturating_add(1);
+        if plan.is_none() {
+            if goal.usage.model_requests >= goal.budget.max_model_requests {
+                goal.status = GoalStatus::LimitReached;
+                goal.phase = soyo_core::goal::GoalPhase::Finished;
+                goal.updated_at = timestamp()?;
+                let revision = goal.revision;
+                store.save(goal, revision).await?;
+                return Err(failure(
+                    "goal_budget",
+                    "Goal model-request budget is exhausted",
+                ));
+            }
+            goal.usage.model_requests = goal.usage.model_requests.saturating_add(1);
+        }
+        goal.updated_at = timestamp()?;
+        let revision = goal.revision;
+        goal = store.save(goal, revision).await?;
+        let plan = if let Some(plan) = plan {
+            plan
+        } else {
+            let existing = goal.acceptance.clone();
+            let outcome = plan_goal(config, &goal, existing, cancel).await?;
+            account_planning(&mut goal, &outcome, timestamp()?)?;
+            let revision = goal.revision;
+            goal = store.save(goal, revision).await?;
+            outcome.plan
+        };
+        if !goal.acceptance.is_empty() && plan.acceptance != goal.acceptance {
+            return Err(failure(
+                "invalid_goal_plan",
+                "plan changed caller-supplied acceptance criteria",
+            ));
+        }
+        goal.apply_plan(plan, timestamp()?)?;
+        let revision = goal.revision;
+        store.save(goal, revision).await
+    }
+    .await;
+    let _ = store.release_lease(&lease).await;
+    result
+}
+
+/// Confirm the current plan; the first dependency-ready step becomes
+/// runnable and step verifiers are locked against further edits.
+pub async fn confirm_goal_plan(
+    config: &Config,
+    goal_id: GoalId,
+) -> Result<GoalRecord, BoundaryError> {
+    let store = open_goal_store(config)?;
+    let mut goal = store.load(goal_id).await?;
+    goal.confirm_plan(timestamp()?)?;
+    let revision = goal.revision;
+    store.save(goal, revision).await
+}
+
+/// Attach or clear a structured host verifier on one step. The store enforces
+/// that verifiers may only change while the plan is unconfirmed.
+pub async fn assign_step_verifier(
+    config: &Config,
+    goal_id: GoalId,
+    step_id: soyo_core::goal::StepId,
+    verifier: Option<soyo_core::goal::StepVerifier>,
+) -> Result<GoalRecord, BoundaryError> {
+    if let Some(verifier) = &verifier {
+        verifier.validate()?;
+    }
+    open_goal_store(config)?
+        .set_step_verifier(goal_id, step_id, verifier, timestamp()?)
+        .await
+}
+
+/// Apply a direct lifecycle transition (`pause`, `resume`, `cancel`).
+pub async fn transition_goal(
+    config: &Config,
+    goal_id: GoalId,
+    status: GoalStatus,
+    phase: soyo_core::goal::GoalPhase,
+    reason: Option<soyo_core::goal::GoalWaitReason>,
+) -> Result<GoalRecord, BoundaryError> {
+    open_goal_store(config)?
+        .transition(goal_id, status, phase, reason, timestamp()?)
+        .await
+}
+
+/// Verify one acceptance criterion after all steps complete. Manual evidence
+/// receives a separate no-tools model review; file criteria are rechecked by
+/// the host.
+pub async fn verify_goal_criterion(
+    config: &Config,
+    goal_id: GoalId,
+    criterion_id: &str,
+    summary: Option<String>,
+    cancel: &dyn Cancellation,
+) -> Result<GoalRecord, BoundaryError> {
+    let store = open_goal_store(config)?;
+    verify_criterion(config, &store, goal_id, criterion_id, summary, cancel).await
+}
+
+/// Resolve an unknown step outcome; retry is never implicit.
+pub async fn resolve_goal_step(
+    config: &Config,
+    goal_id: GoalId,
+    step_id: soyo_core::goal::StepId,
+    retry: bool,
+) -> Result<GoalRecord, BoundaryError> {
+    open_goal_store(config)?
+        .resolve_unknown_step(goal_id, step_id, retry, timestamp()?)
+        .await
+}
+
+/// Apply one bounded replan to a known failed step.
+pub async fn replan_goal(config: &Config, goal_id: GoalId) -> Result<GoalRecord, BoundaryError> {
+    open_goal_store(config)?
+        .replan_failed_step(goal_id, timestamp()?)
+        .await
+}
+
+/// Render a standalone Goal report. `markdown` selects the human-readable
+/// format; otherwise the machine-readable JSON receipt is produced.
+pub async fn report_goal(
+    config: &Config,
+    goal_id: GoalId,
+    markdown: bool,
+) -> Result<Vec<u8>, BoundaryError> {
+    let goal = load_goal(config, goal_id).await?;
+    if markdown {
+        soyo_core::goal::goal_report_markdown(&goal)
+    } else {
+        soyo_core::goal::goal_report_json(&goal)
+    }
+}
+
+/// Enforce automatic-start preconditions and stamp explicit authorization on
+/// the record (fingerprint of profile, mode, permissions and runtime-relevant
+/// configuration). The caller persists the returned record.
+pub async fn authorize_auto_goal(
+    config: &Config,
+    goal: &mut GoalRecord,
+) -> Result<(), BoundaryError> {
+    if config.permissions_mode == PermissionMode::Manual {
+        return Err(failure(
+            "goal_authorization",
+            "finite automatic continuation requires auto or bypass permissions",
+        ));
+    }
+    if !goal.verifiers_confirmed() {
+        return Err(failure(
+            "goal_verifier_unconfirmed",
+            "Goal step verifiers require explicit confirmation before automatic start",
+        ));
+    }
+    if goal.status != GoalStatus::Ready {
+        return Err(failure(
+            "invalid_goal_state",
+            "Goal must be confirmed and ready before automatic start",
+        ));
+    }
+    goal.authorization = Some(soyo_core::goal::GoalAuthorization {
+        auto: true,
+        mode: goal.mode,
+        permissions: config.permissions_mode,
+        config_fingerprint: {
+            let owned = config.clone();
+            let profile = goal.profile.clone();
+            crate::offload_boundary(move || goal_profile_fingerprint(&owned, &profile)).await?
+        },
+        authorized_at: timestamp()?,
+    });
+    goal.updated_at = timestamp()?;
+    Ok(())
+}
+
+/// Finite automatic continuation: repeat `continue_once` while the Goal stays
+/// ready, honoring its authorization fingerprint, budgets, cancellation and a
+/// single bounded replan for external-input blocks. Returns the final record
+/// and every step run result in dispatch order.
+pub async fn auto_continue_goal(
+    config: &Config,
+    mut goal: GoalRecord,
+    make_context: &(dyn Fn() -> GoalRunContext + Send + Sync),
+    cancelled: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<(GoalRecord, Vec<RunResult>), BoundaryError> {
+    let store = open_goal_store(config)?;
+    let mut runs = Vec::new();
+    loop {
+        {
+            let owned = config.clone();
+            let record = goal.clone();
+            crate::offload_boundary(move || configured_auto_goal(&owned, &record)).await?;
+        }
+        if goal.status != GoalStatus::Ready || cancelled() {
+            break;
+        }
+        if goal.budget_exhausted() {
+            goal.status = GoalStatus::LimitReached;
+            goal.phase = soyo_core::goal::GoalPhase::Finished;
+            goal.updated_at = timestamp()?;
+            let revision = goal.revision;
+            goal = store.save(goal, revision).await?;
+            break;
+        }
+        let outcome = match continue_once(config, &store, goal.id, make_context()).await {
+            Ok(outcome) => outcome,
+            Err(error) if error.is_code("goal_budget") => {
+                goal = store.load(goal.id).await?;
+                break;
+            }
+            Err(error) => return Err(error),
+        };
+        runs.push(outcome.result);
+        goal = outcome.goal;
+        if cancelled() {
+            break;
+        }
+        if goal.status == GoalStatus::Blocked
+            && goal.wait_reason == Some(soyo_core::goal::GoalWaitReason::ExternalInput)
+        {
+            goal = store.replan_failed_step(goal.id, timestamp()?).await?;
+        }
+        if !matches!(goal.status, GoalStatus::Ready) {
+            break;
+        }
+    }
+    Ok((goal, runs))
+}

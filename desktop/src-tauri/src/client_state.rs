@@ -6,10 +6,11 @@
 use crate::types::{
     ActiveSessionDto, AttachmentPayloadDto, AttachmentTokenDto, BackgroundJobDto,
     BootstrapStateDto, CredentialRecordDto, DesktopError, DesktopPrefsDto, DesktopStreamEnvelope,
-    ExportFormatDto, ExportResultDto, ExportScopeDto, ExtensionItemDto, GlobalPromptDto,
-    HelperStatusDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModeStateDto,
-    ModuleStatusDto, PermissionModeDto, PreparedMemoryReviewDto, ResumeSessionResultDto,
-    RunStateDto, SandboxBackendDto, SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto,
+    ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto, ExtensionItemDto,
+    GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto, HelperStatusDto,
+    McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModeStateDto, ModuleStatusDto,
+    PermissionModeDto, PreparedMemoryReviewDto, ResumeSessionResultDto, RunStateDto,
+    SandboxBackendDto, SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto,
     SubmitPromptResultDto, UpdateDesktopPrefsParams, UsageStatsDto, WorkModeDto,
 };
 use serde::Deserialize;
@@ -391,6 +392,155 @@ impl DesktopState {
 
     pub async fn list_mcp_servers(&self) -> Result<Vec<McpServerDto>, DesktopError> {
         self.call_rpc("list_mcp_servers", &json!({})).await
+    }
+
+    pub async fn goal_list(&self) -> Result<Vec<GoalDto>, DesktopError> {
+        self.call_rpc("goal_list", &json!({})).await
+    }
+
+    pub async fn goal_jobs(&self) -> Result<Vec<GoalJobDto>, DesktopError> {
+        self.call_rpc("goal_jobs", &json!({})).await
+    }
+
+    pub async fn goal_status(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_status", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_create(
+        &self,
+        objective: &str,
+        acceptance: Vec<String>,
+        budget: Option<GoalBudgetDto>,
+    ) -> Result<GoalDto, DesktopError> {
+        self.call_rpc(
+            "goal_create",
+            &json!({ "objective": objective, "acceptance": acceptance, "budget": budget }),
+        )
+        .await
+    }
+
+    pub async fn goal_plan(
+        &self,
+        goal_id: &str,
+        plan_json: Option<&str>,
+    ) -> Result<GoalDto, DesktopError> {
+        self.call_rpc(
+            "goal_plan",
+            &json!({ "goal_id": goal_id, "plan": plan_json }),
+        )
+        .await
+    }
+
+    pub async fn goal_confirm(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_confirm", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn goal_set_verifier(
+        &self,
+        goal_id: &str,
+        step_id: &str,
+        argv: Vec<String>,
+        cwd: Option<String>,
+        timeout_seconds: Option<f64>,
+        max_output_bytes: Option<f64>,
+        clear: bool,
+    ) -> Result<GoalDto, DesktopError> {
+        self.call_rpc(
+            "goal_set_verifier",
+            &json!({
+                "goal_id": goal_id,
+                "step_id": step_id,
+                "argv": argv,
+                "cwd": cwd,
+                "timeout_seconds": timeout_seconds.map(|value| value as u64),
+                "max_output_bytes": max_output_bytes.map(|value| value as u64),
+                "clear": clear,
+            }),
+        )
+        .await
+    }
+
+    pub async fn goal_pause(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_pause", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_resume(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_resume", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_cancel(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_cancel", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_verify(
+        &self,
+        goal_id: &str,
+        criterion: &str,
+        summary: Option<String>,
+    ) -> Result<GoalDto, DesktopError> {
+        self.call_rpc(
+            "goal_verify",
+            &json!({ "goal_id": goal_id, "criterion": criterion, "summary": summary }),
+        )
+        .await
+    }
+
+    pub async fn goal_resolve(
+        &self,
+        goal_id: &str,
+        step_id: &str,
+        retry: bool,
+    ) -> Result<GoalDto, DesktopError> {
+        self.call_rpc(
+            "goal_resolve",
+            &json!({ "goal_id": goal_id, "step_id": step_id, "retry": retry }),
+        )
+        .await
+    }
+
+    pub async fn goal_replan(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_replan", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_report(
+        &self,
+        goal_id: &str,
+        format: &str,
+    ) -> Result<GoalReportDto, DesktopError> {
+        self.call_rpc(
+            "goal_report",
+            &json!({ "goal_id": goal_id, "format": format }),
+        )
+        .await
+    }
+
+    pub async fn goal_continue(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_continue", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn goal_start(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
+        self.call_rpc("goal_start", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn get_experimental_settings(&self) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.call_rpc("get_experimental_settings", &json!({})).await
+    }
+
+    pub async fn set_js_repl_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        self.call_rpc("set_js_repl_enabled", &json!({ "enabled": enabled }))
+            .await
     }
 
     pub async fn toggle_mcp_server(

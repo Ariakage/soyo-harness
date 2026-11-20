@@ -8,6 +8,7 @@ import {
   Cpu,
   Database,
   Download,
+  FlaskConical,
   KeyRound,
   Palette,
   RefreshCw,
@@ -40,6 +41,7 @@ import {
   type ThemePreference,
   useAppStore,
 } from "../store/useAppStore";
+import { ExperimentalPanel } from "./ExperimentalPanel";
 import { ExportDialog } from "./ExportDialog";
 import { McpCredentialsDialog } from "./McpCredentialsDialog";
 import { MemoryDialog } from "./MemoryDialog";
@@ -55,6 +57,7 @@ export type SettingsTab =
   | "profiles"
   | "permissions"
   | "modules"
+  | "experimental"
   | "mcp"
   | "memory"
   | "usage"
@@ -104,6 +107,7 @@ const NAV_GROUPS: { tab: SettingsTab; icon: LucideIcon }[][] = [
   ],
   [
     { tab: "modules", icon: Box },
+    { tab: "experimental", icon: FlaskConical },
     { tab: "mcp", icon: KeyRound },
     { tab: "memory", icon: Database },
   ],
@@ -413,6 +417,7 @@ export function SettingsDialog({
     profiles: t.settings.navProfiles,
     permissions: t.settings.navPermissions,
     modules: t.settings.navModules,
+    experimental: t.settings.navExperimental,
     mcp: t.settings.navMcp,
     memory: t.settings.navMemory,
     usage: t.settings.navUsage,
@@ -424,6 +429,7 @@ export function SettingsDialog({
     profiles: t.settings.titleProfiles,
     permissions: t.settings.titlePermissions,
     modules: t.settings.titleModules,
+    experimental: t.settings.titleExperimental,
     mcp: t.extra.titleMcp,
     memory: t.extra.titleMemory,
     usage: t.settings.titleUsage,
@@ -1019,6 +1025,7 @@ export function SettingsDialog({
           )}
 
           {activeTab === "modules" && <ModulesPanel runActive={runActive} />}
+          {activeTab === "experimental" && <ExperimentalPanel />}
 
           {activeTab === "mcp" && (
             <McpCredentialsDialog

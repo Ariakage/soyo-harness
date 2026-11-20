@@ -52,6 +52,7 @@ import { ContextSidebar } from "./components/ContextSidebar";
 import { ExportDialog } from "./components/ExportDialog";
 import { LanguageDialog } from "./components/LanguageDialog";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import { GoalsDialog } from "./components/GoalsDialog";
 import { SessionBrowserDialog } from "./components/SessionBrowserDialog";
 import { SettingsDialog, type SettingsTab } from "./components/SettingsDialog";
 import { SetupWizard } from "./components/SetupWizard";
@@ -243,6 +244,7 @@ export function App() {
   const [drawerInspectorOpen, setDrawerInspectorOpen] = useState(false);
 
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [goalsOpen, setGoalsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
@@ -509,6 +511,12 @@ export function App() {
       label: t.sidebar.sessionsTitle,
       icon: History,
       onClick: () => setSessionsOpen(true),
+    },
+    {
+      id: "goals",
+      label: t.goals.open,
+      icon: Flag,
+      onClick: () => setGoalsOpen(true),
     },
     {
       id: "memory",
@@ -2008,6 +2016,7 @@ export function App() {
       {pendingInput && (
         <ClarificationDialog request={pendingInput} onReply={replyInput} />
       )}
+      <GoalsDialog open={goalsOpen} onClose={() => setGoalsOpen(false)} />
       <SessionBrowserDialog
         open={sessionsOpen}
         activeSessionId={sessionId}

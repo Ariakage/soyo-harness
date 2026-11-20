@@ -3,6 +3,7 @@
 
 pub mod attachment;
 pub mod envfile;
+pub mod goal;
 pub mod peripheral;
 pub mod prefs;
 pub mod server;

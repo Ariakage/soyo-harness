@@ -5,7 +5,8 @@ use crate::{
     client_state::DesktopState,
     types::{
         BackgroundJobDto, BootstrapStateDto, CredentialRecordDto, DesktopError, DesktopPrefsDto,
-        ExportFormatDto, ExportResultDto, ExportScopeDto, ExtensionItemDto, GlobalPromptDto,
+        ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
+        ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto,
         McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModuleStatusDto,
         PreparedMemoryReviewDto, SandboxBackendDto, StagedAttachmentDto, UpdateDesktopPrefsParams,
     },
@@ -277,4 +278,184 @@ pub async fn set_global_prompt(
     content: String,
 ) -> Result<GlobalPromptDto, DesktopError> {
     state.set_global_prompt(content).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_list(state: State<'_, DesktopState>) -> Result<Vec<GoalDto>, DesktopError> {
+    state.goal_list().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_jobs(state: State<'_, DesktopState>) -> Result<Vec<GoalJobDto>, DesktopError> {
+    state.goal_jobs().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_status(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_status(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_create(
+    state: State<'_, DesktopState>,
+    objective: String,
+    acceptance: Vec<String>,
+    budget: Option<GoalBudgetDto>,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_create(&objective, acceptance, budget).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_plan(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+    plan_json: Option<String>,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_plan(&goal_id, plan_json.as_deref()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_confirm(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_confirm(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn goal_set_verifier(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+    step_id: String,
+    argv: Vec<String>,
+    cwd: Option<String>,
+    timeout_seconds: Option<f64>,
+    max_output_bytes: Option<f64>,
+    clear: bool,
+) -> Result<GoalDto, DesktopError> {
+    state
+        .goal_set_verifier(
+            &goal_id,
+            &step_id,
+            argv,
+            cwd,
+            timeout_seconds,
+            max_output_bytes,
+            clear,
+        )
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_pause(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_pause(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_resume(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_resume(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_cancel(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_cancel(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_verify(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+    criterion: String,
+    summary: Option<String>,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_verify(&goal_id, &criterion, summary).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_resolve(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+    step_id: String,
+    retry: bool,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_resolve(&goal_id, &step_id, retry).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_replan(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_replan(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_report(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+    format: String,
+) -> Result<GoalReportDto, DesktopError> {
+    state.goal_report(&goal_id, &format).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_continue(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_continue(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn goal_start(
+    state: State<'_, DesktopState>,
+    goal_id: String,
+) -> Result<GoalDto, DesktopError> {
+    state.goal_start(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_experimental_settings(
+    state: State<'_, DesktopState>,
+) -> Result<ExperimentalSettingsDto, DesktopError> {
+    state.get_experimental_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_js_repl_enabled(
+    state: State<'_, DesktopState>,
+    enabled: bool,
+) -> Result<ExperimentalSettingsDto, DesktopError> {
+    state.set_js_repl_enabled(enabled).await
 }

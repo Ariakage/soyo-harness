@@ -1440,4 +1440,58 @@ scopes = ["docs:read"]
         assert_eq!(east.days[0].day_start.rem_euclid(86_400), 57_600);
         assert_eq!(west.days[0].day_start.rem_euclid(86_400), 28_800);
     }
+
+    #[tokio::test]
+    async fn js_repl_toggle_persists_to_config_toml() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = test_config(root.path());
+        let cfg_path = cfg.config_path.clone();
+        let state = HostService::with_config(cfg);
+
+        let initial = state.get_experimental_settings().await.unwrap();
+        assert!(!initial.js_repl_enabled);
+
+        let updated = state.set_js_repl_enabled(true).await.unwrap();
+        assert!(updated.js_repl_enabled);
+        let text = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(text.contains("[js_repl]"), "{text}");
+        assert!(text.contains("enabled = true"), "{text}");
+
+        let again = state.set_js_repl_enabled(false).await.unwrap();
+        assert!(!again.js_repl_enabled);
+        let text = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(text.contains("enabled = false"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn goal_create_list_status_and_report_via_service() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = test_config(root.path());
+        let state = HostService::with_config(cfg);
+
+        let created = state
+            .goal_create("ship it".into(), vec!["it works".into()], None)
+            .await
+            .unwrap();
+        assert_eq!(created.status, "draft");
+        assert_eq!(created.objective, "ship it");
+        assert_eq!(created.acceptance.len(), 1);
+
+        let list = state.goal_list().await.unwrap();
+        assert_eq!(list.len(), 1);
+
+        let detail = state.goal_status(&created.goal_id).await.unwrap();
+        assert_eq!(detail.goal_id, created.goal_id);
+        assert!(state.goal_jobs().await.unwrap().is_empty());
+
+        let report = state.goal_report(&created.goal_id, true).await.unwrap();
+        assert!(report.content.contains(&created.goal_id));
+
+        let err = state.goal_status("nope").await.unwrap_err();
+        assert!(
+            err.code == "invalid_args" || err.code == "not_found",
+            "{}",
+            err.code
+        );
+    }
 }

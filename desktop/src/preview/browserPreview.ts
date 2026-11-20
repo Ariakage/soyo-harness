@@ -953,6 +953,34 @@ export function installBrowserPreviewMock(): boolean {
         );
         return previewModules;
       }
+      case "get_experimental_settings":
+        return { js_repl_enabled: false };
+      case "set_js_repl_enabled": {
+        const payload = args as { enabled: boolean };
+        return { js_repl_enabled: payload.enabled };
+      }
+      case "goal_list":
+        return [];
+      case "goal_jobs":
+        return [];
+      case "goal_status":
+      case "goal_plan":
+      case "goal_confirm":
+      case "goal_pause":
+      case "goal_resume":
+      case "goal_cancel":
+      case "goal_verify":
+      case "goal_resolve":
+      case "goal_replan":
+      case "goal_continue":
+      case "goal_start":
+      case "goal_set_verifier":
+      case "goal_report":
+      case "goal_create":
+        throw {
+          code: "not_found",
+          message: "No goals exist in browser preview.",
+        };
       case "list_mcp_servers":
         return previewMcpServers;
       case "toggle_mcp_server": {

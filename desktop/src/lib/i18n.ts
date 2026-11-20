@@ -178,6 +178,7 @@ export interface UiMessages {
     navProfiles: string;
     navPermissions: string;
     navModules: string;
+    navExperimental: string;
     navMcp: string;
     navMemory: string;
     navExport: string;
@@ -185,6 +186,7 @@ export interface UiMessages {
     titleProfiles: string;
     titlePermissions: string;
     titleModules: string;
+    titleExperimental: string;
     titleGeneral: string;
     usageSubtitle: string;
     tokensUnit: string;
@@ -355,6 +357,101 @@ export interface UiMessages {
     stateLabel: string;
     cancel: string;
     jobFallback: string;
+  };
+  experimentalPanel: {
+    header: string;
+    subtitle: string;
+    jsRepl: string;
+    jsReplDesc: string;
+    enabled: string;
+    disabled: string;
+    appliesNewSessions: string;
+  };
+  goals: {
+    title: string;
+    open: string;
+    empty: string;
+    create: string;
+    objectiveLabel: string;
+    objectivePlaceholder: string;
+    acceptanceLabel: string;
+    addCriterion: string;
+    budgetAdvanced: string;
+    createSubmit: string;
+    back: string;
+    refresh: string;
+    stepsHeader: (n: number) => string;
+    criteriaHeader: (n: number) => string;
+    usageHeader: string;
+    runsLabel: string;
+    requestsLabel: string;
+    toolsLabel: string;
+    activeTimeLabel: string;
+    tokensLabel: string;
+    verifierBadge: string;
+    verifierUnconfirmed: string;
+    lastVerification: string;
+    planAction: string;
+    confirmAction: string;
+    continueAction: string;
+    startAction: string;
+    pauseAction: string;
+    resumeAction: string;
+    cancelAction: string;
+    verifyAction: string;
+    resolveAction: string;
+    replanAction: string;
+    reportAction: string;
+    setVerifierAction: string;
+    busy: string;
+    runningAction: (a: string) => string;
+    failureLabel: string;
+    waitLabel: (r: string) => string;
+    updatedLabel: string;
+    manualPermissionsBlocked: string;
+    verifyTitle: string;
+    verifyCriterionLabel: string;
+    verifySummaryLabel: string;
+    verifySummaryPlaceholder: string;
+    verifySubmit: string;
+    resolveTitle: string;
+    resolveRetry: string;
+    resolveComplete: string;
+    verifierTitle: string;
+    verifierArgvLabel: string;
+    verifierArgvPlaceholder: string;
+    verifierCwdLabel: string;
+    verifierTimeoutLabel: string;
+    verifierMaxOutputLabel: string;
+    verifierClear: string;
+    verifierSubmit: string;
+    reportTitle: string;
+    reportJson: string;
+    reportMarkdown: string;
+    reportLoading: string;
+    stepDependencies: (ids: string) => string;
+    confirmNeeded: string;
+    statusDraft: string;
+    statusReady: string;
+    statusRunning: string;
+    statusWaiting: string;
+    statusPaused: string;
+    statusBlocked: string;
+    statusCompleted: string;
+    statusFailed: string;
+    statusCancelled: string;
+    statusLimitReached: string;
+    phasePlanning: string;
+    phaseExecuting: string;
+    phaseVerifying: string;
+    phaseReplanning: string;
+    phaseFinished: string;
+    budgetMaxRuns: string;
+    budgetMaxRequests: string;
+    budgetMaxTools: string;
+    budgetMaxActiveSeconds: string;
+    budgetMaxTokens: string;
+    budgetMaxReplans: string;
   };
   approval: {
     title: string;
@@ -755,6 +852,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navProfiles: "Model & profiles",
       navPermissions: "Permissions",
       navModules: "Modules",
+      navExperimental: "Experimental",
       navMcp: "MCP & credentials",
       navMemory: "Memory",
       navExport: "Import & export",
@@ -762,6 +860,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleProfiles: "Model & profiles",
       titlePermissions: "Permissions & modes",
       titleModules: "Modules & extensions",
+      titleExperimental: "Experimental features",
       titleGeneral: "Runtime & modules",
       usageSubtitle: "Token usage across sessions on this device",
       tokensUnit: "tokens",
@@ -939,6 +1038,104 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       cancel: "Cancel",
       jobFallback: "job",
     },
+      experimentalPanel: {
+        header: "Experimental features",
+        subtitle: "Opt-in capabilities under active development. Saved to config.toml; applies to newly created sessions.",
+        jsRepl: "JavaScript REPL (js_repl)",
+        jsReplDesc: "Sandboxed read-only JS orchestration; each bridged call still passes normal authorization and approval.",
+        enabled: "Enabled",
+        disabled: "Disabled",
+        appliesNewSessions: "Applies to new sessions",
+      },
+      goals: {
+        title: "Goals",
+        open: "Goals",
+        empty: "No Goals yet. Create one to plan and run durable multi-step work.",
+        create: "New Goal",
+        objectiveLabel: "Objective",
+        objectivePlaceholder: "Describe the durable outcome to reach…",
+        acceptanceLabel: "Acceptance criteria (manual evidence)",
+        addCriterion: "Add criterion",
+        budgetAdvanced: "Budget limits",
+        createSubmit: "Create Goal",
+        back: "Back",
+        refresh: "Refresh",
+        stepsHeader: (n: number) => `Steps (${n})`,
+        criteriaHeader: (n: number) => `Acceptance criteria (${n})`,
+        usageHeader: "Usage and budget",
+        runsLabel: "Runs",
+        requestsLabel: "Model requests",
+        toolsLabel: "Tool calls",
+        activeTimeLabel: "Active time",
+        tokensLabel: "Tokens",
+        verifierBadge: "verifier",
+        verifierUnconfirmed: "unconfirmed",
+        lastVerification: "Last verification",
+        planAction: "Plan",
+        confirmAction: "Confirm plan",
+        continueAction: "Continue step",
+        startAction: "Start (auto)",
+        pauseAction: "Pause",
+        resumeAction: "Resume",
+        cancelAction: "Cancel Goal",
+        verifyAction: "Verify criterion",
+        resolveAction: "Resolve step",
+        replanAction: "Replan",
+        reportAction: "Report",
+        setVerifierAction: "Set verifier",
+        busy: "Working…",
+        runningAction: (a: string) => `Running: ${a}`,
+        failureLabel: "Failure",
+        waitLabel: (r: string) => `Waiting: ${r}`,
+        updatedLabel: "Updated",
+        manualPermissionsBlocked: "Auto start requires auto or bypass permissions.",
+        verifyTitle: "Verify acceptance criterion",
+        verifyCriterionLabel: "Criterion",
+        verifySummaryLabel: "Evidence summary",
+        verifySummaryPlaceholder: "Describe the manual evidence for review…",
+        verifySubmit: "Verify",
+        resolveTitle: "Resolve unknown step outcome",
+        resolveRetry: "Retry step",
+        resolveComplete: "Mark completed",
+        verifierTitle: "Step verifier command",
+        verifierArgvLabel: "Command argv (one token per line)",
+        verifierArgvPlaceholder: "e.g. cargo test -p app",
+        verifierCwdLabel: "Working directory (optional)",
+        verifierTimeoutLabel: "Timeout seconds",
+        verifierMaxOutputLabel: "Max output bytes",
+        verifierClear: "Clear verifier",
+        verifierSubmit: "Save verifier",
+        reportTitle: "Goal report",
+        reportJson: "JSON",
+        reportMarkdown: "Markdown",
+        reportLoading: "Rendering report…",
+        stepDependencies: (ids: string) => `Depends on: ${ids}`,
+        confirmNeeded: "Plan requires explicit confirmation before execution.",
+        statusDraft: "Draft",
+        statusReady: "Ready",
+        statusRunning: "Running",
+        statusWaiting: "Waiting",
+        statusPaused: "Paused",
+        statusBlocked: "Blocked",
+        statusCompleted: "Completed",
+        statusFailed: "Failed",
+        statusCancelled: "Cancelled",
+        statusLimitReached: "Limit reached",
+        phasePlanning: "Planning",
+        phaseExecuting: "Executing",
+        phaseVerifying: "Verifying",
+        phaseReplanning: "Replanning",
+        phaseFinished: "Finished",
+        budgetMaxRuns: "Max runs",
+        budgetMaxRequests: "Max model requests",
+        budgetMaxTools: "Max tool calls",
+        budgetMaxActiveSeconds: "Max active seconds",
+        budgetMaxTokens: "Max tokens",
+        budgetMaxReplans: "Max replans",
+      },
+
+
+
     approval: {
       title: "Approval required",
       tool: "Tool",
@@ -990,7 +1187,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
           name: "Ultracode",
           desc: "Highest effort, plus dynamic workflows for this session.",
         },
-      },
+      
+},
     },
     cards: {
       thinking: "Thinking",
@@ -1360,6 +1558,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navProfiles: "模型与配置",
       navPermissions: "权限",
       navModules: "模块",
+      navExperimental: "实验性功能",
       navMcp: "MCP 与凭据",
       navMemory: "记忆",
       navExport: "导入与导出",
@@ -1367,6 +1566,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleProfiles: "模型与配置",
       titlePermissions: "权限与模式",
       titleModules: "模块与扩展",
+      titleExperimental: "实验性功能",
       titleGeneral: "运行时与模块",
       usageSubtitle: "本设备所有会话的 Token 用量统计",
       tokensUnit: "tokens",
@@ -1542,6 +1742,102 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       cancel: "取消",
       jobFallback: "任务",
     },
+      experimentalPanel: {
+        header: "实验性功能",
+        subtitle: "开发中的可选能力。开关写入 config.toml，作用于之后创建的会话。",
+        jsRepl: "JavaScript REPL（js_repl）",
+        jsReplDesc: "沙箱内只读 JS 编排；每次桥接调用仍走常规授权与审批。",
+        enabled: "已启用",
+        disabled: "已停用",
+        appliesNewSessions: "对新会话生效",
+      },
+      goals: {
+        title: "目标",
+        open: "目标",
+        empty: "还没有目标。创建目标以规划并执行持久的多步任务。",
+        create: "新建目标",
+        objectiveLabel: "目标描述",
+        objectivePlaceholder: "描述要达成的持久结果…",
+        acceptanceLabel: "验收标准（人工证据）",
+        addCriterion: "添加标准",
+        budgetAdvanced: "预算上限",
+        createSubmit: "创建目标",
+        back: "返回",
+        refresh: "刷新",
+        stepsHeader: (n: number) => `步骤（${n}）`,
+        criteriaHeader: (n: number) => `验收标准（${n}）`,
+        usageHeader: "用量与预算",
+        runsLabel: "运行次数",
+        requestsLabel: "模型请求",
+        toolsLabel: "工具调用",
+        activeTimeLabel: "活动时间",
+        tokensLabel: "Token",
+        verifierBadge: "验证器",
+        verifierUnconfirmed: "未确认",
+        lastVerification: "最近验证",
+        planAction: "生成计划",
+        confirmAction: "确认计划",
+        continueAction: "执行一步",
+        startAction: "启动（自动）",
+        pauseAction: "暂停",
+        resumeAction: "恢复",
+        cancelAction: "取消目标",
+        verifyAction: "验证标准",
+        resolveAction: "解决步骤",
+        replanAction: "重规划",
+        reportAction: "报告",
+        setVerifierAction: "设置验证器",
+        busy: "处理中…",
+        runningAction: (a: string) => `执行中：${a}`,
+        failureLabel: "失败",
+        waitLabel: (r: string) => `等待：${r}`,
+        updatedLabel: "更新于",
+        manualPermissionsBlocked: "自动启动需要 auto 或 bypass 权限。",
+        verifyTitle: "验证验收标准",
+        verifyCriterionLabel: "标准",
+        verifySummaryLabel: "证据摘要",
+        verifySummaryPlaceholder: "描述供审查的人工证据…",
+        verifySubmit: "验证",
+        resolveTitle: "解决未知步骤结果",
+        resolveRetry: "重试步骤",
+        resolveComplete: "标记完成",
+        verifierTitle: "步骤验证器命令",
+        verifierArgvLabel: "命令 argv（每行一个参数）",
+        verifierArgvPlaceholder: "例如 cargo test -p app",
+        verifierCwdLabel: "工作目录（可选）",
+        verifierTimeoutLabel: "超时秒数",
+        verifierMaxOutputLabel: "最大输出字节",
+        verifierClear: "清除验证器",
+        verifierSubmit: "保存验证器",
+        reportTitle: "目标报告",
+        reportJson: "JSON",
+        reportMarkdown: "Markdown",
+        reportLoading: "正在生成报告…",
+        stepDependencies: (ids: string) => `依赖：${ids}`,
+        confirmNeeded: "计划需显式确认后才能执行。",
+        statusDraft: "草稿",
+        statusReady: "就绪",
+        statusRunning: "运行中",
+        statusWaiting: "等待",
+        statusPaused: "已暂停",
+        statusBlocked: "已阻塞",
+        statusCompleted: "已完成",
+        statusFailed: "失败",
+        statusCancelled: "已取消",
+        statusLimitReached: "已达上限",
+        phasePlanning: "规划",
+        phaseExecuting: "执行",
+        phaseVerifying: "验证",
+        phaseReplanning: "重规划",
+        phaseFinished: "结束",
+        budgetMaxRuns: "最大运行数",
+        budgetMaxRequests: "最大模型请求",
+        budgetMaxTools: "最大工具调用",
+        budgetMaxActiveSeconds: "最大活动秒数",
+        budgetMaxTokens: "最大 Token",
+        budgetMaxReplans: "最大重规划",
+      },
+
     approval: {
       title: "需要人工批准",
       tool: "工具",
@@ -1591,7 +1887,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
           name: "Ultracode",
           desc: "最高思考强度，并为本次会话启用动态工作流。",
         },
-      },
+      
+},
     },
     cards: {
       thinking: "思考过程",
@@ -1961,6 +2258,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navProfiles: "模型與設定檔",
       navPermissions: "權限",
       navModules: "模組",
+      navExperimental: "實驗性功能",
       navMcp: "MCP 與憑證",
       navMemory: "記憶",
       navExport: "匯入與匯出",
@@ -1968,6 +2266,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleProfiles: "模型與設定檔",
       titlePermissions: "權限與模式",
       titleModules: "模組與擴充功能",
+      titleExperimental: "實驗性功能",
       titleGeneral: "執行階段與模組",
       usageSubtitle: "此裝置上所有工作階段的 Token 用量統計",
       tokensUnit: "tokens",
@@ -2143,6 +2442,102 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       cancel: "取消",
       jobFallback: "任務",
     },
+      experimentalPanel: {
+        header: "实验性功能",
+        subtitle: "開發中的可選能力。開關作用于之後建立的會話，不回寫 config.toml。",
+        jsRepl: "JavaScript REPL（js_repl）",
+        jsReplDesc: "沙箱内唯讀 JS 編排；每次橋接呼叫仍走常规授權与審批。",
+        enabled: "已啟用",
+        disabled: "已停用",
+        appliesNewSessions: "对新會話生效",
+      },
+      goals: {
+        title: "目标",
+        open: "目标",
+        empty: "还沒有目标。建立目标以規劃并執行持久的多步任務。",
+        create: "新建目标",
+        objectiveLabel: "目標描述",
+        objectivePlaceholder: "描述要达成的持久結果…",
+        acceptanceLabel: "驗收標準（人工證據）",
+        addCriterion: "新增標準",
+        budgetAdvanced: "預算上限",
+        createSubmit: "建立目标",
+        back: "返回",
+        refresh: "重新整理",
+        stepsHeader: (n: number) => `步驟（${n}）`,
+        criteriaHeader: (n: number) => `驗收標準（${n}）`,
+        usageHeader: "用量与預算",
+        runsLabel: "執行次數",
+        requestsLabel: "模型請求",
+        toolsLabel: "工具呼叫",
+        activeTimeLabel: "活动時間",
+        tokensLabel: "Token",
+        verifierBadge: "驗證器",
+        verifierUnconfirmed: "未確認",
+        lastVerification: "最近驗證",
+        planAction: "生成計畫",
+        confirmAction: "確認計畫",
+        continueAction: "執行一步",
+        startAction: "啟動（自動）",
+        pauseAction: "暫停",
+        resumeAction: "恢復",
+        cancelAction: "取消目标",
+        verifyAction: "驗證標準",
+        resolveAction: "解決步驟",
+        replanAction: "重規劃",
+        reportAction: "報告",
+        setVerifierAction: "設定驗證器",
+        busy: "處理中…",
+        runningAction: (a: string) => `執行中：${a}`,
+        failureLabel: "失敗",
+        waitLabel: (r: string) => `等待：${r}`,
+        updatedLabel: "更新于",
+        manualPermissionsBlocked: "自動啟動需要 auto 或 bypass 權限。",
+        verifyTitle: "驗證驗收標準",
+        verifyCriterionLabel: "標準",
+        verifySummaryLabel: "證據摘要",
+        verifySummaryPlaceholder: "描述供審查的人工證據…",
+        verifySubmit: "驗證",
+        resolveTitle: "解決未知步驟結果",
+        resolveRetry: "重試步驟",
+        resolveComplete: "標記完成",
+        verifierTitle: "步驟驗證器命令",
+        verifierArgvLabel: "命令 argv（每行一个參數）",
+        verifierArgvPlaceholder: "例如 cargo test -p app",
+        verifierCwdLabel: "工作目錄（可選）",
+        verifierTimeoutLabel: "逾時秒数",
+        verifierMaxOutputLabel: "最大輸出位元組",
+        verifierClear: "清除驗證器",
+        verifierSubmit: "儲存驗證器",
+        reportTitle: "目标報告",
+        reportJson: "JSON",
+        reportMarkdown: "Markdown",
+        reportLoading: "正在產生報告…",
+        stepDependencies: (ids: string) => `依賴：${ids}`,
+        confirmNeeded: "計畫需明確確認后才能執行。",
+        statusDraft: "草稿",
+        statusReady: "就緒",
+        statusRunning: "執行中",
+        statusWaiting: "等待",
+        statusPaused: "已暫停",
+        statusBlocked: "已封鎖",
+        statusCompleted: "已完成",
+        statusFailed: "失敗",
+        statusCancelled: "已取消",
+        statusLimitReached: "已達上限",
+        phasePlanning: "規劃",
+        phaseExecuting: "執行",
+        phaseVerifying: "驗證",
+        phaseReplanning: "重規劃",
+        phaseFinished: "結束",
+        budgetMaxRuns: "最大執行数",
+        budgetMaxRequests: "最大模型請求",
+        budgetMaxTools: "最大工具呼叫",
+        budgetMaxActiveSeconds: "最大活动秒数",
+        budgetMaxTokens: "最大 Token",
+        budgetMaxReplans: "最大重規劃",
+      },
+
     approval: {
       title: "需要人工核准",
       tool: "工具",
@@ -2192,7 +2587,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
           name: "Ultracode",
           desc: "最高思考強度，並為此工作階段啟用動態工作流。",
         },
-      },
+      
+},
     },
     cards: {
       thinking: "思考過程",

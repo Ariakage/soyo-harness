@@ -26,10 +26,11 @@ use soyo_core::{
 use soyo_ipc::{
     redaction,
     types::{
-        BackgroundJobDto, BootstrapStateDto, CredentialRecordDto, DesktopError, ExportFormatDto,
-        ExportResultDto, ExportScopeDto, ExtensionItemDto, McpServerDto, MemoryConfirmResultDto,
-        MemoryQueryResultDto, ModuleStatusDto, PermissionModeDto, PreparedMemoryReviewDto,
-        SandboxBackendDto, SetupEnvironmentParams, StagedAttachmentDto, WorkModeDto,
+        BackgroundJobDto, BootstrapStateDto, CredentialRecordDto, DesktopError,
+        ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
+        ExtensionItemDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto,
+        ModuleStatusDto, PermissionModeDto, PreparedMemoryReviewDto, SandboxBackendDto,
+        SetupEnvironmentParams, StagedAttachmentDto, WorkModeDto,
     },
 };
 use std::{
@@ -49,7 +50,7 @@ fn backend_kind_from_dto(value: &SandboxBackendDto) -> BackendKind {
     }
 }
 
-async fn require_config_clone(state: &HostService) -> Result<Config, DesktopError> {
+pub(crate) async fn require_config_clone(state: &HostService) -> Result<Config, DesktopError> {
     let guard = state.inner.lock().await;
     let err_msg = guard
         .config_error
@@ -81,7 +82,7 @@ async fn require_idle_controls(state: &HostService) -> Result<(), DesktopError> 
     Ok(())
 }
 
-async fn require_idle_config_clone(state: &HostService) -> Result<Config, DesktopError> {
+pub(crate) async fn require_idle_config_clone(state: &HostService) -> Result<Config, DesktopError> {
     require_idle_controls(state).await?;
     let guard = state.inner.lock().await;
     if guard.sessions.values().any(|s| s.active_run_id.is_some()) {
@@ -607,6 +608,37 @@ impl HostService {
         cfg.sandbox.backend = backend_kind_from_dto(&backend);
         drop(guard);
         Ok(self.get_bootstrap_state().await)
+    }
+
+    /// Experimental feature toggles surfaced in desktop Settings. Flags
+    /// persist `[js_repl].enabled` into `config.toml` (preserving comments via
+    /// `toml_edit`) and update the loaded configuration so newly built
+    /// sessions observe the value without a restart.
+    pub async fn get_experimental_settings(&self) -> Result<ExperimentalSettingsDto, DesktopError> {
+        let cfg = require_config_clone(self).await?;
+        Ok(ExperimentalSettingsDto {
+            js_repl_enabled: cfg.js_repl.enabled,
+        })
+    }
+
+    pub async fn set_js_repl_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<ExperimentalSettingsDto, DesktopError> {
+        let _ = require_idle_config_clone(self).await?;
+        let mut guard = self.inner.lock().await;
+        let cfg = guard
+            .config
+            .as_mut()
+            .ok_or_else(|| DesktopError::new("invalid_config", "Configuration is not loaded"))?;
+        let config_path = cfg.config_path.clone();
+        offload_boundary(move || persist_js_repl_flag(&config_path, enabled))
+            .await
+            .map_err(|e| DesktopError::new(e.code(), e.to_string()))?;
+        cfg.js_repl.enabled = enabled;
+        Ok(ExperimentalSettingsDto {
+            js_repl_enabled: cfg.js_repl.enabled,
+        })
     }
 
     /// Toggle one managed-memory setting (`set_memory_setting`).
@@ -1430,6 +1462,41 @@ fn merge_setup_config(
     fs::write(&path, doc.to_string())
         .map_err(|_| BoundaryError::new("config_io", "Cannot write configuration file"))?;
     Ok((path, backup))
+}
+
+/// Persist `[js_repl].enabled` into `config_path`, preserving the rest of the
+/// document via `toml_edit`. Creates the config file when it does not exist so
+/// a toggle flipped before first setup still sticks across restarts.
+fn persist_js_repl_flag(config_path: &Path, enabled: bool) -> Result<(), BoundaryError> {
+    let text = fs::read_to_string(config_path).unwrap_or_default();
+    let base = if text.trim().is_empty() {
+        "schema_version = 1\n".to_owned()
+    } else {
+        text
+    };
+    let mut doc = base
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|_| BoundaryError::new("config_io", "Cannot parse configuration file"))?;
+    if doc.get("schema_version").is_none() {
+        doc = format!("schema_version = 1\n{doc}")
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|_| {
+                BoundaryError::new("config_io", "Cannot place schema_version in configuration")
+            })?;
+    }
+    if !doc.get("js_repl").is_some_and(|item| item.is_table()) {
+        doc["js_repl"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let Some(table) = doc["js_repl"].as_table_mut() else {
+        return Err(BoundaryError::new("config_io", "Invalid js_repl section"));
+    };
+    table["enabled"] = toml_edit::value(enabled);
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|_| BoundaryError::new("config_io", "Cannot create config directory"))?;
+    }
+    fs::write(config_path, doc.to_string())
+        .map_err(|_| BoundaryError::new("config_io", "Cannot write configuration file"))
 }
 
 /// Best-effort restore after a failed reload: put the backup back, or remove
