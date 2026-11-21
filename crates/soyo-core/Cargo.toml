@@ -18,6 +18,7 @@ base64 = "0.22.1"
 cap-std = "4.0.3"
 bytes = "1.12.1"
 diffy = "0.5.2"
+flate2 = "1.1.11"
 futures = "0.3.34"
 globset = "0.4.21"
 ignore = "0.4.34"
@@ -27,6 +28,7 @@ lol_html = "=3.0.3"
 nix = { version = "0.31.3", features = ["signal", "process"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.2", default-features = false, features = ["http2", "json", "rustls", "system-proxy", "stream"] }
+ring = "0.17.14"
 rquickjs = { version = "0.14.0", default-features = false, features = ["rust-alloc", "std"] }
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest", "auth"] }
 httpdate = "1.0.3"
@@ -35,6 +37,7 @@ serde_json = "1.0.154"
 semver = "1.0.28"
 sha2 = "0.11.1"
 sse-stream = "0.2.6"
+tar = "0.4.46"
 tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 toml = "1.2.0"
 uuid = { version = "1.29.0", features = ["v7", "serde"] }

@@ -7,7 +7,8 @@ use soyo_core::{
     contract::{BoundaryError, ErrorInfo},
     credentials::SecretRegistry,
     plugin_manifest::{
-        MANIFEST_NAME, PackageSource, SourceKind, VerifiedPackage, inspect_package,
+        ArchiveFormat, ArchiveVerification, MANIFEST_NAME, PackageSource, SourceKind,
+        VerifiedPackage, fetch_https_archive, inspect_archive_path, inspect_package,
         parse_manifest_with_secrets,
     },
     plugin_store::{
@@ -33,12 +34,31 @@ pub enum PluginScopeOption {
 
 #[derive(Clone, Subcommand)]
 pub enum PluginAction {
-    /// Validate and seal a local directory without installing or executing it.
-    Validate { path: PathBuf },
-    /// Install a local directory package in the disabled state.
-    Install {
+    /// Validate and seal a local directory, archive, or verified HTTPS archive without installing it.
+    Validate {
+        #[arg(value_name = "PATH", conflicts_with = "url")]
+        path: Option<PathBuf>,
+        #[arg(long, requires = "verify", value_name = "HTTPS_URL")]
+        url: Option<String>,
+        #[arg(long, group = "verify")]
+        sha256: Option<String>,
         #[arg(long)]
-        path: PathBuf,
+        pubkey: Option<String>,
+        #[arg(long, group = "verify", requires = "pubkey")]
+        signature: Option<String>,
+    },
+    /// Install a local directory, archive, or verified HTTPS package in the disabled state.
+    Install {
+        #[arg(long, conflicts_with = "url")]
+        path: Option<PathBuf>,
+        #[arg(long, requires = "verify", value_name = "HTTPS_URL")]
+        url: Option<String>,
+        #[arg(long, group = "verify")]
+        sha256: Option<String>,
+        #[arg(long)]
+        pubkey: Option<String>,
+        #[arg(long, group = "verify", requires = "pubkey")]
+        signature: Option<String>,
     },
     /// List recorded package identities, requested ceilings, scopes, and leases.
     List {
@@ -67,11 +87,19 @@ pub enum PluginAction {
         #[arg(long, value_enum, default_value = "workspace")]
         scope: PluginScopeOption,
     },
-    /// Select new local content using the expected current digest. Enable it separately.
+    /// Select new local or verified remote content using the expected current digest. Enable it separately.
     Update {
         plugin: String,
+        #[arg(long, conflicts_with = "url")]
+        path: Option<PathBuf>,
+        #[arg(long, requires = "verify", value_name = "HTTPS_URL")]
+        url: Option<String>,
+        #[arg(long, group = "verify")]
+        sha256: Option<String>,
         #[arg(long)]
-        path: PathBuf,
+        pubkey: Option<String>,
+        #[arg(long, group = "verify", requires = "pubkey")]
+        signature: Option<String>,
         #[arg(long)]
         expected_digest: String,
     },
@@ -203,8 +231,49 @@ fn ensure_clean(value: &Value, secrets: &SecretRegistry) -> Result<(), BoundaryE
     }
     Ok(())
 }
+fn verification_from(
+    sha256: &Option<String>,
+    pubkey: &Option<String>,
+    signature: &Option<String>,
+) -> ArchiveVerification {
+    ArchiveVerification {
+        sha256: sha256.clone(),
+        ed25519_pubkey: pubkey.clone(),
+        ed25519_signature: signature.clone(),
+    }
+}
+
+fn check_manifest_secrets(
+    package: &VerifiedPackage,
+    secrets: &SecretRegistry,
+) -> Result<(), BoundaryError> {
+    let manifest = package
+        .file(MANIFEST_NAME)
+        .ok_or_else(|| failure("invalid_plugin", "Sealed package manifest is missing"))?;
+    let manifest = std::str::from_utf8(manifest.bytes())
+        .map_err(|_| failure("invalid_plugin", "Sealed package manifest is not UTF-8"))?;
+    let snapshot = secrets.snapshot()?;
+    if soyo_core::redaction::contains_secret(manifest, &snapshot) {
+        return Err(failure(
+            "sensitive_data",
+            "Plugin manifest contains protected data",
+        ));
+    }
+    parse_manifest_with_secrets(manifest, &snapshot)?;
+    Ok(())
+}
+
+fn input_support_label(kind: &SourceKind) -> &'static str {
+    match kind {
+        SourceKind::LocalDirectory => "local_directory",
+        SourceKind::Archive => "archive",
+        SourceKind::Https => "https_archive",
+    }
+}
+
 fn local_package(
     path: &Path,
+    verification: &ArchiveVerification,
     config: &Config,
     secrets: &SecretRegistry,
 ) -> Result<(VerifiedPackage, PackageSource), BoundaryError> {
@@ -218,41 +287,51 @@ fn local_package(
         .ok_or_else(|| {
             failure(
                 "plugin_source_unsupported",
-                "Only bounded local directory package paths are supported",
+                "Only bounded local directory or archive package paths are supported",
             )
         })?;
     if text.contains("://") || text.starts_with("git@") {
         return Err(failure(
             "plugin_source_unsupported",
-            "Remote and archive package inputs are unsupported",
+            "Remote URLs must be supplied with --url and cryptographic verification",
         ));
     }
     let absolute = config.cwd.join(path);
     let metadata = std::fs::symlink_metadata(&absolute).map_err(|_| {
         failure(
             "plugin_source_unsupported",
-            "Local package directory is unavailable",
+            "Local package path is unavailable",
         )
     })?;
-    if !metadata.is_dir() {
+    let (package, kind) = if metadata.is_dir() {
+        if verification.sha256.is_some()
+            || verification.ed25519_pubkey.is_some()
+            || verification.ed25519_signature.is_some()
+        {
+            return Err(failure(
+                "invalid_args",
+                "Checksum and signature flags require a plugin archive input",
+            ));
+        }
+        (inspect_package(&absolute)?, SourceKind::LocalDirectory)
+    } else if metadata.is_file() {
+        if ArchiveFormat::detect(&absolute).is_none() {
+            return Err(failure(
+                "plugin_source_unsupported",
+                "Only local directories and .tar, .tar.gz, or .tgz plugin archives are supported",
+            ));
+        }
+        (
+            inspect_archive_path(&absolute, verification)?,
+            SourceKind::Archive,
+        )
+    } else {
         return Err(failure(
             "plugin_source_unsupported",
-            "Only local directory packages are supported",
+            "Only local directories and regular archive files are supported",
         ));
-    }
-    let package = inspect_package(&absolute)?;
-    let manifest = package
-        .file(MANIFEST_NAME)
-        .ok_or_else(|| failure("invalid_plugin", "Sealed package manifest is missing"))?;
-    let manifest = std::str::from_utf8(manifest.bytes())
-        .map_err(|_| failure("invalid_plugin", "Sealed package manifest is not UTF-8"))?;
-    if soyo_core::redaction::contains_secret(manifest, &secrets.snapshot()?) {
-        return Err(failure(
-            "sensitive_data",
-            "Plugin manifest contains protected data",
-        ));
-    }
-    parse_manifest_with_secrets(manifest, &secrets.snapshot()?)?;
+    };
+    check_manifest_secrets(&package, secrets)?;
     let canonical = std::fs::canonicalize(&absolute).map_err(|_| {
         failure(
             "plugin_source_unsupported",
@@ -260,7 +339,7 @@ fn local_package(
         )
     })?;
     let source = PackageSource {
-        kind: SourceKind::LocalDirectory,
+        kind,
         reference: canonical
             .to_str()
             .ok_or_else(|| {
@@ -401,10 +480,37 @@ fn compatibility(manifest: &soyo_core::plugin_manifest::Manifest) -> Result<Valu
     )
 }
 
+fn resolve_sync_source(
+    path: Option<&PathBuf>,
+    url: Option<&str>,
+    verification: &ArchiveVerification,
+    prefetched: Option<(VerifiedPackage, PackageSource)>,
+    config: &Config,
+    secrets: &SecretRegistry,
+) -> Result<(VerifiedPackage, PackageSource), BoundaryError> {
+    if let Some(resolved) = prefetched {
+        return Ok(resolved);
+    }
+    if path.is_some() && url.is_some() {
+        return Err(failure(
+            "invalid_args",
+            "Specify either a local path or --url, not both",
+        ));
+    }
+    if let Some(path) = path {
+        return local_package(path, verification, config, secrets);
+    }
+    Err(failure(
+        "invalid_args",
+        "Plugin package source (--path or verified --url) is required",
+    ))
+}
+
 fn perform(
     action: &PluginAction,
     config: &Config,
     secrets: Arc<SecretRegistry>,
+    prefetched: Option<(VerifiedPackage, PackageSource)>,
 ) -> Result<Value, BoundaryError> {
     match action {
         PluginAction::Inspect { plugin, digest } => {
@@ -430,30 +536,73 @@ fn perform(
         _ => {}
     }
     let data = match action {
-        PluginAction::Validate { path } => {
-            let (package, source) = local_package(path, config, &secrets)?;
+        PluginAction::Validate {
+            path,
+            url,
+            sha256,
+            pubkey,
+            signature,
+        } => {
+            let verification = verification_from(sha256, pubkey, signature);
+            let (package, source) = resolve_sync_source(
+                path.as_ref(),
+                url.as_deref(),
+                &verification,
+                prefetched,
+                config,
+                &secrets,
+            )?;
+            let support = input_support_label(&source.kind);
             json!({"valid":true,"source":source,"digest":package.digest(),"capability_fingerprint":package.capability_fingerprint(),
                 "manifest":package.manifest(),"file_count":package.files().len(),"bytes":package.files().iter().map(|file| file.bytes().len()).sum::<usize>(),
-                "compatibility":compatibility(package.manifest())?,"input_support":"local_directory_only"})
+                "compatibility":compatibility(package.manifest())?,"input_support":support})
         }
-        PluginAction::Install { path } => {
-            let (package, source) = local_package(path, config, &secrets)?;
+        PluginAction::Install {
+            path,
+            url,
+            sha256,
+            pubkey,
+            signature,
+        } => {
+            let verification = verification_from(sha256, pubkey, signature);
+            let (package, source) = resolve_sync_source(
+                path.as_ref(),
+                url.as_deref(),
+                &verification,
+                prefetched,
+                config,
+                &secrets,
+            )?;
+            let support = input_support_label(&source.kind);
             let store = open_store(config, secrets.clone())?;
             let installed = store.install(&package, source)?;
-            json!({"package":summary(&installed),"compatibility":compatibility(package.manifest())?,"input_support":"local_directory_only"})
+            json!({"package":summary(&installed),"compatibility":compatibility(package.manifest())?,"input_support":support})
         }
         PluginAction::Update {
             plugin,
             path,
+            url,
+            sha256,
+            pubkey,
+            signature,
             expected_digest,
         } => {
             check_id(plugin)?;
             check_digest(expected_digest)?;
-            let (package, source) = local_package(path, config, &secrets)?;
+            let verification = verification_from(sha256, pubkey, signature);
+            let (package, source) = resolve_sync_source(
+                path.as_ref(),
+                url.as_deref(),
+                &verification,
+                prefetched,
+                config,
+                &secrets,
+            )?;
+            let support = input_support_label(&source.kind);
             if package.manifest().plugin.id != *plugin {
                 return Err(failure(
                     "plugin_identity",
-                    "Local update package has a different plugin ID",
+                    "Update package has a different plugin ID",
                 ));
             }
             if !store_exists(config)? {
@@ -461,7 +610,7 @@ fn perform(
             }
             let store = open_store(config, secrets.clone())?;
             let updated = store.update(expected_digest, &package, source)?;
-            json!({"package":summary(&updated),"compatibility":compatibility(package.manifest())?,"input_support":"local_directory_only"})
+            json!({"package":summary(&updated),"compatibility":compatibility(package.manifest())?,"input_support":support})
         }
         PluginAction::List { page, page_size } => {
             range(*page, *page_size, 0)?;
@@ -547,17 +696,61 @@ fn perform(
     )
 }
 
+async fn resolve_remote(
+    action: &PluginAction,
+    secrets: &SecretRegistry,
+) -> Result<Option<(VerifiedPackage, PackageSource)>, BoundaryError> {
+    let (path, url, sha256, pubkey, signature) = match action {
+        PluginAction::Validate {
+            path,
+            url,
+            sha256,
+            pubkey,
+            signature,
+        }
+        | PluginAction::Install {
+            path,
+            url,
+            sha256,
+            pubkey,
+            signature,
+        }
+        | PluginAction::Update {
+            path,
+            url,
+            sha256,
+            pubkey,
+            signature,
+            ..
+        } => (path, url, sha256, pubkey, signature),
+        _ => return Ok(None),
+    };
+    let Some(url) = url else {
+        return Ok(None);
+    };
+    if path.is_some() {
+        return Err(failure(
+            "invalid_args",
+            "Specify either a local path or --url, not both",
+        ));
+    }
+    let verification = verification_from(sha256, pubkey, signature);
+    let (package, source) = fetch_https_archive(url, &verification).await?;
+    check_manifest_secrets(&package, secrets)?;
+    ensure_clean(&json!({"source": &source}), secrets)?;
+    Ok(Some((package, source)))
+}
+
 /// Return one bounded JSON value. The caller selects text, JSON, or a single
 /// `plugin.result` JSONL envelope and maps BoundaryError to the shared exit codes.
 pub async fn run(action: &PluginAction, config: &Config) -> Result<Value, BoundaryError> {
     let action = action.clone();
     let config = config.clone();
-    tokio::task::spawn_blocking(move || {
-        let secrets = known_registry(&config)?;
-        perform(&action, &config, secrets)
-    })
-    .await
-    .map_err(|_| failure("plugin_worker", "Plugin administration worker failed"))?
+    let secrets = known_registry(&config)?;
+    let prefetched = resolve_remote(&action, &secrets).await?;
+    tokio::task::spawn_blocking(move || perform(&action, &config, secrets, prefetched))
+        .await
+        .map_err(|_| failure("plugin_worker", "Plugin administration worker failed"))?
 }
 
 #[cfg(test)]
@@ -623,17 +816,41 @@ media_type="text/markdown"
             }
         }
         async fn install(&self) -> String {
-            run(
-                &PluginAction::Install {
-                    path: self.package.clone(),
-                },
-                &self.config,
-            )
-            .await
-            .unwrap()["data"]["package"]["digest"]
+            run(&install_action(self.package.clone()), &self.config)
+                .await
+                .unwrap()["data"]["package"]["digest"]
                 .as_str()
                 .unwrap()
                 .into()
+        }
+    }
+    fn validate_action(path: PathBuf) -> PluginAction {
+        PluginAction::Validate {
+            path: Some(path),
+            url: None,
+            sha256: None,
+            pubkey: None,
+            signature: None,
+        }
+    }
+    fn install_action(path: PathBuf) -> PluginAction {
+        PluginAction::Install {
+            path: Some(path),
+            url: None,
+            sha256: None,
+            pubkey: None,
+            signature: None,
+        }
+    }
+    fn update_action(plugin: &str, path: PathBuf, expected_digest: String) -> PluginAction {
+        PluginAction::Update {
+            plugin: plugin.into(),
+            path: Some(path),
+            url: None,
+            sha256: None,
+            pubkey: None,
+            signature: None,
+            expected_digest,
         }
     }
     impl Drop for Fixture {
@@ -664,14 +881,9 @@ media_type="text/markdown"
     #[tokio::test]
     async fn validation_and_empty_queries_do_not_create_a_store_or_execute_code() {
         let fixture = Fixture::new(None);
-        let validated = run(
-            &PluginAction::Validate {
-                path: fixture.package.clone(),
-            },
-            &fixture.config,
-        )
-        .await
-        .unwrap();
+        let validated = run(&validate_action(fixture.package.clone()), &fixture.config)
+            .await
+            .unwrap();
         assert_eq!(validated["data"]["valid"], true);
         assert_eq!(validated["data"]["compatibility"]["compatible"], true);
         assert!(!fixture.config.data_dir.exists());
@@ -697,7 +909,7 @@ media_type="text/markdown"
             fixture.package.join("guide.md"),
         ] {
             assert_eq!(
-                run(&PluginAction::Install { path }, &fixture.config)
+                run(&install_action(path), &fixture.config)
                     .await
                     .unwrap_err()
                     .0
@@ -775,14 +987,9 @@ media_type="text/markdown"
             format!("{manifest}\n[[hooks]]\nid=\"started\"\nevent=\"run.started\"\nkind=\"observer\"\nprogram=\"shell\"\nargs=[\"@plugin/hook.sh\"]\ntimeout_ms=5000\n"),
         ).unwrap();
         fs::write(fixture.package.join("hook.sh"), "#!/bin/sh\nexit 93\n").unwrap();
-        let validated = run(
-            &PluginAction::Validate {
-                path: fixture.package.clone(),
-            },
-            &fixture.config,
-        )
-        .await
-        .unwrap();
+        let validated = run(&validate_action(fixture.package.clone()), &fixture.config)
+            .await
+            .unwrap();
         assert_eq!(validated["data"]["compatibility"]["compatible"], true);
         assert!(
             validated["data"]["compatibility"]["host_features"]
@@ -817,11 +1024,7 @@ media_type="text/markdown"
         let old = fixture.install().await;
         fs::write(fixture.package.join("guide.md"), "new guide").unwrap();
         let updated = run(
-            &PluginAction::Update {
-                plugin: "io.soyo.test".into(),
-                path: fixture.package.clone(),
-                expected_digest: old.clone(),
-            },
+            &update_action("io.soyo.test", fixture.package.clone(), old.clone()),
             &fixture.config,
         )
         .await
@@ -834,11 +1037,7 @@ media_type="text/markdown"
         assert_eq!(updated["data"]["package"]["enabled_scope_count"], 0);
         assert_eq!(
             run(
-                &PluginAction::Update {
-                    plugin: "io.soyo.test".into(),
-                    path: fixture.package.clone(),
-                    expected_digest: old
-                },
+                &update_action("io.soyo.test", fixture.package.clone(), old),
                 &fixture.config
             )
             .await
@@ -910,14 +1109,9 @@ media_type="text/markdown"
             MANIFEST.replace("An offline local test package.", secret),
         )
         .unwrap();
-        let error = run(
-            &PluginAction::Install {
-                path: fixture.package.clone(),
-            },
-            &fixture.config,
-        )
-        .await
-        .unwrap_err();
+        let error = run(&install_action(fixture.package.clone()), &fixture.config)
+            .await
+            .unwrap_err();
         assert_eq!(error.0.code, "sensitive_data");
         assert!(!error.to_string().contains(secret));
         assert!(!fixture.config.data_dir.exists());
@@ -950,26 +1144,16 @@ media_type="text/markdown"
         assert!(!fixture.config.data_dir.exists());
         fixture.config.mode = WorkMode::Plan;
         assert!(
-            run(
-                &PluginAction::Validate {
-                    path: fixture.package.clone()
-                },
-                &fixture.config
-            )
-            .await
-            .is_ok()
+            run(&validate_action(fixture.package.clone()), &fixture.config)
+                .await
+                .is_ok()
         );
         assert_eq!(
-            run(
-                &PluginAction::Install {
-                    path: fixture.package.clone()
-                },
-                &fixture.config
-            )
-            .await
-            .unwrap_err()
-            .0
-            .code,
+            run(&install_action(fixture.package.clone()), &fixture.config)
+                .await
+                .unwrap_err()
+                .0
+                .code,
             "plan_read_only"
         );
         assert!(!fixture.config.data_dir.exists());
@@ -1003,7 +1187,133 @@ media_type="text/markdown"
             ])
             .is_err()
         );
+        assert!(
+            Arguments::try_parse_from([
+                "plugin",
+                "install",
+                "--url",
+                "https://example.invalid/package",
+                "--sha256",
+                &digest
+            ])
+            .is_ok()
+        );
         assert!(features().contains("hook-events-v1"));
         assert!(!features().contains("browser-managed-v1"));
+    }
+    #[tokio::test]
+    async fn archive_validate_install_and_update_verify_sha256_and_preserve_tree_digest() {
+        let fixture = Fixture::new(None);
+        let dir_validated = run(&validate_action(fixture.package.clone()), &fixture.config)
+            .await
+            .unwrap();
+        let expected_tree_digest = dir_validated["data"]["digest"].as_str().unwrap().to_owned();
+
+        let archive_path = fixture.root.path().join("plugin.tar.gz");
+        let output = std::process::Command::new("tar")
+            .env("COPYFILE_DISABLE", "1")
+            .arg("-czf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&fixture.package)
+            .arg(".")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "tar failed: {output:?}");
+        let raw_archive = fs::read(&archive_path).unwrap();
+        let archive_sha = soyo_core::plugin_manifest::archive_sha256_hex(&raw_archive);
+
+        // Validate archive directly with sha256 check.
+        let validated_archive = run(
+            &PluginAction::Validate {
+                path: Some(archive_path.clone()),
+                url: None,
+                sha256: Some(archive_sha.clone()),
+                pubkey: None,
+                signature: None,
+            },
+            &fixture.config,
+        )
+        .await
+        .unwrap();
+        assert_eq!(validated_archive["data"]["digest"], expected_tree_digest);
+
+        // Tampered sha256 fails closed before opening store.
+        let bad_sha = "0".repeat(64);
+        assert_eq!(
+            run(
+                &PluginAction::Install {
+                    path: Some(archive_path.clone()),
+                    url: None,
+                    sha256: Some(bad_sha),
+                    pubkey: None,
+                    signature: None,
+                },
+                &fixture.config
+            )
+            .await
+            .unwrap_err()
+            .0
+            .code,
+            "plugin_checksum_mismatch"
+        );
+        assert!(!fixture.config.data_dir.exists());
+
+        // Matching sha256 installs archive and produces identical tree digest.
+        let installed = run(
+            &PluginAction::Install {
+                path: Some(archive_path.clone()),
+                url: None,
+                sha256: Some(archive_sha),
+                pubkey: None,
+                signature: None,
+            },
+            &fixture.config,
+        )
+        .await
+        .unwrap();
+        assert_eq!(installed["data"]["package"]["digest"], expected_tree_digest);
+        assert_eq!(installed["data"]["package"]["source"]["kind"], "archive");
+        assert_eq!(installed["data"]["input_support"], "archive");
+
+        // Update from an updated archive preserves expected_digest CAS semantics.
+        let v2_dir = fixture.root.path().join("source-v2");
+        fs::create_dir(&v2_dir).unwrap();
+        fs::write(
+            v2_dir.join(MANIFEST_NAME),
+            MANIFEST.replace("version=\"1.0.0\"", "version=\"1.1.0\""),
+        )
+        .unwrap();
+        fs::write(v2_dir.join("guide.md"), "updated guide").unwrap();
+        let v2_archive = fixture.root.path().join("plugin-v2.tar.gz");
+        let output_v2 = std::process::Command::new("tar")
+            .env("COPYFILE_DISABLE", "1")
+            .arg("-czf")
+            .arg(&v2_archive)
+            .arg("-C")
+            .arg(&v2_dir)
+            .arg(".")
+            .output()
+            .unwrap();
+        assert!(output_v2.status.success(), "tar v2 failed: {output_v2:?}");
+        let v2_sha =
+            soyo_core::plugin_manifest::archive_sha256_hex(&fs::read(&v2_archive).unwrap());
+        let updated = run(
+            &PluginAction::Update {
+                plugin: "io.soyo.test".into(),
+                path: Some(v2_archive),
+                url: None,
+                sha256: Some(v2_sha),
+                pubkey: None,
+                signature: None,
+                expected_digest: expected_tree_digest,
+            },
+            &fixture.config,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated["data"]["package"]["version"], "1.1.0");
+        assert_eq!(updated["data"]["package"]["source"]["kind"], "archive");
+        assert_eq!(updated["data"]["input_support"], "archive");
     }
 }

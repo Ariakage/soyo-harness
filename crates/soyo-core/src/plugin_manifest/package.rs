@@ -210,6 +210,22 @@ pub fn inspect_package_directory(directory: &Dir) -> Result<VerifiedPackage> {
     let mut budget = FileBudget::default();
     let mut files = Vec::new();
     inspect_directory(directory, "", &mut budget, &mut files)?;
+    finalize_package(files, &budget)
+}
+
+pub(super) fn make_package_file(path: String, bytes: Vec<u8>) -> PackageFile {
+    let sha256 = digest_hex(&bytes);
+    PackageFile {
+        path,
+        bytes,
+        sha256,
+    }
+}
+
+pub(super) fn finalize_package(
+    mut files: Vec<PackageFile>,
+    budget: &FileBudget,
+) -> Result<VerifiedPackage> {
     files.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
     let manifest_file = files
         .iter()
@@ -221,7 +237,7 @@ pub fn inspect_package_directory(directory: &Dir) -> Result<VerifiedPackage> {
     let text = std::str::from_utf8(&manifest_file.bytes)
         .map_err(|_| invalid("package manifest is not UTF-8"))?;
     let manifest = parse_manifest(text)?;
-    verify_entry_paths(&manifest, &files, &budget)?;
+    verify_entry_paths(&manifest, &files, budget)?;
     let mut hash = Sha256::new();
     hash.update(b"saya-plugin-tree-v1\0");
     for file in &files {

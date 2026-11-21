@@ -13,8 +13,14 @@ use std::{
     sync::OnceLock,
 };
 
+mod archive;
 mod lock;
 mod package;
+pub use archive::{
+    ArchiveFormat, ArchiveVerification, MAX_ARCHIVE_BYTES, archive_sha256_hex, fetch_https_archive,
+    inspect_archive_bytes, inspect_archive_path, verify_archive_bytes, verify_ed25519_signature,
+    verify_sha256_hex,
+};
 pub use lock::{DependencyPin, LockedPackage, PackageSource, PluginLock, SourceKind, ToolAlias};
 pub use package::{
     FileBudget, MAX_PACKAGE_BYTES, MAX_PACKAGE_ENTRIES, MAX_PACKAGE_FILE_BYTES, MAX_PACKAGE_FILES,
