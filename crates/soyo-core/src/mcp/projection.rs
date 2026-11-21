@@ -15,15 +15,44 @@ pub(super) fn project_result(
             "MCP tool output exceeds the wire-message limit",
         ));
     }
-    let mut projected = McpToolResult {
-        content: Vec::new(),
-        structured_content: None,
-        is_error: result.is_error.unwrap_or(false),
-        truncated: result.content.len() > limits.max_content_blocks,
-    };
     // Reserve the enclosing JSON fields and the punctuation between content items.
     let mut remaining = limits.max_result_bytes.saturating_sub(128);
-    for block in result.content.into_iter().take(limits.max_content_blocks) {
+    let mut truncated = result.content.len() > limits.max_content_blocks;
+    let content = project_content_blocks(
+        result.content,
+        limits.max_content_blocks,
+        &mut remaining,
+        &mut truncated,
+    )?;
+    let mut projected = McpToolResult {
+        content,
+        structured_content: None,
+        is_error: result.is_error.unwrap_or(false),
+        truncated,
+    };
+    if let Some(structured) = result.structured_content {
+        let bytes = serde_json::to_vec(&structured)
+            .map_err(|_| error("mcp_protocol", "MCP structured content cannot be encoded"))?;
+        if bytes.len() <= remaining {
+            projected.structured_content = Some(structured);
+        } else {
+            projected.truncated = true;
+        }
+    }
+    Ok(projected)
+}
+
+pub(super) fn project_content_blocks(
+    blocks: Vec<ContentBlock>,
+    max_blocks: usize,
+    remaining: &mut usize,
+    truncated: &mut bool,
+) -> Result<Vec<McpContent>, BoundaryError> {
+    if blocks.len() > max_blocks {
+        *truncated = true;
+    }
+    let mut out = Vec::new();
+    for block in blocks.into_iter().take(max_blocks) {
         let mut item = match block {
             ContentBlock::Text(text) => McpContent::Text { text: text.text },
             ContentBlock::Image(image) => McpContent::Omitted {
@@ -71,18 +100,18 @@ pub(super) fn project_result(
                 encoded_bytes: 0,
             },
         };
-        cap_metadata(&mut item, &mut projected.truncated);
+        cap_metadata(&mut item, truncated);
         loop {
             let length = serde_json::to_vec(&item)
                 .map_err(|_| error("mcp_protocol", "MCP content cannot be encoded"))?
                 .len()
                 .saturating_add(1);
-            if length <= remaining {
-                remaining -= length;
-                projected.content.push(item);
+            if length <= *remaining {
+                *remaining -= length;
+                out.push(item);
                 break;
             }
-            projected.truncated = true;
+            *truncated = true;
             match &mut item {
                 McpContent::Text { text } | McpContent::Resource { text, .. }
                     if !text.is_empty() =>
@@ -90,25 +119,16 @@ pub(super) fn project_result(
                     truncate(text, text.len() / 2);
                 }
                 _ => {
-                    remaining = 0;
+                    *remaining = 0;
                     break;
                 }
             }
         }
-        if remaining == 0 {
+        if *remaining == 0 {
             break;
         }
     }
-    if let Some(structured) = result.structured_content {
-        let bytes = serde_json::to_vec(&structured)
-            .map_err(|_| error("mcp_protocol", "MCP structured content cannot be encoded"))?;
-        if bytes.len() <= remaining {
-            projected.structured_content = Some(structured);
-        } else {
-            projected.truncated = true;
-        }
-    }
-    Ok(projected)
+    Ok(out)
 }
 
 fn cap_metadata(content: &mut McpContent, truncated: &mut bool) {

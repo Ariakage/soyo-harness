@@ -516,6 +516,11 @@ pub fn builtin_effect(name: &str) -> Option<ToolEffect> {
         | "browser_fill" | "browser_press" | "browser_download" | "browser_upload" => {
             ToolEffect::BrowserWrite
         }
+        "mcp_list_resources"
+        | "mcp_read_resource"
+        | "mcp_subscribe_resource"
+        | "mcp_list_prompts"
+        | "mcp_get_prompt" => ToolEffect::ExternalReadOnly,
         _ => return None,
     })
 }

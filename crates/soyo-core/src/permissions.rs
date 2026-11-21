@@ -199,7 +199,10 @@ impl Operation {
                 if crate::registry::builtin_effect(&descriptor.name) != Some(descriptor.effect)
                     || !matches!(
                         descriptor.effect,
-                        ToolEffect::WebRead | ToolEffect::BrowserRead | ToolEffect::BrowserWrite
+                        ToolEffect::WebRead
+                            | ToolEffect::BrowserRead
+                            | ToolEffect::BrowserWrite
+                            | ToolEffect::ExternalReadOnly
                     )
                 {
                     return Err(failure(
@@ -999,8 +1002,11 @@ impl Policy {
             }
         }
         let read = crate::registry::is_local_read_tool(&op.tool)
-            || matches!(&op.target, Target::External(descriptor)
-            if descriptor.effect == crate::registry::ToolEffect::ExternalReadOnly)
+            || matches!(
+                &op.target,
+                Target::External(descriptor) | Target::Builtin(descriptor)
+                    if descriptor.effect == crate::registry::ToolEffect::ExternalReadOnly
+            )
             || matches!(
                 op.target,
                 Target::Managed {

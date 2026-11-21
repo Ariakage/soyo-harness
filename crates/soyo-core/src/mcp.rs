@@ -7,9 +7,16 @@ mod adapter;
 pub mod config;
 mod http;
 mod projection;
+mod resources;
 mod wire;
 pub use adapter::McpToolAdapter;
 pub use http::McpHttpClient;
+pub use resources::{
+    McpElicitationDecision, McpElicitationHandler, McpElicitationRequest, McpPrompt,
+    McpPromptArgument, McpPromptCatalog, McpPromptMessage, McpPromptResult, McpResource,
+    McpResourceCatalog, McpResourceContent, McpResourceReadResult, McpResourceTemplate,
+    McpServerCapabilities,
+};
 
 use crate::boundary::Cancellation;
 use crate::contract::{BoundaryError, ErrorInfo};
@@ -133,7 +140,7 @@ pub struct McpCatalog {
 }
 
 /// Safe, text-first projection. Binary payloads are described without passing base64 to models.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpContent {
     Text {
@@ -165,7 +172,12 @@ pub struct McpToolResult {
 }
 
 struct Handler {
+    server_id: String,
     generation: Arc<AtomicU64>,
+    resource_generation: Arc<AtomicU64>,
+    prompt_generation: Arc<AtomicU64>,
+    updated_resources: Arc<std::sync::Mutex<Vec<String>>>,
+    elicitation: Option<Arc<dyn McpElicitationHandler>>,
 }
 
 struct ValidatedCatalog {
@@ -181,14 +193,46 @@ struct ValidatedCatalog {
 
 impl ClientHandler for Handler {
     fn get_info(&self) -> ClientConfig {
+        let mut capabilities = ClientCapabilities::default();
+        if self.elicitation.is_some() {
+            capabilities.elicitation = Some(rmcp::model::ElicitationCapability::default());
+        }
         ClientConfig::new(
-            ClientCapabilities::default(),
+            capabilities,
             Implementation::new("saya-harness", env!("CARGO_PKG_VERSION")),
         )
     }
 
     async fn on_tool_list_changed(&self, _context: NotificationContext<RoleClient>) {
         self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
+        self.resource_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    async fn on_resource_updated(
+        &self,
+        params: rmcp::model::ResourceUpdatedNotificationParam,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        resources::push_updated_uri(&self.updated_resources, &params.uri);
+        self.resource_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    async fn on_prompt_list_changed(&self, _context: NotificationContext<RoleClient>) {
+        self.prompt_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    async fn create_elicitation(
+        &self,
+        request: rmcp::model::ElicitRequestParams,
+        _context: rmcp::service::RequestContext<RoleClient>,
+    ) -> Result<rmcp::model::ElicitResult, rmcp::ErrorData> {
+        Ok(
+            resources::handle_elicitation(&self.server_id, self.elicitation.as_ref(), request)
+                .await,
+        )
     }
 }
 
@@ -198,6 +242,11 @@ pub struct McpClient {
     connection_id: uuid::Uuid,
     service: RunningService<RoleClient, Handler>,
     generation: Arc<AtomicU64>,
+    resource_generation: Arc<AtomicU64>,
+    prompt_generation: Arc<AtomicU64>,
+    updated_resources: Arc<std::sync::Mutex<Vec<String>>>,
+    subscribed_uris: tokio::sync::Mutex<BTreeSet<String>>,
+    subscription_tasks: std::sync::Mutex<Vec<NotificationTask>>,
     catalog: RwLock<Option<ValidatedCatalog>>,
     notifications_alive: Arc<AtomicBool>,
     limits: McpLimits,
@@ -258,10 +307,26 @@ impl McpClient {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        Self::connect_stdio_with_elicitation(server_id, reader, writer, limits, None, cancel).await
+    }
+
+    /// Connect to pipes with an optional bounded host elicitation callback.
+    pub async fn connect_stdio_with_elicitation<R, W>(
+        server_id: impl Into<String>,
+        reader: R,
+        writer: W,
+        limits: McpLimits,
+        elicitation: Option<Arc<dyn McpElicitationHandler>>,
+        cancel: &dyn Cancellation,
+    ) -> Result<Self, BoundaryError>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let writer = wire::WireWriter::new(writer, limits.max_wire_bytes);
         let transport = AsyncRwTransport::<RoleClient, _, _>::new(reader, writer)
             .with_max_line_length(limits.max_wire_bytes);
-        Self::connect(server_id.into(), transport, limits, cancel).await
+        Self::connect(server_id.into(), transport, limits, elicitation, cancel).await
     }
 
     /// Connect to a configured endpoint with an isolated HTTP client and disabled redirects.
@@ -288,15 +353,34 @@ impl McpClient {
     where
         C: StreamableHttpClient,
     {
+        Self::connect_http_with_client_and_elicitation(
+            server_id, client, config, limits, None, cancel,
+        )
+        .await
+    }
+
+    /// Accept a host transport with an optional bounded host elicitation callback.
+    pub async fn connect_http_with_client_and_elicitation<C>(
+        server_id: impl Into<String>,
+        client: C,
+        config: McpHttpConfig,
+        limits: McpLimits,
+        elicitation: Option<Arc<dyn McpElicitationHandler>>,
+        cancel: &dyn Cancellation,
+    ) -> Result<Self, BoundaryError>
+    where
+        C: StreamableHttpClient,
+    {
         let transport_config = http_transport_config(config, &limits)?;
         let transport = StreamableHttpClientTransport::with_client(client, transport_config);
-        Self::connect(server_id.into(), transport, limits, cancel).await
+        Self::connect(server_id.into(), transport, limits, elicitation, cancel).await
     }
 
     async fn connect<T, E, A>(
         server_id: String,
         transport: T,
         limits: McpLimits,
+        elicitation: Option<Arc<dyn McpElicitationHandler>>,
         cancel: &dyn Cancellation,
     ) -> Result<Self, BoundaryError>
     where
@@ -308,8 +392,16 @@ impl McpClient {
             return Err(error("invalid_config", "MCP server identifier is invalid"));
         }
         let generation = Arc::new(AtomicU64::new(1));
+        let resource_generation = Arc::new(AtomicU64::new(1));
+        let prompt_generation = Arc::new(AtomicU64::new(1));
+        let updated_resources = Arc::new(std::sync::Mutex::new(Vec::new()));
         let handler = Handler {
+            server_id: server_id.clone(),
             generation: generation.clone(),
+            resource_generation: resource_generation.clone(),
+            prompt_generation: prompt_generation.clone(),
+            updated_resources: updated_resources.clone(),
+            elicitation,
         };
         let service = bounded(
             handler.serve_with_lifecycle(
@@ -329,6 +421,11 @@ impl McpClient {
             connection_id: uuid::Uuid::now_v7(),
             service,
             generation,
+            resource_generation,
+            prompt_generation,
+            updated_resources,
+            subscribed_uris: tokio::sync::Mutex::new(BTreeSet::new()),
+            subscription_tasks: std::sync::Mutex::new(Vec::new()),
             catalog: RwLock::new(None),
             notifications_alive: Arc::new(AtomicBool::new(true)),
             limits,
@@ -345,34 +442,53 @@ impl McpClient {
         let Some(info) = self.service.peer_info() else {
             return Err(error("mcp_protocol", "MCP peer metadata is missing"));
         };
-        let list_changed = info
-            .capabilities
-            .tools
-            .as_ref()
-            .is_some_and(|tools| tools.list_changed == Some(true));
-        if info.protocol_version != ProtocolVersion::V_2026_07_28 || !list_changed {
+        let caps = self.server_capabilities();
+        if info.protocol_version != ProtocolVersion::V_2026_07_28
+            || (!caps.tools_list_changed
+                && !caps.resources_list_changed
+                && !caps.prompts_list_changed)
+        {
             return Ok(());
         }
+        let mut filter = SubscriptionFilterBuilder::default();
+        if caps.tools_list_changed {
+            filter = filter.tools_list_changed();
+        }
+        if caps.resources_list_changed {
+            filter = filter.resources_list_changed();
+        }
+        if caps.prompts_list_changed {
+            filter = filter.prompts_list_changed();
+        }
         let mut subscription = bounded(
-            self.service.listen(
-                SubscriptionFilterBuilder::default()
-                    .tools_list_changed()
-                    .build(),
-            ),
+            self.service.listen(filter.build()),
             self.limits.connect_timeout,
             cancel,
         )
         .await?
         .map_err(service_error)?;
         let generation = self.generation.clone();
+        let resource_generation = self.resource_generation.clone();
+        let prompt_generation = self.prompt_generation.clone();
+        let updated_resources = self.updated_resources.clone();
         let alive = self.notifications_alive.clone();
         self.notifications = Some(NotificationTask(tokio::spawn(async move {
             while let Ok(Some(notification)) = subscription.next().await {
-                if matches!(
-                    notification,
-                    ServerNotification::ToolListChangedNotification(_)
-                ) {
-                    generation.fetch_add(1, Ordering::AcqRel);
+                match notification {
+                    ServerNotification::ToolListChangedNotification(_) => {
+                        generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                    ServerNotification::ResourceListChangedNotification(_) => {
+                        resource_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                    ServerNotification::ResourceUpdatedNotification(note) => {
+                        resources::push_updated_uri(&updated_resources, &note.params.uri);
+                        resource_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                    ServerNotification::PromptListChangedNotification(_) => {
+                        prompt_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                    _ => {}
                 }
             }
             // A lost change stream makes every previously approved catalogue stale.

@@ -1,3 +1,5 @@
+#[path = "runtime_mcp_tools.rs"]
+mod mcp_tools;
 #[path = "runtime_plugins.rs"]
 mod plugins;
 use super::{AgentRuntime, RuntimeHandle, error};
@@ -84,6 +86,9 @@ struct State {
     plugins: Option<Arc<plugins::PluginRun>>,
     host_hooks: Option<plugins::HostHookRuntime>,
     plugin_broker_directory: Option<std::path::PathBuf>,
+    registered_resource_tools: bool,
+    registered_subscribe_tool: bool,
+    registered_prompt_tools: bool,
 }
 
 pub(crate) struct RuntimeServices {
@@ -1407,9 +1412,53 @@ impl RuntimeServices {
             }
             self.emit_status(&mut state).await?;
         }
+        self.sync_mcp_capability_tools(runtime, &mut state)?;
         Ok(())
     }
 
+    fn sync_mcp_capability_tools(
+        self: &Arc<Self>,
+        runtime: &AgentRuntime,
+        state: &mut State,
+    ) -> Result<(), BoundaryError> {
+        let mut any_resources = false;
+        let mut any_subscribe = false;
+        let mut any_prompts = false;
+        for server in state.servers.values() {
+            if !server.client.is_connected() {
+                continue;
+            }
+            let caps = server.client.server_capabilities();
+            any_resources |= caps.resources;
+            any_subscribe |= caps.resources_subscribe;
+            any_prompts |= caps.prompts;
+        }
+        let register = |kind: mcp_tools::McpCapabilityToolKind| -> Result<(), BoundaryError> {
+            let tool = Arc::new(mcp_tools::McpCapabilityTool::new(
+                kind,
+                self.active.clone(),
+                Arc::downgrade(self),
+            ));
+            runtime
+                .dispatcher
+                .register_builtin_adapter(tool.definition(), tool)
+        };
+        if any_resources && !state.registered_resource_tools {
+            register(mcp_tools::McpCapabilityToolKind::ListResources)?;
+            register(mcp_tools::McpCapabilityToolKind::ReadResource)?;
+            state.registered_resource_tools = true;
+        }
+        if any_subscribe && !state.registered_subscribe_tool {
+            register(mcp_tools::McpCapabilityToolKind::SubscribeResource)?;
+            state.registered_subscribe_tool = true;
+        }
+        if any_prompts && !state.registered_prompt_tools {
+            register(mcp_tools::McpCapabilityToolKind::ListPrompts)?;
+            register(mcp_tools::McpCapabilityToolKind::GetPrompt)?;
+            state.registered_prompt_tools = true;
+        }
+        Ok(())
+    }
     pub(super) async fn facts(&self, mode: WorkMode) -> Result<Option<String>, BoundaryError> {
         let mut state = self.state.lock().await;
         let counts = state
