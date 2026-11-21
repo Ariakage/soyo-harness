@@ -1,5 +1,6 @@
 mod approval;
 mod chat;
+mod doctor;
 mod events;
 mod export;
 mod goal_commands;
@@ -193,6 +194,12 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// Inspect local sandbox, storage permissions, config, and platform readiness.
+    Doctor {
+        /// Treat warnings and unsupported checks as non-zero exit failures.
+        #[arg(long)]
+        strict: bool,
     },
     /// Run the shared backend daemon used by CLI, TUI, and desktop clients.
     Helper,
@@ -1720,6 +1727,13 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
                 ),
             },
         },
+        Some(Command::Doctor { strict }) => doctor::run(
+            overrides,
+            env,
+            cli.output.map(Into::into),
+            cli.config.is_some(),
+            *strict,
+        ),
         Some(Command::Helper) => {
             helper_commands::run_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await
         }

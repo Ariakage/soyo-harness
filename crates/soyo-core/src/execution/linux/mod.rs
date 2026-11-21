@@ -1194,7 +1194,7 @@ pub(super) fn safe_socat_path(path: &Path) -> bool {
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'.' | b'_' | b'-'))
 }
-fn trusted_program(candidates: &[&str]) -> Result<PathBuf, BoundaryError> {
+pub(super) fn trusted_program(candidates: &[&str]) -> Result<PathBuf, BoundaryError> {
     for candidate in candidates {
         if let Ok(path) = fs::canonicalize(candidate)
             && let Ok(metadata) = fs::metadata(&path)

@@ -282,6 +282,181 @@ impl ExecutionBackend for NativeBackend {
     }
 }
 
+/// Offline host isolation capability probe summary returned by `soyo doctor` (`F-15`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostEnvironmentProbe {
+    pub os: String,
+    pub arch: String,
+    pub configured_backend: BackendKind,
+    pub resolved_backend: Option<BackendKind>,
+    pub native_sandbox_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<BackendCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socat_path: Option<PathBuf>,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
+/// Probe host OS sandbox readiness without mutating the filesystem or launching payloads.
+pub fn probe_host_environment(configured_backend: BackendKind) -> HostEnvironmentProbe {
+    let os = std::env::consts::OS.to_owned();
+    let arch = std::env::consts::ARCH.to_owned();
+    let resolved_backend = match configured_backend {
+        BackendKind::Auto if cfg!(target_os = "macos") => Some(BackendKind::Seatbelt),
+        BackendKind::Auto if cfg!(target_os = "linux") => Some(BackendKind::Bubblewrap),
+        BackendKind::Auto => None,
+        other => Some(other),
+    };
+
+    match resolved_backend {
+        Some(BackendKind::Host) => HostEnvironmentProbe {
+            os,
+            arch,
+            configured_backend,
+            resolved_backend,
+            native_sandbox_available: false,
+            capabilities: Some(BackendCapabilities {
+                filesystem: CapabilityLevel::Unsupported,
+                network: CapabilityLevel::Unsupported,
+                syscall_filter: CapabilityLevel::Unsupported,
+                process_cleanup: CapabilityLevel::BestEffort,
+                per_process_resources: CapabilityLevel::Hard,
+                total_memory: CapabilityLevel::Unsupported,
+                total_processes: CapabilityLevel::Unsupported,
+                cpu_bandwidth: CapabilityLevel::Unsupported,
+            }),
+            binary_path: None,
+            socat_path: None,
+            summary: "explicit host compatibility mode disables OS sandbox isolation".into(),
+            blocker: None,
+        },
+        Some(BackendKind::Seatbelt) => {
+            #[cfg(target_os = "macos")]
+            {
+                let bin = PathBuf::from("/usr/bin/sandbox-exec");
+                let available = bin.is_file();
+                HostEnvironmentProbe {
+                    os,
+                    arch,
+                    configured_backend,
+                    resolved_backend,
+                    native_sandbox_available: available,
+                    capabilities: available.then_some(BackendCapabilities {
+                        filesystem: CapabilityLevel::Hard,
+                        network: CapabilityLevel::Hard,
+                        syscall_filter: CapabilityLevel::Unsupported,
+                        process_cleanup: CapabilityLevel::BestEffort,
+                        per_process_resources: CapabilityLevel::Hard,
+                        total_memory: CapabilityLevel::Unsupported,
+                        total_processes: CapabilityLevel::Unsupported,
+                        cpu_bandwidth: CapabilityLevel::Unsupported,
+                    }),
+                    binary_path: available.then_some(bin),
+                    socat_path: None,
+                    summary: if available {
+                        "macOS Seatbelt (/usr/bin/sandbox-exec) available (process cleanup is best_effort)".into()
+                    } else {
+                        "macOS /usr/bin/sandbox-exec was not found".into()
+                    },
+                    blocker: (!available)
+                        .then_some("missing /usr/bin/sandbox-exec on macOS host".into()),
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            HostEnvironmentProbe {
+                os,
+                arch,
+                configured_backend,
+                resolved_backend,
+                native_sandbox_available: false,
+                capabilities: None,
+                binary_path: None,
+                socat_path: None,
+                summary: "Seatbelt backend is unavailable on non-macOS hosts".into(),
+                blocker: Some("Seatbelt backend requires macOS".into()),
+            }
+        }
+        Some(BackendKind::Bubblewrap) => {
+            #[cfg(target_os = "linux")]
+            {
+                let bwrap = linux::trusted_program(&[
+                    "/usr/local/bin/bwrap",
+                    "/usr/bin/bwrap",
+                    "/bin/bwrap",
+                ])
+                .ok();
+                let socat = linux::trusted_program(&[
+                    "/usr/bin/socat",
+                    "/bin/socat",
+                    "/usr/local/bin/socat",
+                ])
+                .ok();
+                let available = bwrap.is_some();
+                HostEnvironmentProbe {
+                    os,
+                    arch,
+                    configured_backend,
+                    resolved_backend,
+                    native_sandbox_available: available,
+                    capabilities: available.then_some(BackendCapabilities {
+                        filesystem: CapabilityLevel::Hard,
+                        network: CapabilityLevel::Hard,
+                        syscall_filter: CapabilityLevel::Hard,
+                        process_cleanup: CapabilityLevel::Hard,
+                        per_process_resources: CapabilityLevel::Hard,
+                        total_memory: CapabilityLevel::Unsupported,
+                        total_processes: CapabilityLevel::Unsupported,
+                        cpu_bandwidth: CapabilityLevel::Unsupported,
+                    }),
+                    binary_path: bwrap,
+                    socat_path: socat,
+                    summary: if available {
+                        "Linux Bubblewrap + Seccomp available (proxy network requires socat; cgroup quotas checked per delegated root)".into()
+                    } else {
+                        "trusted root-owned bwrap binary was not found".into()
+                    },
+                    blocker: (!available).then_some(
+                        "install root-owned bubblewrap (>= 0.13.1) for Linux isolation".into(),
+                    ),
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            HostEnvironmentProbe {
+                os,
+                arch,
+                configured_backend,
+                resolved_backend,
+                native_sandbox_available: false,
+                capabilities: None,
+                binary_path: None,
+                socat_path: None,
+                summary: "Bubblewrap backend is unavailable on non-Linux hosts".into(),
+                blocker: Some("Bubblewrap backend requires Linux".into()),
+            }
+        }
+        None | Some(BackendKind::Auto) => HostEnvironmentProbe {
+            os: os.clone(),
+            arch,
+            configured_backend,
+            resolved_backend: None,
+            native_sandbox_available: false,
+            capabilities: None,
+            binary_path: None,
+            socat_path: None,
+            summary: format!("native sandbox backend is unimplemented on platform '{os}'"),
+            blocker: Some(if cfg!(target_os = "windows") {
+                "Windows native sandbox (AppContainer/Job) and DACL private-dir parity are unimplemented (F-01/F-15)".into()
+            } else {
+                format!("no native isolation backend exists for '{os}'")
+            }),
+        },
+    }
+}
+
 pub fn prepare(policy: &SandboxPolicy) -> Result<PreparedEnvironment, BoundaryError> {
     let mut policy = policy.clone();
     policy.workspace = existing_directory(&policy.workspace)?;
@@ -1396,5 +1571,20 @@ mod tests {
                 .code,
             "browser_sandbox_unavailable"
         );
+    }
+
+    #[test]
+    fn host_environment_probe_matches_current_platform() {
+        let auto_probe = probe_host_environment(BackendKind::Auto);
+        assert_eq!(auto_probe.os, std::env::consts::OS);
+        assert_eq!(auto_probe.arch, std::env::consts::ARCH);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(auto_probe.resolved_backend, Some(BackendKind::Seatbelt));
+            assert!(auto_probe.native_sandbox_available);
+        }
+        let host_probe = probe_host_environment(BackendKind::Host);
+        assert_eq!(host_probe.resolved_backend, Some(BackendKind::Host));
+        assert!(!host_probe.native_sandbox_available);
     }
 }
