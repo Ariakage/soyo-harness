@@ -143,6 +143,19 @@ Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工�
 - **PLAN 存储路径冲突**：将数据、状态和缓存目录放在工作区之外后重试，包括通过 XDG 变量选择的目录。
 - **会话正在使用、配置改变或恢复失败**：先确认是否有另一 Soyo 进程持有会话锁；核对 profile 和工作区。不要删除数据库或 WAL 来强行解锁；涉及损坏时先保留原文件及备份，再调查错误。
 - **日志不可写**：检查状态目录权限与剩余空间；日志路径不应指向不安全的符号链接。
+- **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
+
+```sh
+./target/release/soyo --config "$config_path" doctor
+./target/release/soyo --config "$config_path" --output json doctor --strict
+```
+
+插件安装与更新除本地目录外，现支持 `.tar`/`.tar.gz`/`.tgz` 归档及强制携带 `--sha256` 或 Ed25519 `--pubkey`＋`--signature` 的 HTTPS URL（仅限公网解析结果与最多 3 次安全重定向）：
+
+```sh
+./target/release/soyo plugin validate ./plugin.tar.gz --sha256 <hex-sha256>
+./target/release/soyo plugin install --url https://releases.example.com/plugin.tar.gz --sha256 <hex-sha256>
+```
 
 原生隔离与 MCP 已完成 N2 固定源码验收；可执行插件、自动／手动上下文压缩、检查点和全局记忆已接入共享入口并完成 N3 固定源码验收。N4 Goal 已完成本机受控验收。Browser 的 DEV-079 至 DEV-082 已按范围实现并取得对应离线／专用 VM 证据，DEV-083 联合验收与 GUI 继续按[能力路线图](capability-roadmap.md)推进；后续增量的验证范围以[开发进度](progress.md)为准。
 

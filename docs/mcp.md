@@ -44,6 +44,15 @@ invoice_export = [
 
 工具结果按内容类型投影并限制大小。文本与结构化结果可进入模型上下文，不受支持的内容以有界元数据表示。工具失败保留明确错误，连接中断、执行已开始但完成无法确认时按 `unknown` 处理，运行时保存记录并阻止历史重放。
 
+## Resources、Prompts、订阅与 Elicitation（D-089）
+
+基于固定 `rmcp = 3.9.0`，`McpClient` 扩展支持服务器声明的 Resources、Resource Templates、Prompts、通知订阅与安全 Elicitation：
+
+- **只读能力按需注册（零漂移）**：仅当至少一个已连接服务器在能力协商中通告 `resources` 时注册 `mcp_list_resources`、`mcp_read_resource` 与 `mcp_subscribe_resource`；仅当至少一个已连接服务器通告 `prompts` 时注册 `mcp_list_prompts` 与 `mcp_get_prompt`。未连接或未通告对应能力时，工具目录与模型前缀完全保持不变。
+- **有界分页与内容投影**：列表与读取复用单页／总页／总字节上限，`mcp_read_resource` 返回有界文本内容或仅保留媒体类型与长度的 `Blob` 元数据（不把原始二进制直接塞入模型正文），所有输出经 `SecretRegistry` 脱敏并将服务器文本标为低信任数据；`PLAN` 模式仅开放只读查询／读取，`mcp_subscribe_resource` 继续遵守模式与目录代次约束。
+- **双协议版本订阅**：针对 `2026-07-28` 协议使用 `subscriptions/listen`、针对 `2025-11-25` 使用 `resources/subscribe` 建立并管理订阅；收到 `notifications/resources/list_changed`、`notifications/resources/updated` 或 `notifications/prompts/list_changed` 时使本地缓存目录失效并触发后续读取刷新。
+- **Elicitation 失败关闭**：`ClientHandler::create_elicitation` 在无宿主交互处理器（或非交互运行）时默认返回 `Decline`（`needs_input` 兼容，不自动放行或提升权限）。
+
 ## stdio 服务
 
 ```toml
@@ -142,6 +151,6 @@ JSONL 运行事件使用 `mcp.status`，其服务器条目仅包含 `server`、`
 
 每个服务的连接、鉴权、握手和目录发现均受到配置超时及运行共享活跃预算约束。stdio 启动同时消耗工具预算，模型核查消耗共享模型请求预算。人工确认暂停活跃计时，进程与连接清理在活跃预算结束后继续完成。
 
-MCP服务要求额外输入时，当前Run以 `needs_input` 结束并保存实际调用状态。用户可在后续输入中补充信息，新的执行继续经过正常授权。服务调用内的交互补充和原调用续接属于后续扩展范围。
+MCP服务要求额外输入时，当前Run以 `needs_input` 结束并保存实际调用状态。用户可在后续输入中补充信息，新的执行继续经过正常授权。`ClientHandler::create_elicitation` 在无显式交互处理器时默认返回 `Decline` 失败关闭，不替用户自动填写或放行确认；原调用续接与通用 MCP Tasks 长任务仍属后续扩展范围。
 
 macOS 后代进程清理仍按能力等级报告为 `best_effort`。Linux 使用私有 PID namespace，系统依赖、有效委派资源控制及原生执行证据按[N2 验收记录](n2-validation.md)维护。可执行插件和自动／手动上下文压缩已完成N3固定源码验收；Browser及其他后续能力按[后续计划](post-mvp-plan.md)推进。

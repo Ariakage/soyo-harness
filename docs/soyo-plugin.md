@@ -81,7 +81,7 @@ Skill 文本、资源和服务输出以低信任来源数据传递，执行组�
 
 碰撞键按Unicode NFC、完整大小写折叠、再次NFC的顺序生成。声明引用与封存文件名按实际UTF-8字节精确匹配，树摘要使用这些实际路径字节。验证器以目录FD逐组件打开，拒绝链接、特殊文件和硬链接，文件读取前后核对身份及内容长度。返回值持有实际读取的封存字节，安装器消费该字节快照。
 
-包内容安装到所选data目录下 `plugins/` 的私有内容寻址存储，按digest固定，按只读策略提供给原生worker。验证器上限为4,096个普通文件、8,192个总路径项（包含隐式目录）、展开总量64MiB、单文件16MiB、目录深度16、UTF-8相对路径1,024字节及manifest 256KiB。FileBudget提供增量清单与内容配额检查。当前管理命令只接受本地目录，归档提取及远程下载接入仍待实现。
+包内容安装到所选data目录下 `plugins/` 的私有内容寻址存储，按digest固定，按只读策略提供给原生worker。验证器上限为4,096个普通文件、8,192个总路径项（包含隐式目录）、展开总量64MiB、单文件16MiB、目录深度16、UTF-8相对路径1,024字节及manifest 256KiB。FileBudget提供增量清单与内容配额检查。当前管理命令支持本地目录、`.tar`／`.tar.gz`／`.tgz` 归档（纯 Rust 内存解包检查、不落盘临时目录、拒绝符号链接／硬链接／设备与特殊文件、生成与目录完全一致的 `soyo-tree-sha256-v1` 树摘要；在 macOS 打包测试归档时建议使用 `COPYFILE_DISABLE=1 tar ...` 以免写入 `._*` AppleDouble 扩展属性元数据文件）以及经 `--sha256` 或 Ed25519 `--pubkey`＋`--signature` 校验的 `--url <HTTPS_URL>` 拉取（公网 IP DNS 固定、禁系统代理、最多 3 次手工 HTTPS 重定向）。
 
 树摘要算法为 `soyo-tree-sha256-v1`。
 
@@ -114,7 +114,7 @@ Skills按激活请求加载正文。MCP服务按package／entry／Run身份准�
 
 当前MCP transport覆盖stdio与HTTPS，远程连接需通过 `mcp.http`、网络及相应feature检查，并使用宿主受控broker。HTTP凭据可通过宿主显式绑定环境引用、header及bearer。插件的存储式 `credential_ref` 尚缺限定origin的适配器，使用时返回 `plugin_credential_scope_unsupported`。服务器扩展请求按协商能力、请求预算和宿主策略处理。
 
-Hook v1事件为 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.finished`。observer返回受限annotations，check只在 `tool.before_dispatch`使用，返回 `pass`、`deny`或 `abstain`。pass／abstain之后仍需原操作的当前权限检查。
+Hook 事件支持 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.finished`、`model.before_request`、`model.finished`、`input.required` 与 `compaction.finished`。`observer` 返回受限 annotations，`check` 支持用于 `tool.before_dispatch` 与 `model.before_request`，返回 `pass`、`deny` 或 `abstain`。`pass`／`abstain` 之后仍需原操作的当前权限检查；宿主直接配置的自动化规则见 [配置说明 §宿主自动化 Hooks](configuration.md#宿主自动化-hooksf-04)。
 
 Hook 进程作为独立操作保存意图、结果与 parent call，使用当前模式／权限。Manual Approval 产生相应操作确认。人工等待按运行预算规则计时，实际执行使用独立超时。拒绝、格式错误或 check 超时阻止原操作，observer 失败记录诊断。递归 Hook 触发由宿主深度与事件身份约束。
 
@@ -124,12 +124,15 @@ Hook 进程作为独立操作保存意图、结果与 parent call，使用当前
 
 ```sh
 soyo plugin validate ./plugin-root
-soyo plugin install --path ./plugin-root
+soyo plugin validate ./plugin.tar.gz --sha256 <archive-sha256>
+soyo plugin install --path ./plugin.tgz --pubkey <hex-or-base64> --signature <hex-or-base64>
+soyo plugin install --url https://releases.example.com/plugin.tar.gz --sha256 <archive-sha256>
 soyo plugin list
 soyo plugin inspect io.soyo.examples.rust-workflow
 soyo plugin enable io.soyo.examples.rust-workflow --digest <tree-sha256> --scope workspace
 soyo plugin disable io.soyo.examples.rust-workflow
 soyo plugin update io.soyo.examples.rust-workflow --path ./updated-plugin --expected-digest <tree-sha256>
+soyo plugin update io.soyo.examples.rust-workflow --url https://releases.example.com/plugin-v2.tar.gz --sha256 <archive-sha256> --expected-digest <tree-sha256>
 soyo plugin uninstall io.soyo.examples.rust-workflow --digest <tree-sha256>
 soyo plugin recover
 ```

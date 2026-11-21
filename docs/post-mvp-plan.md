@@ -174,9 +174,9 @@ DEV-069至DEV-074已实现。Goal 使用独立版本化 SQLite、专属 Session�
 | DEV-088 | CLI／TUI管理与审阅 | DEV-050、DEV-085、DEV-087 | 搜索／查看、变更差异、批准、撤销、禁用、导出、恢复及迁移说明 |
 | DEV-089 | 记忆跨会话与安全验收 | DEV-063、DEV-077、DEV-088 | 注入／凭据、并发、恢复、作用域、用户更正与遗忘、Compact／缓存联合矩阵及实际平台证据 |
 
-## N6 工具发现、步骤验证与程序化编排（规划中）
+## N6 工具发现、步骤验证与程序化编排（已完成）
 
-**状态：方向与核心契约已由 [D-079 至 D-082](decisions.md#当前基线与变更管理) 确认，实现待开始（未实现）。对应提案 S2（P1 实现主线）、S3（P1 可靠性线）、S5（P2 可并行附带）与 S1（P2 实现主线，位于 S2 之后），背景、已核实 HEAD 事实、拍板门禁与 `/goal` 分批建议详见[N6 规划](n6-plan.md)。**
+**状态：S2（`DEV-090`）、S3（`DEV-091`–`092`）、S5（`DEV-093`）与 S1（`DEV-094`–`096`，`F-21` QuickJS＋Node）已全部完成本机实现与跨模块／Seatbelt／Bubblewrap 受控验收，详见[N6 验收记录](n6-validation.md)与[N6 规划](n6-plan.md)。**
 
 | 任务 | 内容 | 最小依赖 | 交付与验证 |
 | --- | --- | --- | --- |
@@ -219,5 +219,9 @@ DEV-069至DEV-074已实现。Goal 使用独立版本化 SQLite、专属 Session�
 | F-09 默认关闭的受控父子多 Agent 协作（`max_depth = 1`、隔离与三方合并，`D-085`） | [受控子 Agent](subagents.md) |
 | F-16 默认关闭的能力感知模型路由、熔断故障切换与不透明历史迁移（`D-086`） | [模型路由设计](model-routing.md) |
 | F-17 默认关闭的工作区外 SQLite 符号索引与沙箱只读工作区 LSP 3.17 代码智能（`D-087`） | [项目索引与代码智能](code-intelligence.md) |
+| F-04 扩展 `HookEvent` 全生命周期与默认关闭宿主 `[hooks]` 规则（`D-088`） | [soyo-plugin v1 规范](soyo-plugin.md#可执行入口和-hooks)、[配置](configuration.md#宿主自动化-hooksf-04) |
+| F-02 MCP Resources／Templates／Prompts／双版本订阅与安全 Elicitation（`D-089`） | [MCP 与凭据管理](mcp.md#resourcesprompts订阅与-elicitationd-089) |
+| F-03 `soyo-plugin` `.tar`/`.tar.gz`/`.tgz` 归档、SHA-256／Ed25519 验签与 SSRF 安全 HTTPS 拉取（`D-090`） | [soyo-plugin v1 规范](soyo-plugin.md#路径存储与摘要) |
+| F-15 `soyo doctor` 离线宿主诊断与平台支持矩阵（`D-091`；Windows／非 ARM64 遮蔽 Chromium 显式标阻断） | [使用指南](usage.md#故障处理)、[开发指南](development.md#平台支持矩阵) |
 
 这些事项已有任务和验收入口，开发阶段根据证据收敛。当前实现状态由[开发进度](progress.md)维护，功能全景继续见[能力路线图](capability-roadmap.md)。

@@ -90,6 +90,18 @@ cargo build --workspace --release --locked
 
 GitHub Actions 使用 Rust 1.99.1 与相同的检查脚本，配置原生 runner：Ubuntu 22.04 x86_64／aarch64（`ubuntu-22.04`／`ubuntu-22.04-arm`），macOS 15 aarch64／x86_64（`macos-15`／`macos-15-intel`）；macOS 构建设置最低部署版本 15.0，并在两种 macOS runner 执行离线工具往返与交互会话 smoke。四个 runner 均执行离线 release smoke；不自动上传构建产物。runner 可用性与结果须以实际运行记录为准；运行记录未覆盖的候选仍需独立验证。
 
+### 平台支持矩阵
+
+| 目标平台 | 支持状态 | 原生沙箱与实测范围 | 未覆盖／阻塞说明 |
+| --- | --- | --- | --- |
+| `macos-aarch64` | 已支持 | Seatbelt（`/usr/bin/sandbox-exec`，后代清理为 `best_effort`）、CLI/TUI/Desktop、Colima VM Browser | 本机无原生 Chromium 遮蔽引擎，走专用 VM |
+| `macos-x86_64` | 已支持 | Seatbelt、CLI/TUI/Desktop | 同上（由 GitHub Actions `macos-15-intel` 验证） |
+| `linux-x86_64` | 已支持 | Bubblewrap（>= 0.13.1）+ Seccomp + socat、CLI/TUI/Desktop、Playwright Chromium Sandbox | 预编译定制遮蔽 `headless_shell` 仅针对 `linux-arm64` 构建分发 |
+| `linux-aarch64` | 已支持 | Bubblewrap（>= 0.13.1）+ Seccomp + socat、CLI/TUI/Desktop、`linux-arm64` 定制遮蔽 `headless_shell` | — |
+| `windows` | **不支持** | 阻塞边界（F-01 / F-15）：尚未实现 AppContainer／Job 原生沙箱及 POSIX `0700` 私有存储等效 DACL/ACL | 不得以纯编译代替安全隔离承诺；`soyo doctor` 亦显式报告 `unsupported` |
+
+开发者在本机或干净环境中可通过 `soyo doctor --strict` 离线核对当前宿主的沙箱二进制、私有存储权限与可选工具就绪情况。
+
 核心使用 serde／serde_json 表达结构化协议数据，uuid 生成 UUIDv7 会话与运行标识；Tokio 用于运行时、异步 HTTP、工具与 CLI。版本在 Cargo.lock 中固定。测试使用 `tempfile` 开发依赖提供临时工作区；`crates/soyo-core/tests/support` 包含辅助函数，`crates/soyo-core/tests/fixtures` 为模型、核查和三协议预留离线数据目录。目录本身不表示替身或协议已实现。
 
 Linux 的 `browser_environment_binds_install_read_only_and_private_directories` 在独立测试进程中固定真实 CLI 镜像，再实际执行 Bubblewrap payload；缺少程序或原生隔离前提时明确失败。完整 workspace 测试会构建 Cargo profile 下的 `soyo`；单独运行 core 测试或固定测试程序时，先构建 CLI，或显式设置 `SOYO_TEST_EXECUTABLE` 为兼容 CLI 的绝对路径。该变量仅供测试夹具使用，不是产品配置，也不能以测试 harness 或简化 bootstrap 代替真实 launcher。

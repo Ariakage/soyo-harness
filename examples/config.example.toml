@@ -103,6 +103,23 @@ write = true
 [plugins]
 enabled = true
 
+# Opt-in host lifecycle hooks (`F-04`) default to disabled.
+# Supported events: run.started, run.finished, tool.before_dispatch, tool.finished,
+# model.before_request, model.finished, input.required, compaction.finished.
+# Check hooks (`kind = "check"`) are supported for `tool.before_dispatch` and
+# `model.before_request` and always run inside the sandboxed host journal boundary.
+# [hooks]
+# enabled = false
+#
+# [[hooks.rules]]
+# id = "check-exec"
+# event = "tool.before_dispatch"
+# kind = "check"
+# tools = ["exec"]
+# modes = ["work", "code", "build"]
+# argv = ["/bin/sh", "-c", "cat >/dev/null"]
+# timeout_ms = 2000
+
 # Browser and dedicated VM capabilities default to disabled. You can either set
 # `enabled = true` below or toggle them cleanly with `soyo module browser enable`
 # and `soyo module vm enable` (persisted in `$XDG_DATA_HOME/soyo/modules/modules.sqlite3`

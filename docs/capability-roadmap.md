@@ -1,10 +1,10 @@
 # 后续能力路线图
 
-**更新于 2026-11-19。本文包含 F-01 至 F-21 的能力演进，已发行基础、当前实现与待开发增量分别记录。**
+**更新于 2026-11-21。本文包含 F-01 至 F-21 的能力演进，已发行基础、当前实现与待开发增量分别记录。**
 
 本文回答“CLI MVP 之后，Soyo Harness 还需要开发哪些能力”。基础扩展见[决策记录](decisions.md) D-028、D-036 至 D-038，本轮 Browser、上下文／插件细化及原生后端见 D-039 至 D-041，全局记忆编辑方向见 D-045，N6（S1／S2／S3／S5）核心契约与门禁见 D-079 至 D-082。版本候选、依赖及验收见[后续开发计划](post-mvp-plan.md)，N6 新增提案与任务规划见[N6 规划](n6-plan.md)。
 
-0.1.0 已发布，其行为以[完整基线](mvp-baseline.md)及后续决策为准。0.2.0 已交付 N0／N1 及交互与审查修复，范围和限制保留在[版本说明](releases/release-notes-0.2.0.md)。N2 已完成原生隔离、MCP 与远程 MCP 凭据基础；N3 的上下文、选定文件检查点、本地插件／Hooks 与全局记忆也已接共享运行入口，N2／N3均完成四平台固定源码验收。N4 Goal 已完成本机受控验收；N5 Browser 已交付定制捕获引擎、专用 VM 与原生 worker 链路并完成本机／VM／Linux ARM64 及 `5fff1c4` 四平台远端终验（非 ARM64 定制引擎分发待补齐）。N6（`DEV-090` 至 `DEV-096`）当前为规划中待开始项。[N2 验收](n2-validation.md)、[N3 验收](n3-validation.md#四平台最终验收)、[N4 验收](n4-validation.md)、[N5 验收](n5-validation.md)
+0.1.0 已发布，其行为以[完整基线](mvp-baseline.md)及后续决策为准。0.2.0 已交付 N0／N1 及交互与审查修复，范围和限制保留在[版本说明](releases/release-notes-0.2.0.md)。N2 已完成原生隔离、MCP 与远程 MCP 凭据基础；N3 的上下文、选定文件检查点、本地插件／Hooks 与全局记忆也已接共享运行入口，N2／N3均完成四平台固定源码验收。N4 Goal 已完成本机受控验收；N5 Browser 已交付定制捕获引擎、专用 VM 与原生 worker 链路并完成本机／VM／Linux ARM64 及 `5fff1c4` 四平台远端终验（非 ARM64 定制引擎分发待补齐）。N6（`DEV-090` 至 `DEV-096`，涵盖 S2 延迟发现、S3 Goal 步骤验证、S5 调用样例与 S1 只读 JS REPL `F-21`）、`F-09`/`F-16`/`F-17` 及本批 `F-02`/`F-03`/`F-04`/`F-15` 增量已完成实现并记录在本机／CI 验收记录中（`windows` 沙箱与非 ARM64 定制 Chromium 分发仍为显式未覆盖边界）。[N2 验收](n2-validation.md)、[N3 验收](n3-validation.md#四平台最终验收)、[N4 验收](n4-validation.md)、[N5 验收](n5-validation.md)、[N6 验收](n6-validation.md)
 
 P0 至 P7、DEV-001 至 DEV-037 见[MVP 实施任务](implementation-plan.md)，新增 DEV-038 至 DEV-096 见后续开发计划。
 
@@ -62,9 +62,9 @@ flowchart TD
 | 编号 | 能力 | 优先级 | 主要依赖 | 用户得到什么 |
 | --- | --- | --- | --- | --- |
 | F-01 | Sandbox 执行隔离 | 最先 | MVP 工具与权限 | 对进程的实际文件、网络和资源访问形成约束 |
-| F-02 | MCP Client | 最先 | MVP 工具接口；本地隔离依赖 F-01，远程凭据管理依赖 F-18 | 接入已有工具服务，不逐个编写专用集成 |
-| F-03 | Skills 与插件包 | 高 | MVP 指令加载；可执行扩展依赖 F-01、F-02 | 安装、启用和复用领域能力 |
-| F-04 | Hooks 与自动化规则 | 高 | F-01、F-12 | 在运行事件前后执行用户定义的检查和动作 |
+| F-02 | MCP Client | 最先（已扩展 Resources/Prompts/订阅/Elicitation） | MVP 工具接口；本地隔离依赖 F-01，远程凭据管理依赖 F-18 | 接入已有工具服务、Resources/Templates/Prompts/订阅与失败关闭 Elicitation，不逐个编写专用集成 |
+| F-03 | Skills 与插件包 | 高（已扩展归档/验签/HTTPS） | MVP 指令加载；可执行扩展依赖 F-01、F-02 | 安装、校验（SHA-256／Ed25519／HTTPS）、启停和复用领域能力 |
+| F-04 | Hooks 与自动化规则 | 高（已扩展 8 事件与 `[hooks]`） | F-01、F-12 | 在运行／模型／工具／澄清／压缩事件前后执行受控检查和动作 |
 | F-05 | 工作区隔离、Diff 与检查点 | 高 | MVP 文件与执行记录 | 查看、比较和恢复受控文件改动 |
 | F-06 | 上下文管理 | 高 | MVP 协议状态、F-12 | 长任务继续工作，控制上下文占用 |
 | F-07 | 全局／项目记忆与模型编辑 | 中 | F-06、F-12 | 通过可读MEMORY.md、专用工具和审阅恢复机制维护跨会话知识 |
@@ -75,13 +75,13 @@ flowchart TD
 | F-12 | 日志、追踪、回放与评估 | 近期及贯穿各批次 | MVP 事件与安全日志 | 五级诊断、关联追踪、失败定位与版本评估 |
 | F-13 | 稳定 SDK、服务与远程执行 | 后期 | F-01、F-02、F-08、F-12 | 将 Soyo 嵌入其他产品，管理远端任务 |
 | F-14 | 默认 TUI 与桌面端 GUI | TUI 已交付；GUI（`soyo-desktop`）已按 D-072 完成本机实现与检查（多平台发行包待 CI 验证） | 共享应用服务与事件；导出依赖 F-19 | TUI 提供全屏终端交互；`soyo-desktop` 提供独立安装的 Tauri 2 桌面端界面 |
-| F-15 | 平台与分发完善 | 后期 | F-01、F-14 | 扩展系统支持、安装、更新与发行体验 |
+| F-15 | 平台与分发完善 | 后期（已交付 `soyo doctor`；Windows 阻塞） | F-01、F-14 | 四平台非 Windows 目标安装与自检，明确支持矩阵与阻断诊断 |
 | F-16 | 模型路由与故障切换 | 中 | F-06、F-12、F-18 | 按能力、预算和可用性选择已配置模型 |
 | F-17 | 项目索引与 LSP 代码智能 | 高 | F-01、F-06 | 基于符号、引用和诊断理解代码，减少全文扫描 |
 | F-18 | 统一凭据与身份管理 | 高，配套第一批 | MVP 配置；执行侧注入依赖 F-01 | 管理服务凭据、授权范围、续期与撤销 |
 | F-19 | Session Export | 近期 | MVP SQLite、只读一致性快照与脱敏 | 导出 Markdown／JSON 对话与可选工具、运行数据 |
 | F-20 | Goal 目标编排 | 分阶段 | 手动阶段依赖应用／存储；自动阶段依赖 F-01、F-05、F-06、F-08、F-12 | 定义目标与证据，手动推进后扩展有限自动续跑 |
-| F-21 | 实验性程序化工具编排（只读 Code Mode 风格 REPL） | P2（默认关闭，位于 S2 之后） | F-01、F-02、F-04、F-06 | 在默认关闭的 opt-in 下，由只读 JS 脚本编排多步只读工具并仅回传过滤结果，每次底层调用仍走既有权限与 Hooks |
+| F-21 | 实验性程序化工具编排（只读 Code Mode 风格 REPL） | 已实现（默认关闭，D-083/D-084） | F-01、F-02、F-04、F-06 | 在默认关闭的 opt-in 下，由沙箱内只读 QuickJS/Node 脚本编排多步只读工具并仅回传过滤结果，每次底层调用仍走既有权限与 Hooks |
 
 ## F-01 Sandbox 执行隔离
 
@@ -107,9 +107,8 @@ N2 已实现以下范围，平台保证以实际验收证据为准。
 
 1. 已实现本地 stdio 的显式配置、受控启动与关闭、能力协商、工具发现和调用。
 2. 已实现远程 Streamable HTTP、OAuth 发现与登录、令牌续期／撤销、取消与有界错误处理。
-3. 已接入工具列表变化与目录代次失效，服务额外输入请求返回明确的需要输入状态。
-4. Resources、Prompts、订阅、长任务与额外输入交互继续按后续需求扩展，并分别验证服务器支持范围。
-5. **N6 规划中增量（已由 `D-079`/`D-081` 定案，未实现）**：S2（`DEV-090`）在已发现 MCP 工具总数超过阈值（默认 `> 8`，可配置覆盖）时自动启用延迟加载，小目录（`≤ 8`）维持全量注入，核心内置读写与 `exec` 常驻并保持缓存前缀顺序，新增 `tool_search`／`tool_describe` 按需展开；S5（`DEV-093`）新增 `ToolDefinition.examples: Vec<Value>`，为易混 MCP／插件／内置工具补充 1–3 条真实样例并纳入离线 `jsonschema` 与凭据脱敏校验（延迟工具在 `tool_describe` 返回，常驻工具安全投影到三协议）。详见[N6 规划](n6-plan.md)。
+3. **本批已扩展（D-089）**：已接入 MCP Resources（列出、分页与读取）、Resource Templates、Prompts（列出、参数校验与读取）、协议版本协商订阅（`2025-11-25` `resources/subscribe` 与 `2026-07-28` `subscriptions/listen`）及通知目录失效；新增仅在连接服务通告对应能力时动态注册的只读宿主工具 `mcp_list_resources`、`mcp_read_resource`、`mcp_subscribe_resource`、`mcp_list_prompts`、`mcp_get_prompt`，以及 `ClientHandler::create_elicitation`（无交互处理器时默认 `Decline` 失败关闭）；MCP Tasks（长异步任务）继续按后续需求扩展。
+4. **N6 已实现（`D-079`/`D-081`）**：S2（`DEV-090`）在已发现 MCP 工具总数超过阈值（默认 `> 8`）时自动启用延迟加载，提供 `tool_search`／`tool_describe` 按需展开并保持首部缓存前缀逐字节稳定；S5（`DEV-093`）新增 `ToolDefinition.examples` 及 `jsonschema`/脱敏校验。详见[N6 规划](n6-plan.md)与[N6 验收](n6-validation.md)。
 
 服务器管理、稳定工具命名、schema 校验、输出大小／内容类型、权限判断、执行记录、取消及非交互终止已接入共享运行时。本地 MCP 服务启动和生命周期使用执行后端与独立启动授权，HTTP 服务由宿主管理，具体配置与限制见[MCP 与凭据](mcp.md)。
 
@@ -121,7 +120,7 @@ Soyo 自身对外提供 MCP Server 放在 F-13 的集成方向中，不与首轮
 
 ## F-03 Skills 与插件包（soyo-plugin）
 
-插件系统命名为 `soyo-plugin`。D-033 的目录发现基础已扩展为 Skill 按需激活及资源读取，本地目录插件支持校验、安装、启停、更新、卸载和恢复，MCP／Hook 入口通过当前权限与原生后端执行。N3 固定候选已完成四平台联合验收；归档／远程获取、签名与分发生态继续规划。[soyo-plugin 规范](soyo-plugin.md)、[N3 验收](n3-validation.md#四平台最终验收)
+插件系统命名为 `soyo-plugin`。D-033 的目录发现基础已扩展为 Skill 按需激活及资源读取，本地目录插件支持校验、安装、启停、更新、卸载和恢复，MCP／Hook 入口通过当前权限与原生后端执行。N3 固定候选已完成四平台联合验收；**本批已扩展（D-090）**支持 `.tar`／`.tar.gz`／`.tgz` 归档内存受限校验（拒绝链接／穿越并复用 `FileBudget`）、`--sha256` 与 `--pubkey`＋`--signature`（Ed25519）校验，以及经公网 IP DNS 固定、禁系统代理与手动重定向约束的 `--url <HTTPS_URL>` 拉取；第三方公共注册中心／自动依赖下载留待生态阶段。[soyo-plugin 规范](soyo-plugin.md)、[N3 验收](n3-validation.md#四平台最终验收)
 
 **价值**：将领域指令、工作流、工具连接与资源打包复用。
 
@@ -138,7 +137,7 @@ Soyo 自身对外提供 MCP Server 放在 F-13 的集成方向中，不与首轮
 
 **价值**：在固定事件点执行格式化、验证、通知或组织级规则。
 
-N3 已接入 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.finished` 四个事件及 observer／check、持久意图和有界执行，固定候选已完成四平台验收。下列自动化范围中的其他事件与规则配置继续按后续需求扩展。[当前 Hook 契约](soyo-plugin.md#可执行入口和-hooks)
+N3 已接入 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.finished` 四个事件及 observer／check、持久意图和有界执行，固定候选已完成四平台验收。**本批已扩展（D-088）**：新增 `model.before_request`、`model.finished`、`input.required`、`compaction.finished` 四项事件（其中 `tool.before_dispatch` 与 `model.before_request` 支持 `check`），并新增默认关闭的宿主配置 `[hooks]`（`[[hooks.rules]]`，含 `tools`／`modes` 过滤），统一经 `PreparedEnvironment` 与 `HookJournal` 执行。[当前 Hook 契约](soyo-plugin.md#可执行入口和-hooks)
 
 - 定义运行开始／结束、模型返回、工具执行前后、需要人工输入等事件。
 - 区分观察型 Hook 与可阻止操作的检查型 Hook，明确失败、超时和输出格式。
@@ -276,6 +275,8 @@ GUI 方向已于 D-072 确认为 Tauri 2 + in-process 桌面端 `soyo-desktop`�
 
 ## F-15 平台与分发完善
 
+**已实现局部（D-091）＋显式阻塞边界**：已交付离线诊断命令 `soyo doctor [--strict]`（检测原生沙箱可用性、`config.toml`/profile、`.soyo`/`.saya` 私有目录权限与 `git`／`js_repl`／LSP 等可选工具，输出结构化平台支持矩阵并全程脱敏）；桌面端与 CLI CI 覆盖 `macos-15`/`macos-15-intel`/`ubuntu-22.04`/`ubuntu-22.04-arm`。**未实现阻塞**：`windows` 目标因原生 AppContainer／Job 沙箱及私有存储 DACL 未实现仍显式标为 `unsupported`（不以“能编译”冒充支持）；定制遮蔽 `headless_shell` 产物仅验证 `linux-arm64`，其余架构构建分发仍待外部产物。
+
 **价值**：让开发者在更多环境中可靠安装、更新和运行。
 
 - 先维护已确认 macOS／Linux 目标，完善安装、签名／校验、依赖诊断与升级迁移。
@@ -339,18 +340,17 @@ Goal 生命周期与四工作模式分别表达。每次工具执行经过当前
 
 **N6 规划中增量（已由 `D-080` 定案，未实现）**：S3（`DEV-091` 至 `DEV-092`）在不重做现有 N4 Goal 的前提下，为 `GoalStep` 增加可选宿主验证器（仅结构化 argv，禁隐式 shell 拼接）；支持 `goal plan` 提议或 `--plan-file`／CLI 指定，并强制经 `goal confirm` 人工展示锁定，执行走原生沙箱与现行 `deny`／权限规则（`PLAN` 禁执行），`goal start --auto` 仅在宿主退出码为 0 并落库证据后前进、失败则在预算与 `max_replans` 内重规划，模型自述不得单独关闭 Goal。详见[N6 规划](n6-plan.md)。
 
-## F-21 实验性程序化工具编排（规划中）
+## F-21 实验性程序化工具编排（已实现 · opt-in）
 
-**状态：安全边界与评估停靠门禁已由 `D-082` 确认（待评估与实现，未实现） · P2 实现主线（位于 S2 按需发现之后） · 任务为 `DEV-094` 至 `DEV-096`（[N6 规划](n6-plan.md)）。**
+**已实现状态（D-082／D-083／D-084，对应 `DEV-094`–`DEV-096`）**：已在本机 Seatbelt 与 Linux Bubblewrap（aarch64）完成实现、门禁测试与文档交付（详见[N6 验收](n6-validation.md)）。
 
 **价值**：在多文件搜索、过滤和批量读取场景中，允许模型在隔离执行面内编写 JavaScript 串行或并行调用已允许的只读工具，中间结果停留在执行面内部、仅把过滤后的返回值送回模型上下文，减少上下文膨胀与往返轮次（与单次输出摘录的 `OutputStore` 属于不同层能力）。
 
-- **默认关闭的实验性 opt-in**：仅在显式启用时开放，接口保持可调整与可撤回，当前不做默认开启。
-- **最小版本仅限只读工具**：不将 `exec`/Shell 与文件写入放入脚本执行面，也不把多智能体协作（F-09）插在前面。
-- **逐底层调用门禁**：脚本每次向下调用底层只读工具时，必须仍由宿主 `ToolDispatcher` 逐次执行 `deny` 规则、路径根检查、`Hooks`（不因已安装 Hook 拒绝启动且保留显式关闭开关）、审批策略、预算、取消与脱敏，不因整段脚本通过 `auto` 检查而绕过运行时动态参数校验。
-- **拍板门禁与非目标**：`DEV-094` 先完成纯 Rust 嵌入式 JS 引擎 vs 原生沙箱子进程（及受控 Node 对照）对比评估，**停下来由项目负责人拍板并补录决策后再进入 `DEV-095` 编码**；不以「37% token 节省」等外部基准数字作为本仓库收益承诺或验收标准。
+- **默认关闭的实验性 opt-in**：`[js_repl]` 默认 `enabled = false`；默认引擎 `quickjs` 经同二进制沙箱 worker `__soyo-js-worker` + `rquickjs` 运行，并保留显式固定绝对路径的 `engine = "node"` 可选对照（D-084）。
+- **最小版本仅限只读工具**：只读白名单仅覆盖允许的只读工具，不将 `exec`、文件写入、`subagent_*` 或 `js_repl` 自身放入脚本执行面，也不将中间产物直接污染会话历史（只记录外层调用与 `ReplStore` 证据）。
+- **逐底层调用门禁**：脚本每次经 `await soyo.callTool` 向下调用底层只读工具时，仍由宿主 `ToolDispatcher` 逐次执行 `deny` 规则、路径根检查、`Hooks`（`tool.before_dispatch`/`tool.finished`）、审批、预算、取消与 `SecretRegistry` 脱敏，不因整段脚本放行而绕过运行时动态参数校验。
 
-验收：同一多文件只读任务对比开关状态下的轮次与结果正确性；在脚本内故意触发 `deny` 时，底层调用必须仍被拒绝。
+验收：已通过 `js_repl` 单元 14 项及 `soyo-cli --test js_repl` 12 项跨引擎集成验证（多文件只读对照、动态 `deny` 注入、check Hook 拦截、超时清理与零历史污染）。
 
 ## 第一批实际应准备的交付
 

@@ -507,3 +507,36 @@ program = "/bin/sh"
 ```
 
 当前插件HTTP凭据支持明确的环境变量、header及bearer绑定。插件的存储式 `credential_ref` 尚缺少限定origin的适配器，使用时返回 `plugin_credential_scope_unsupported`。普通MCP既有凭据流程继续沿其自身契约执行。配置Run聚合memory／process／CPU约束并启用进程型插件时，当前返回 `unsupported_resource_policy`，避免将同一Run额度重复分配给各entry。原生后端自身无法满足约束时可先返回 `sandbox_capability_unavailable`。
+
+## 宿主自动化 Hooks（F-04）
+
+宿主可直接配置生命周期 Hook 规则，**默认 `enabled = false`** 以保证未开启时行为、提示词与 Goal 配置指纹完全零漂移：
+
+```toml
+[hooks]
+enabled = false
+
+[[hooks.rules]]
+id = "check-exec"
+event = "tool.before_dispatch"
+kind = "check"
+argv = ["/bin/sh", "-c", "cat >/dev/null"]
+tools = ["exec"]
+modes = ["work", "code", "build"]
+timeout_ms = 2000
+# env = { HOOK_TOKEN = "SOYO_HOOK_TOKEN" }
+```
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| `enabled` | 默认 `false`；设为 `true` 时在每个符合过滤条件的事件点触发已启用规则 |
+| `rules[].id` | 唯一规则 ID，1–64 个 ASCII 字母、数字或 `._-`，同一配置至多 32 条规则 |
+| `rules[].event` | 支持 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.finished`、`model.before_request`、`model.finished`、`input.required`、`compaction.finished` |
+| `rules[].kind` | `observer`（默认）或 `check`；`check` 仅允许用于 `tool.before_dispatch` 与 `model.before_request` |
+| `rules[].argv` | 结构化可执行参数列表（1–64 项、总长 ≤64 KiB，拒绝控制字符与内联凭据标志） |
+| `rules[].tools` | 仅适用于 `tool.*` 事件的工具名精确过滤列表（至多 32 项） |
+| `rules[].modes` | 仅在指定工作模式触发（`plan`/`build`/`code`/`work`，至多 4 项） |
+| `rules[].timeout_ms` | 单次执行超时，1–5000 毫秒，默认 5000 |
+| `rules[].env` | 至多 16 项环境映射，加载配置时验证引用环境变量存在且经 `SecretRegistry` 全程脱敏 |
+
+每条宿主规则与插件 Hook 共用 `PreparedEnvironment` 原生沙箱、`HookJournal` 持久意图与每事件／每 Run 预算及递归上限；`check` 返回拒绝时阻止后续模型请求或工具派发，`observer`/`check` 的 `pass` 均不绕过 `Policy` 权限或 `PLAN` 只读限制。详情见[soyo-plugin 与 Hooks 契约](soyo-plugin.md#可执行入口和-hooks)。

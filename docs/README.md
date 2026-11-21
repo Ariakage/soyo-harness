@@ -102,6 +102,7 @@ Soyo Harness 的说明文档默认使用中文，发行说明提供中英双语�
 | [N5 中英双语说明](releases/release-notes-n5.md) | Browser 开发线功能、权限、VM 与兼容性说明 |
 | [F-09 中英双语说明](releases/release-notes-f09.md) | 受控子 Agent 功能、安全／隔离边界与兼容说明 |
 | [F-16/F-17 中英双语说明](releases/release-notes-f16-f17.md) | 模型路由／故障切换与项目索引／沙箱 LSP 功能、安全边界与兼容说明 |
+| [Batch 1 中英双语说明](releases/release-notes-batch1.md) | F-04 Hooks、F-02 MCP 扩展、F-03 插件归档与验签、F-15 `soyo doctor` 及已知平台阻塞说明 |
 
 ### 专题实验与模型验证报告（`reports/`）
 
