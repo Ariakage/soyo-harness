@@ -36,6 +36,11 @@ pub use routing::{
 };
 mod code_intel;
 pub use code_intel::{CodeIntelSettings, LspServerSettings, LspSettings};
+mod remote;
+pub use remote::{
+    DEFAULT_TOKEN_TTL_DAYS, MAX_TOKEN_TTL_DAYS, RemoteClientSettings, RemoteSettings,
+    RemoteTlsSettings, remote_client_override,
+};
 
 fn invalid(message: &'static str) -> BoundaryError {
     BoundaryError(
@@ -716,6 +721,8 @@ struct Document {
     helper: HelperSettings,
     #[serde(default)]
     goal: GoalSettings,
+    #[serde(default)]
+    remote: RemoteSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -766,6 +773,9 @@ pub struct Config {
     pub helper: HelperSettings,
     /// Goal orchestration toggles (`F-20`, `D-111`); `auto_chain` defaults to `false`.
     pub goal: GoalSettings,
+    /// Opt-in authenticated HTTP(S) helper access (`F-13` D-113 path (b));
+    /// disabled by default, plus the client-side dial settings.
+    pub remote: RemoteSettings,
     env: Environment,
 }
 impl Config {
@@ -1132,6 +1142,7 @@ pub fn load(
     doc.code_intel.validate(&env)?;
     doc.file_text.validate()?;
     doc.credentials.validate()?;
+    doc.remote.validate()?;
     if doc
         .memory
         .default_fact_ttl_seconds
@@ -1250,6 +1261,7 @@ pub fn load(
         credentials: doc.credentials,
         helper: doc.helper,
         goal: doc.goal,
+        remote: doc.remote,
         env,
     })
 }

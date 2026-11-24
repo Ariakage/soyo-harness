@@ -833,3 +833,120 @@ async fn file_backend_zero_drift_revoked_record_has_no_material() {
     assert_eq!(record["metadata"]["revoked"], true);
     assert!(record.get("material").is_none() || record["material"].is_null());
 }
+
+// ---- F-13 D-113 path (b): remote bearer tokens -----------------------------
+
+#[tokio::test]
+async fn remote_token_issue_verify_and_revoke_is_fail_closed() {
+    let (directory, store, _) = backend_store();
+    let endpoint = "https://helper.example.invalid:8443";
+    let issued = store.issue_remote_token(endpoint, 30).await.unwrap();
+    let token = issued.token.expose().to_owned();
+    assert!(token.starts_with("soyo_rt_"));
+    assert_eq!(store.verify_remote_token(&token).unwrap(), issued.reference);
+
+    // Only the digest is persisted: no record byte may contain the token.
+    for entry in std::fs::read_dir(store.protected_path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+            let raw = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !raw.contains(&token),
+                "plaintext token leaked into {path:?}"
+            );
+        }
+    }
+    let grants = GrantStore::open(store.protected_path()).unwrap();
+    let stored = grants.list().unwrap();
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0].run_kinds.contains(&GrantRunKind::Remote));
+    assert!(stored[0].expires_at.is_some());
+
+    // Audit journal records issuance and later denials without the token.
+    let audit = std::fs::read_to_string(store.protected_path().join("audit.log")).unwrap();
+    assert!(audit.contains("remote_token_issue"));
+    assert!(!audit.contains(&token));
+
+    // Unknown values fail closed.
+    assert_eq!(
+        store
+            .verify_remote_token("soyo_rt_not-a-token")
+            .unwrap_err()
+            .0
+            .code,
+        "helper_unauthorized"
+    );
+    assert_eq!(
+        store.verify_remote_token("").unwrap_err().0.code,
+        "helper_unauthorized"
+    );
+
+    // Revocation removes the digest and the grant; the old token stops
+    // verifying instead of resurrecting.
+    assert_eq!(
+        store.revoke(issued.reference, &issued.scope).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        store.verify_remote_token(&token).unwrap_err().0.code,
+        "helper_unauthorized"
+    );
+    assert!(grants.list().unwrap().is_empty());
+    drop(directory);
+}
+
+#[tokio::test]
+async fn remote_token_expired_or_wrong_kind_grant_denies_but_still_fails_closed() {
+    let (_directory, store, _) = backend_store();
+    let issued = store
+        .issue_remote_token("http://127.0.0.1:7101", 1)
+        .await
+        .unwrap();
+    let token = issued.token.expose().to_owned();
+    let grants = GrantStore::open(store.protected_path()).unwrap();
+
+    // Replace the issued grant with an expired one: the digest still matches,
+    // so the error names the grant instead of a generic unauthorized.
+    grants.remove(issued.grant_id).unwrap();
+    let mut expired = soyo_core::credentials::CredentialGrant {
+        grant_id: uuid::Uuid::now_v7(),
+        reference: issued.reference,
+        workspaces: Default::default(),
+        run_kinds: [GrantRunKind::Remote].into_iter().collect(),
+        tools: Default::default(),
+        expires_at: Some("2000-01-01T00:00:00Z".into()),
+        server_id: "remote".into(),
+    };
+    grants.put(&expired).unwrap();
+    assert_eq!(
+        store.verify_remote_token(&token).unwrap_err().0.code,
+        "credential_grant_denied"
+    );
+
+    // A grant for another run kind never authorizes remote access.
+    grants.remove(expired.grant_id).unwrap();
+    expired.grant_id = uuid::Uuid::now_v7();
+    expired.expires_at = None;
+    expired.run_kinds = [GrantRunKind::Tool].into_iter().collect();
+    grants.put(&expired).unwrap();
+    assert_eq!(
+        store.verify_remote_token(&token).unwrap_err().0.code,
+        "credential_grant_denied"
+    );
+}
+
+#[tokio::test]
+async fn remote_token_lifetime_is_bounded() {
+    let (_directory, store, _) = backend_store();
+    for days in [0, soyo_core::config::MAX_TOKEN_TTL_DAYS + 1] {
+        assert_eq!(
+            store
+                .issue_remote_token("https://helper.example.invalid", days)
+                .await
+                .unwrap_err()
+                .0
+                .code,
+            "invalid_credential"
+        );
+    }
+}

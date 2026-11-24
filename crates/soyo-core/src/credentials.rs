@@ -7,6 +7,7 @@ mod file;
 mod grants;
 mod login;
 mod oauth;
+mod remote;
 pub mod settings;
 #[cfg(all(target_os = "macos", feature = "security-framework"))]
 mod system;
@@ -17,6 +18,7 @@ pub(crate) use login::authorization_resource;
 pub(crate) use login::validate_oauth_metadata;
 pub use login::{McpOAuthLogin, OAuthLoginOptions};
 pub use oauth::McpCredentialStore;
+pub use remote::{IssuedRemoteToken, REMOTE_SCOPE, REMOTE_SERVER_ID};
 
 use crate::contract::{BoundaryError, ErrorInfo};
 use rmcp::transport::auth::StoredCredentials;

@@ -49,8 +49,32 @@ pub enum CredentialsAction {
     },
     /// List configured + persisted grants.
     GrantList,
+    /// Issue an opaque bearer token for the helper's HTTP(S) transport.
+    Token(TokenArgs),
     /// Interactive OAuth login for an HTTP MCP server (PKCE S256, loopback).
     Login(LoginArgs),
+}
+
+#[derive(Args)]
+pub struct TokenArgs {
+    #[command(subcommand)]
+    action: TokenAction,
+}
+
+#[derive(Subcommand)]
+pub enum TokenAction {
+    /// Issue a remote token (stored as a hash + `run_kinds = ["remote"]` grant).
+    Issue(TokenIssueArgs),
+}
+
+#[derive(Args)]
+pub struct TokenIssueArgs {
+    /// Remote helper endpoint the token is scoped to (defaults to `[remote] bind`).
+    #[arg(long)]
+    endpoint: Option<String>,
+    /// Token lifetime in days (1..=365); defaults to `[remote] token_ttl_days`.
+    #[arg(long)]
+    ttl_days: Option<u32>,
 }
 
 #[derive(Args)]
@@ -75,7 +99,8 @@ pub struct GrantArgs {
     /// Restrict to these workspace identity ids (`ws_<digest>`); empty = any.
     #[arg(long)]
     workspace: Vec<String>,
-    /// Run kinds this grant covers; required, repeatable. One of tool|subagent|profile.
+    /// Run kinds this grant covers; required, repeatable. One of
+    /// tool|subagent|profile|remote.
     #[arg(long, required = true)]
     run_kind: Vec<GrantRunKindArg>,
     /// Restrict to these tool names; empty = any tool.
@@ -94,6 +119,7 @@ pub enum GrantRunKindArg {
     Tool,
     Subagent,
     Profile,
+    Remote,
 }
 impl From<GrantRunKindArg> for GrantRunKind {
     fn from(value: GrantRunKindArg) -> Self {
@@ -101,6 +127,7 @@ impl From<GrantRunKindArg> for GrantRunKind {
             GrantRunKindArg::Tool => Self::Tool,
             GrantRunKindArg::Subagent => Self::Subagent,
             GrantRunKindArg::Profile => Self::Profile,
+            GrantRunKindArg::Remote => Self::Remote,
         }
     }
 }
@@ -304,54 +331,6 @@ fn scope(
     )?;
     Ok(scope)
 }
-/// Audit one credential lifecycle event into the store's redacted journal:
-/// `<credentials>/audit.log`, 0600 append-only, one JSON line per event. The
-/// payload carries reference ids and action names only — never values.
-fn audit(
-    store: &soyo_core::credentials::CredentialStore,
-    event: &str,
-    reference: Option<CredentialRef>,
-    extra: serde_json::Value,
-) -> Result<(), BoundaryError> {
-    use std::io::Write as _;
-    let path = store.protected_path().join("audit.log");
-    let mut line = serde_json::json!({
-        "type": "credential.event",
-        "event": event,
-        "at": soyo_core::credentials::now_rfc3339(),
-        "reference": reference,
-    });
-    if let Some(object) = line.as_object_mut() {
-        object.extend(extra.as_object().cloned().unwrap_or_default());
-    }
-    let encoded = serde_json::to_string(&line)
-        .map_err(|_| failure("credential_io", "credential event could not be encoded"))?;
-    // Redaction gate: the journal must never carry a known secret.
-    let secrets = store.secret_registry().snapshot()?;
-    if soyo_core::redaction::contains_secret(&encoded, &secrets) {
-        return Err(failure(
-            "sensitive_data",
-            "credential event payload contained a credential",
-        ));
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|_| failure("credential_io", "credential audit log could not be opened"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
-    }
-    writeln!(file, "{encoded}").map_err(|_| {
-        failure(
-            "credential_io",
-            "credential audit event could not be written",
-        )
-    })
-}
-
 pub(crate) async fn perform(
     config: &Config,
     action: &CredentialsAction,
@@ -388,11 +367,10 @@ pub(crate) async fn perform(
                     )
                 })?;
             let removed = store.revoke(reference, &metadata.scope).await?;
-            audit(
-                &store,
+            store.audit(
                 "revoke",
                 Some(reference),
-                serde_json::json!({"grants_removed": removed}),
+                &[("grants_removed", serde_json::json!(removed))],
             )?;
             Ok(serde_json::json!({
                 "reference": reference,
@@ -424,11 +402,10 @@ pub(crate) async fn perform(
             let revision = store
                 .rotate_secret(reference, &metadata.scope, value)
                 .await?;
-            audit(
-                &store,
+            store.audit(
                 "rotate",
                 Some(reference),
-                serde_json::json!({"revision": revision}),
+                &[("revision", serde_json::json!(revision))],
             )?;
             Ok(serde_json::json!({
                 "reference": reference,
@@ -466,11 +443,13 @@ pub(crate) async fn perform(
                 .map_err(|_| failure("invalid_config", "credential grant is invalid"))?;
             let store_grants = open_grants(&store)?;
             store_grants.put(&grant)?;
-            audit(
-                &store,
+            store.audit(
                 "grant",
                 Some(reference),
-                serde_json::json!({"grant_id": grant.grant_id, "server_id": grant.server_id}),
+                &[
+                    ("grant_id", serde_json::json!(grant.grant_id)),
+                    ("server_id", serde_json::json!(grant.server_id)),
+                ],
             )?;
             Ok(serde_json::json!({"grant_id": grant.grant_id, "reference": reference}))
         }
@@ -481,11 +460,10 @@ pub(crate) async fn perform(
             let (store, _registry) = open_store(config)?;
             let removed = open_grants(&store)?.remove(grant_id)?;
             if removed {
-                audit(
-                    &store,
+                store.audit(
                     "grant_revoke",
                     None,
-                    serde_json::json!({"grant_id": grant_id}),
+                    &[("grant_id", serde_json::json!(grant_id))],
                 )?;
             }
             Ok(serde_json::json!({"grant_id": grant_id, "removed": removed}))
@@ -496,6 +474,42 @@ pub(crate) async fn perform(
             Ok(serde_json::to_value(grants)
                 .map_err(|_| failure("output_error", "grants could not be encoded"))?)
         }
+        CredentialsAction::Token(args) => match &args.action {
+            TokenAction::Issue(args) => {
+                let endpoint = match &args.endpoint {
+                    Some(endpoint) => endpoint.clone(),
+                    None => {
+                        let bind = config
+                            .remote
+                            .bind
+                            .as_deref()
+                            .filter(|value| !value.trim().is_empty())
+                            .ok_or_else(|| {
+                                failure(
+                                    "invalid_config",
+                                    "Provide --endpoint or set [remote] bind in the configuration",
+                                )
+                            })?;
+                        let scheme = if config.remote.tls.is_some() {
+                            "https"
+                        } else {
+                            "http"
+                        };
+                        format!("{scheme}://{bind}")
+                    }
+                };
+                let ttl_days = args.ttl_days.unwrap_or(config.remote.token_ttl_days);
+                let (store, _registry) = open_store(config)?;
+                let issued = store.issue_remote_token(&endpoint, ttl_days).await?;
+                Ok(serde_json::json!({
+                    "reference": issued.reference,
+                    "grant_id": issued.grant_id,
+                    "token": issued.token.expose(),
+                    "expires_at": issued.expires_at,
+                    "endpoint": endpoint,
+                }))
+            }
+        },
         CredentialsAction::Import(args) => {
             let value = SecretValue::new(config.secret(&args.from_env)?.to_owned())?;
             let mut secrets = known_credentials(config)?;
@@ -506,11 +520,10 @@ pub(crate) async fn perform(
             // scope and approval all pass — a rejected import leaves no dirs.
             let (store, _registry) = open_store(config)?;
             let reference = store.create(scope, CredentialValue::Secret(value)).await?;
-            audit(
-                &store,
+            store.audit(
                 "import",
                 Some(reference),
-                serde_json::json!({"server": args.server}),
+                &[("server", serde_json::json!(args.server))],
             )?;
             Ok(serde_json::json!({"reference": reference, "server": args.server}))
         }
@@ -545,11 +558,10 @@ pub(crate) async fn perform(
                 open_browser(flow.authorization_url(), cancel.as_ref()).await?;
             }
             let reference = flow.wait_for_callback(cancel.as_ref()).await?;
-            audit(
-                &store,
+            store.audit(
                 "login",
                 Some(reference),
-                serde_json::json!({"server": args.server}),
+                &[("server", serde_json::json!(args.server))],
             )?;
             Ok(serde_json::json!({"reference": reference, "server": args.server}))
         }

@@ -22,13 +22,15 @@ const MAX_WORKSPACES: usize = 64;
 
 /// The run/task kind a grant applies to. `Tool` covers direct tool dispatch and
 /// MCP server connections; `Subagent` covers spawned child agents; `Profile`
-/// covers model profile API-key indirection.
+/// covers model profile API-key indirection; `Remote` covers bearer tokens
+/// presented to the helper's HTTP(S) transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantRunKind {
     Tool,
     Subagent,
     Profile,
+    Remote,
 }
 
 /// A durable authorization grant bound to one credential reference. All filters
@@ -58,7 +60,7 @@ pub struct CredentialGrant {
 impl CredentialGrant {
     pub fn validate(&self) -> Result<(), BoundaryError> {
         if self.run_kinds.is_empty()
-            || self.run_kinds.len() > 3
+            || self.run_kinds.len() > 4
             || self.workspaces.len() > MAX_WORKSPACES
             || self.tools.len() > MAX_TOOLS
             || self.workspaces.iter().any(|id| {
@@ -397,6 +399,15 @@ pub fn now_rfc3339() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format_unix_utc(secs)
+}
+
+/// UTC `days` from now in the same lexical form as [`now_rfc3339`].
+pub fn rfc3339_in_days(days: u32) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format_unix_utc(now.saturating_add(u64::from(days).saturating_mul(86_400)))
 }
 
 fn format_unix_utc(secs: u64) -> String {

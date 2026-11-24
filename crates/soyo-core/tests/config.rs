@@ -1417,3 +1417,162 @@ fn memory_root_prefers_soyo_and_falls_back_to_saya() {
     fs::write(temp.path().join(".soyo/MEMORY.md"), "# memory").unwrap();
     assert_eq!(load().memory_root().unwrap(), temp.path().join(".soyo"));
 }
+
+#[test]
+fn remote_section_is_absent_by_default_and_zero_drift() {
+    let temp = TempDir::new().unwrap();
+    let path = write(temp.path(), "config.toml", fixture());
+    let loaded = config::load(
+        Overrides {
+            config: Some(path.clone()),
+            ..Default::default()
+        },
+        test_env(temp.path()),
+        temp.path(),
+    )
+    .unwrap();
+    assert!(!loaded.remote.enabled);
+    assert_eq!(loaded.remote.token_ttl_days, config::DEFAULT_TOKEN_TTL_DAYS);
+    assert!(loaded.remote.bind_addr().unwrap().is_none());
+    assert_eq!(
+        config::remote_client_override(&path),
+        None,
+        "no [remote.client] and no drift"
+    );
+}
+
+#[test]
+fn remote_requires_tls_off_loopback_and_bounded_ttl() {
+    let temp = TempDir::new().unwrap();
+    let load = |extra: &str| {
+        let path = write(
+            temp.path(),
+            "config.toml",
+            &format!("{}\n{extra}\n", fixture()),
+        );
+        config::load(
+            Overrides {
+                config: Some(path),
+                ..Default::default()
+            },
+            test_env(temp.path()),
+            temp.path(),
+        )
+    };
+    // Loopback without TLS: plain HTTP is allowed for local testing.
+    let loaded = load(
+        r#"[remote]
+enabled = true
+bind = "127.0.0.1:7443"
+"#,
+    )
+    .unwrap();
+    assert!(loaded.remote.enabled);
+    assert!(
+        loaded
+            .remote
+            .bind_addr()
+            .unwrap()
+            .unwrap()
+            .ip()
+            .is_loopback()
+    );
+
+    // Non-loopback without TLS is refused at load time.
+    assert!(
+        load(
+            r#"[remote]
+enabled = true
+bind = "0.0.0.0:7443"
+"#,
+        )
+        .is_err()
+    );
+    // Non-loopback with TLS passes shape validation.
+    load(
+        r#"[remote]
+enabled = true
+bind = "0.0.0.0:7443"
+[remote.tls]
+cert_path = "/tmp/soyo-cert.pem"
+key_path = "/tmp/soyo-key.pem"
+"#,
+    )
+    .unwrap();
+    // Bounded token lifetime.
+    assert!(
+        load(
+            r#"[remote]
+enabled = true
+bind = "127.0.0.1:7443"
+token_ttl_days = 0
+"#,
+        )
+        .is_err()
+    );
+    assert!(
+        load(
+            r#"[remote]
+enabled = true
+bind = "127.0.0.1:7443"
+token_ttl_days = 366
+"#,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn remote_client_section_resolves_leniently_for_dialing() {
+    let temp = TempDir::new().unwrap();
+    let path = write(
+        temp.path(),
+        "config.toml",
+        &format!(
+            "{}\n{}",
+            fixture(),
+            r#"[remote.client]
+endpoint = "https://helper.example.invalid:8443"
+token_env = "MY_REMOTE_TOKEN"
+ca_path = "/tmp/ca.pem"
+"#
+        ),
+    );
+    let loaded = config::load(
+        Overrides {
+            config: Some(path.clone()),
+            ..Default::default()
+        },
+        test_env(temp.path()),
+        temp.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        loaded.remote.client.endpoint.as_deref(),
+        Some("https://helper.example.invalid:8443")
+    );
+    let lenient = config::remote_client_override(&path).unwrap();
+    assert_eq!(lenient.endpoint, loaded.remote.client.endpoint);
+    assert_eq!(lenient.token_env.as_deref(), Some("MY_REMOTE_TOKEN"));
+    // A malformed client endpoint is a configuration error.
+    let bad = write(
+        temp.path(),
+        "bad.toml",
+        &format!(
+            "{}\n{}",
+            fixture(),
+            "[remote.client]\nendpoint = \"ftp://example.invalid\"\n"
+        ),
+    );
+    assert!(
+        config::load(
+            Overrides {
+                config: Some(bad),
+                ..Default::default()
+            },
+            test_env(temp.path()),
+            temp.path(),
+        )
+        .is_err()
+    );
+}
