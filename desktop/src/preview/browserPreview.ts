@@ -747,6 +747,57 @@ export function installBrowserPreviewMock(): boolean {
   ];
   const pendingPreviewActions = new Map<string, string>();
 
+  const previewCheckpoints = [
+    {
+      token: { id: "019a0000-0000-7000-8000-0000000000a1", sha256: "a".repeat(64) },
+      parent: null,
+      workspace: { path: "/workspace/soyo-harness" },
+      workspace_kind: "git_worktree",
+      source: {
+        session_id: "01930000-0000-7000-8000-000000000001",
+        run_id: "run-preview",
+        revision: 1,
+        label: "cli",
+      },
+      files: 3,
+      bytes: 18432,
+    },
+    {
+      token: { id: "019a0000-0000-7000-8000-0000000000b2", sha256: "b".repeat(64) },
+      parent: { id: "019a0000-0000-7000-8000-0000000000a1", sha256: "a".repeat(64) },
+      workspace: { path: "/workspace/soyo-harness" },
+      workspace_kind: "git_worktree",
+      source: {
+        session_id: "01930000-0000-7000-8000-000000000001",
+        run_id: "run-preview",
+        revision: 2,
+        label: "auto:write_file",
+      },
+      files: 1,
+      bytes: 4096,
+    },
+  ];
+  const previewCheckpointDiff = {
+    checkpoint: previewCheckpoints[1].token,
+    source: previewCheckpoints[1].source,
+    preview_truncated: false,
+    files: [
+      {
+        path: "desktop/src/components/CheckpointsDialog.tsx",
+        change: "modified",
+        baseline: { kind: "file", sha256: "c".repeat(64), bytes: 3900, mode: 420 },
+        current: {
+          state: { kind: "file", sha256: "d".repeat(64), bytes: 4096, mode: 420 },
+          observation: "sha256:d…",
+        },
+        unified_diff:
+          "--- a/desktop/src/components/CheckpointsDialog.tsx\n+++ b/desktop/src/components/CheckpointsDialog.tsx\n@@ -1,4 +1,6 @@\n import { Check } from \"lucide-react\";\n+import { History } from \"lucide-react\";\n export function CheckpointsDialog() {\n+  // two-phase review panel\n   return null;\n }",
+        preview_truncated: false,
+      },
+    ],
+  };
+  const pendingCheckpointActions = new Map<string, string>();
+
   const currentBootstrapState = (): BootstrapStateDto_Serialize => {
     const base = buildBootstrap(currentScene);
     const chosenProfile =
@@ -1065,6 +1116,101 @@ export function installBrowserPreviewMock(): boolean {
         pendingPreviewActions.delete(actionId);
         return {
           result: { applied: true, action_id: actionId, command },
+        };
+      }
+      case "checkpoint_list": {
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            workspace: { path: "/workspace/soyo-harness" },
+            page: 1,
+            total: previewCheckpoints.length,
+            next_page: null,
+            checkpoints: previewCheckpoints,
+          },
+        };
+      }
+      case "checkpoint_diff": {
+        return { data: previewCheckpointDiff };
+      }
+      case "checkpoint_recover": {
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            recovered: 1,
+            outcomes: [
+              {
+                operation_id: "op_preview_recover_1",
+                checkpoint: previewCheckpoints[0].token,
+                status: "unknown",
+                files: [{ path: "src/lib/i18n.ts", status: "unknown" }],
+                error: null,
+              },
+            ],
+          },
+        };
+      }
+      case "prepare_checkpoint_action": {
+        const p = args as {
+          action: string;
+          paths: string[];
+          label?: string | null;
+        };
+        const actionId = `ck_${Date.now()}`;
+        pendingCheckpointActions.set(actionId, p.action);
+        const kind =
+          p.action === "restore"
+            ? "restore"
+            : p.action === "accept"
+              ? "accept"
+              : "capture";
+        const review =
+          kind === "restore"
+            ? {
+                operation_id: "op_preview_ck_1",
+                journal_id: "journal_preview_1",
+                kind: "restore",
+                checkpoint: previewCheckpoints[0].token,
+                changes: p.paths.map((path) => ({ path })),
+                source: previewCheckpoints[0].source,
+              }
+            : {
+                operation_id: "op_preview_ck_1",
+                kind,
+                checkpoint:
+                  kind === "accept" ? previewCheckpoints[1].token : undefined,
+                paths: p.paths,
+                observations: p.paths.map((path) => ({
+                  path,
+                  current: { state: { kind: "file" }, observation: "obs" },
+                })),
+                source: previewCheckpoints[1].source,
+              };
+        return {
+          action_id: actionId,
+          operation_id: "op_preview_ck_1",
+          review,
+        };
+      }
+      case "confirm_checkpoint_action": {
+        const p = args as { actionId: string; approvedPaths?: string[] | null };
+        const action = pendingCheckpointActions.get(p.actionId) ?? "create";
+        pendingCheckpointActions.delete(p.actionId);
+        const isRestore = action === "restore";
+        return {
+          result: {
+            operation_id: "op_preview_ck_1",
+            status: isRestore ? "completed" : "captured",
+            checkpoint: previewCheckpoints[0].token,
+            files: (p.approvedPaths ?? []).map((path) => ({
+              path,
+              status: "applied",
+              publication_observed: true,
+              observed: null,
+              error: null,
+            })),
+            error: null,
+          },
         };
       }
       case "export_session": {

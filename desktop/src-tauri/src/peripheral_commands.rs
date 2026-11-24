@@ -4,12 +4,13 @@
 use crate::{
     client_state::DesktopState,
     types::{
-        BackgroundJobDto, BootstrapStateDto, CredentialRecordDto, DesktopError, DesktopPrefsDto,
-        ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
+        BackgroundJobDto, BootstrapStateDto, CheckpointConfirmResultDto, CheckpointDiffDto,
+        CheckpointListDto, CheckpointRecoverDto, CredentialRecordDto, DesktopError,
+        DesktopPrefsDto, ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
         ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto,
         McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModuleStatusDto,
-        PreparedMemoryReviewDto, SandboxBackendDto, StagedAttachmentDto, TaskDto, TaskJobDto,
-        UpdateDesktopPrefsParams,
+        PreparedCheckpointReviewDto, PreparedMemoryReviewDto, SandboxBackendDto,
+        StagedAttachmentDto, TaskDto, TaskJobDto, UpdateDesktopPrefsParams,
     },
 };
 use tauri::State;
@@ -189,6 +190,81 @@ pub async fn confirm_memory_action(
     action_id: String,
 ) -> Result<MemoryConfirmResultDto, DesktopError> {
     state.confirm_memory_action(&action_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn checkpoint_list(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    page: f64,
+) -> Result<CheckpointListDto, DesktopError> {
+    if !page.is_finite() || page < 1.0 || page > 9_007_199_254_740_991.0 {
+        return Err(DesktopError::new(
+            "invalid_args",
+            "Checkpoint page must be a valid positive integer",
+        ));
+    }
+    state
+        .checkpoint_list(session_id.as_deref(), page as usize)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn checkpoint_diff(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    checkpoint_id: String,
+    sha256: String,
+) -> Result<CheckpointDiffDto, DesktopError> {
+    state
+        .checkpoint_diff(session_id.as_deref(), &checkpoint_id, &sha256)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn checkpoint_recover(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+) -> Result<CheckpointRecoverDto, DesktopError> {
+    state.checkpoint_recover(session_id.as_deref()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_checkpoint_action(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    action: String,
+    paths: Vec<String>,
+    checkpoint_id: Option<String>,
+    sha256: Option<String>,
+    label: Option<String>,
+) -> Result<PreparedCheckpointReviewDto, DesktopError> {
+    state
+        .prepare_checkpoint_action(
+            session_id.as_deref(),
+            &action,
+            paths,
+            checkpoint_id.as_deref(),
+            sha256.as_deref(),
+            label.as_deref().unwrap_or("desktop"),
+        )
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn confirm_checkpoint_action(
+    state: State<'_, DesktopState>,
+    action_id: String,
+    approved_paths: Option<Vec<String>>,
+) -> Result<CheckpointConfirmResultDto, DesktopError> {
+    state
+        .confirm_checkpoint_action(&action_id, approved_paths)
+        .await
 }
 
 #[tauri::command]

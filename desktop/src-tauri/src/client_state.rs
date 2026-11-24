@@ -5,14 +5,15 @@
 
 use crate::types::{
     ActiveSessionDto, AttachmentPayloadDto, AttachmentTokenDto, BackgroundJobDto,
-    BootstrapStateDto, CredentialRecordDto, DesktopError, DesktopPrefsDto, DesktopStreamEnvelope,
-    ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto, ExtensionItemDto,
-    GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto, HelperStatusDto,
-    McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModeStateDto, ModuleStatusDto,
-    PermissionModeDto, PreparedMemoryReviewDto, ResumeSessionResultDto, RunStateDto,
-    SandboxBackendDto, SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto,
-    SubmitPromptResultDto, TaskDto, TaskJobDto, UpdateDesktopPrefsParams, UsageStatsDto,
-    WorkModeDto,
+    BootstrapStateDto, CheckpointConfirmResultDto, CheckpointDiffDto, CheckpointListDto,
+    CheckpointRecoverDto, CredentialRecordDto, DesktopError, DesktopPrefsDto,
+    DesktopStreamEnvelope, ExperimentalSettingsDto, ExportFormatDto, ExportResultDto,
+    ExportScopeDto, ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto,
+    GoalReportDto, HelperStatusDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto,
+    ModeStateDto, ModuleStatusDto, PermissionModeDto, PreparedCheckpointReviewDto,
+    PreparedMemoryReviewDto, ResumeSessionResultDto, RunStateDto, SandboxBackendDto,
+    SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto, SubmitPromptResultDto, TaskDto,
+    TaskJobDto, UpdateDesktopPrefsParams, UsageStatsDto, WorkModeDto,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -677,6 +678,74 @@ impl DesktopState {
     ) -> Result<MemoryConfirmResultDto, DesktopError> {
         self.call_rpc("confirm_memory_action", &json!({ "action_id": action_id }))
             .await
+    }
+
+    pub async fn checkpoint_list(
+        &self,
+        session_id: Option<&str>,
+        page: usize,
+    ) -> Result<CheckpointListDto, DesktopError> {
+        self.call_rpc(
+            "checkpoint_list",
+            &json!({ "session_id": session_id, "page": page }),
+        )
+        .await
+    }
+
+    pub async fn checkpoint_diff(
+        &self,
+        session_id: Option<&str>,
+        checkpoint_id: &str,
+        sha256: &str,
+    ) -> Result<CheckpointDiffDto, DesktopError> {
+        self.call_rpc(
+            "checkpoint_diff",
+            &json!({ "session_id": session_id, "id": checkpoint_id, "sha256": sha256 }),
+        )
+        .await
+    }
+
+    pub async fn checkpoint_recover(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<CheckpointRecoverDto, DesktopError> {
+        self.call_rpc("checkpoint_recover", &json!({ "session_id": session_id }))
+            .await
+    }
+
+    pub async fn prepare_checkpoint_action(
+        &self,
+        session_id: Option<&str>,
+        action: &str,
+        paths: Vec<String>,
+        checkpoint_id: Option<&str>,
+        sha256: Option<&str>,
+        label: &str,
+    ) -> Result<PreparedCheckpointReviewDto, DesktopError> {
+        self.call_rpc(
+            "prepare_checkpoint_action",
+            &json!({
+                "session_id": session_id,
+                "action": action,
+                "paths": paths,
+                "id": checkpoint_id,
+                "sha256": sha256,
+                "label": label,
+            }),
+        )
+        .await
+    }
+
+    pub async fn confirm_checkpoint_action(
+        &self,
+        action_id: &str,
+        approved_paths: Option<Vec<String>>,
+    ) -> Result<CheckpointConfirmResultDto, DesktopError> {
+        self.call_rpc(
+            "confirm_checkpoint_action",
+            &json!({ "action_id": action_id, "approved_paths": approved_paths }),
+        )
+        .await
     }
 
     pub async fn export_session(

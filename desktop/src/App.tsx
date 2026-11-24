@@ -94,6 +94,7 @@ const VALID_SETTINGS_TABS: readonly SettingsTab[] = [
   "modules",
   "mcp",
   "memory",
+  "checkpoints",
   "experimental",
   "usage",
   "export",
@@ -524,6 +525,13 @@ export function App() {
       label: t.sidebar.memoryTitle,
       icon: Database,
       onClick: () => handleOpenSettings("memory"),
+    },
+    {
+      id: "checkpoints",
+      label: t.sidebar.checkpointsTitle,
+      icon: History,
+      disabled: sessionId === null,
+      onClick: () => handleOpenSettings("checkpoints"),
     },
     {
       id: "mcp",

@@ -64,6 +64,7 @@ export interface UiMessages {
     noMatchingSessions: string;
     browseAllSessions: string;
     memoryTitle: string;
+    checkpointsTitle: string;
     globalStore: string;
     twoPhase: string;
     memoryDesc: string;
@@ -181,6 +182,7 @@ export interface UiMessages {
     navExperimental: string;
     navMcp: string;
     navMemory: string;
+    navCheckpoints: string;
     navExport: string;
     titleUsage: string;
     titleProfiles: string;
@@ -328,6 +330,38 @@ export interface UiMessages {
     appliedMsg: (opId: string) => string;
     queryPlaceholder: string;
     operationSummary: (op: string, rev: string) => string;
+  };
+  checkpointsDialog: {
+    title: string;
+    noSessionHint: string;
+    listHeader: (total: number) => string;
+    empty: string;
+    prevPage: string;
+    nextPage: string;
+    summaryMeta: (
+      revision: number,
+      label: string,
+      files: number,
+      bytes: string
+    ) => string;
+    diffBtn: string;
+    restoreBtn: string;
+    acceptBtn: string;
+    noDiff: string;
+    truncatedHint: string;
+    createTitle: string;
+    createPathsLabel: string;
+    createPlaceholder: string;
+    createBtn: string;
+    approveFilesLabel: string;
+    discardBtn: string;
+    confirmBtn: string;
+    appliedMsg: (opId: string) => string;
+    operationSummary: (opId: string) => string;
+    recoverTitle: string;
+    recoverDesc: string;
+    recoverBtn: string;
+    recoverEmpty: string;
   };
   exportDialog: {
     title: string;
@@ -566,11 +600,13 @@ export interface UiMessages {
     titleAppearance: string;
     titleMcp: string;
     titleMemory: string;
+    titleCheckpoints: string;
     titleExport: string;
     openMcpDialogBtn: string;
     openMemoryDialogBtn: string;
     openExportDialogBtn: string;
     exportUnavailableHint: string;
+    checkpointsUnavailableHint: string;
     permAuto: string;
     permManual: string;
     permBypass: string;
@@ -652,6 +688,7 @@ export interface UiMessages {
     closeSessionBrowser: string;
     closeMcpDialog: string;
     closeMemoryDialog: string;
+    closeCheckpointsDialog: string;
     memoryQueryInput: string;
     memoryActionInput: string;
     mcpServerInput: string;
@@ -700,6 +737,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       noMatchingSessions: "No matching sessions.",
       browseAllSessions: "Browse all sessions…",
       memoryTitle: "Memory",
+      checkpointsTitle: "Checkpoints",
       globalStore: "Global store",
       twoPhase: "two-phase",
       memoryDesc:
@@ -861,6 +899,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navExperimental: "Experimental",
       navMcp: "MCP & credentials",
       navMemory: "Memory",
+      navCheckpoints: "Checkpoints",
       navExport: "Import & export",
       titleUsage: "Usage & tokens",
       titleProfiles: "Model & profiles",
@@ -1014,6 +1053,36 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       appliedMsg: (opId) => `Applied memory operation ${opId}`,
       queryPlaceholder: "list | search <query> | show <id> | sources | history",
       operationSummary: (op, rev) => `op: ${op} · rev: ${rev}`,
+    },
+    checkpointsDialog: {
+      title: "Session Checkpoints (Two-Phase Review)",
+      noSessionHint:
+        "No session is selected; the newest session for this workspace is used.",
+      listHeader: (total) => `Checkpoints (${total})`,
+      empty: "No checkpoints yet for this session.",
+      prevPage: "Prev",
+      nextPage: "Next",
+      summaryMeta: (revision, label, files, bytes) =>
+        `rev ${revision} · ${label} · ${files} files · ${bytes}`,
+      diffBtn: "Diff",
+      restoreBtn: "Restore",
+      acceptBtn: "Accept",
+      noDiff: "No differences against the workspace.",
+      truncatedHint: "Preview truncated; narrow the selection to see more.",
+      createTitle: "Create checkpoint",
+      createPathsLabel: "Workspace-relative paths",
+      createPlaceholder: "paths/to/capture.ts, comma or newline separated",
+      createBtn: "Create",
+      approveFilesLabel: "Files to restore",
+      discardBtn: "Discard",
+      confirmBtn: "Confirm Apply",
+      appliedMsg: (opId) => `Applied checkpoint operation ${opId}`,
+      operationSummary: (opId) => `op: ${opId}`,
+      recoverTitle: "Interrupted restores",
+      recoverDesc:
+        "Observed restore journals from an interrupted operation; outcomes are reported, never replayed.",
+      recoverBtn: "Check",
+      recoverEmpty: "No interrupted restore journals observed.",
     },
     exportDialog: {
       title: "Export Session Transcript",
@@ -1281,11 +1350,14 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleAppearance: "Appearance & language",
       titleMcp: "MCP & credentials",
       titleMemory: "Global memory",
+      titleCheckpoints: "Checkpoints",
       titleExport: "Import & export",
       openMcpDialogBtn: "Open MCP & credentials manager",
       openMemoryDialogBtn: "Open memory manager",
       openExportDialogBtn: "Open session exporter",
       exportUnavailableHint: "Start or resume a session first to export its transcript.",
+      checkpointsUnavailableHint:
+        "Start or resume a session first to manage its checkpoints.",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -1367,6 +1439,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeSessionBrowser: "Close session browser",
       closeMcpDialog: "Close MCP and credentials dialog",
       closeMemoryDialog: "Close memory dialog",
+      closeCheckpointsDialog: "Close checkpoints dialog",
       memoryQueryInput: "Memory query command",
       memoryActionInput: "Memory action command",
       mcpServerInput: "MCP server name",
@@ -1413,6 +1486,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       noMatchingSessions: "没有匹配的会话。",
       browseAllSessions: "浏览全部会话…",
       memoryTitle: "记忆",
+      checkpointsTitle: "检查点",
       globalStore: "全局存储",
       twoPhase: "两阶段",
       memoryDesc: "全局记忆条目会在会话间持久保存，并注入系统上下文。",
@@ -1573,6 +1647,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navExperimental: "实验性功能",
       navMcp: "MCP 与凭据",
       navMemory: "记忆",
+      navCheckpoints: "检查点",
       navExport: "导入与导出",
       titleUsage: "用量与 Token",
       titleProfiles: "模型与配置",
@@ -1724,6 +1799,34 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       appliedMsg: (opId) => `已应用记忆操作 ${opId}`,
       queryPlaceholder: "list | search <query> | show <id> | sources | history",
       operationSummary: (op, rev) => `操作：${op} · 版本：${rev}`,
+    },
+    checkpointsDialog: {
+      title: "会话检查点（两阶段复核）",
+      noSessionHint: "未选择会话；将使用该工作区最新的会话。",
+      listHeader: (total) => `检查点（${total}）`,
+      empty: "此会话还没有检查点。",
+      prevPage: "上一页",
+      nextPage: "下一页",
+      summaryMeta: (revision, label, files, bytes) =>
+        `版本 ${revision} · ${label} · ${files} 个文件 · ${bytes}`,
+      diffBtn: "对比",
+      restoreBtn: "恢复",
+      acceptBtn: "采纳",
+      noDiff: "与工作区无差异。",
+      truncatedHint: "预览已截断；缩小选择范围可查看更多。",
+      createTitle: "创建检查点",
+      createPathsLabel: "工作区相对路径",
+      createPlaceholder: "要捕获的路径，逗号或换行分隔",
+      createBtn: "创建",
+      approveFilesLabel: "要恢复的文件",
+      discardBtn: "放弃",
+      confirmBtn: "确认应用",
+      appliedMsg: (opId) => `已应用检查点操作 ${opId}`,
+      operationSummary: (opId) => `操作：${opId}`,
+      recoverTitle: "被中断的恢复",
+      recoverDesc: "观察到的被中断恢复操作日志；仅报告结果，绝不重放。",
+      recoverBtn: "检查",
+      recoverEmpty: "未观察到被中断的恢复日志。",
     },
     exportDialog: {
       title: "导出会话记录",
@@ -1987,11 +2090,13 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleAppearance: "外观与语言",
       titleMcp: "MCP 与凭据",
       titleMemory: "全局记忆",
+      titleCheckpoints: "检查点",
       titleExport: "导入与导出",
       openMcpDialogBtn: "打开 MCP 与凭据管理",
       openMemoryDialogBtn: "打开记忆管理",
       openExportDialogBtn: "打开会话导出",
       exportUnavailableHint: "请先创建或恢复一个会话再导出内容。",
+      checkpointsUnavailableHint: "请先创建或恢复一个会话再管理其检查点。",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -2073,6 +2178,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeSessionBrowser: "关闭会话浏览器",
       closeMcpDialog: "关闭 MCP 与凭据窗口",
       closeMemoryDialog: "关闭记忆管理窗口",
+      closeCheckpointsDialog: "关闭检查点窗口",
       memoryQueryInput: "记忆查询命令",
       memoryActionInput: "记忆操作命令",
       mcpServerInput: "MCP 服务器名称",
@@ -2119,6 +2225,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       noMatchingSessions: "找不到相符的工作階段。",
       browseAllSessions: "瀏覽全部工作階段…",
       memoryTitle: "記憶",
+      checkpointsTitle: "檢查點",
       globalStore: "全域儲存區",
       twoPhase: "兩階段",
       memoryDesc: "全域記憶項目會在工作階段之間持續保存，並注入系統內容。",
@@ -2279,6 +2386,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navExperimental: "實驗性功能",
       navMcp: "MCP 與憑證",
       navMemory: "記憶",
+      navCheckpoints: "檢查點",
       navExport: "匯入與匯出",
       titleUsage: "用量與 Token",
       titleProfiles: "模型與設定檔",
@@ -2430,6 +2538,34 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       appliedMsg: (opId) => `已套用記憶操作 ${opId}`,
       queryPlaceholder: "list | search <query> | show <id> | sources | history",
       operationSummary: (op, rev) => `操作：${op} · 版本：${rev}`,
+    },
+    checkpointsDialog: {
+      title: "工作階段檢查點（兩階段複核）",
+      noSessionHint: "未選取工作階段；將使用此工作區最新的工作階段。",
+      listHeader: (total) => `檢查點（${total}）`,
+      empty: "此工作階段尚無檢查點。",
+      prevPage: "上一頁",
+      nextPage: "下一頁",
+      summaryMeta: (revision, label, files, bytes) =>
+        `版本 ${revision} · ${label} · ${files} 個檔案 · ${bytes}`,
+      diffBtn: "差異",
+      restoreBtn: "還原",
+      acceptBtn: "採用",
+      noDiff: "與工作區無差異。",
+      truncatedHint: "預覽已截斷；縮小選取範圍可查看更多。",
+      createTitle: "建立檢查點",
+      createPathsLabel: "工作區相對路徑",
+      createPlaceholder: "要捕獲的路徑，以逗號或換行分隔",
+      createBtn: "建立",
+      approveFilesLabel: "要還原的檔案",
+      discardBtn: "捨棄",
+      confirmBtn: "確認套用",
+      appliedMsg: (opId) => `已套用檢查點操作 ${opId}`,
+      operationSummary: (opId) => `操作：${opId}`,
+      recoverTitle: "被中斷的還原",
+      recoverDesc: "觀察到的被中斷還原操作日誌；僅回報結果，絕不重播。",
+      recoverBtn: "檢查",
+      recoverEmpty: "未觀察到被中斷的還原日誌。",
     },
     exportDialog: {
       title: "匯出工作階段紀錄",
@@ -2693,11 +2829,13 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       titleAppearance: "外觀與語言",
       titleMcp: "MCP 與憑證",
       titleMemory: "全域記憶",
+      titleCheckpoints: "檢查點",
       titleExport: "匯入與匯出",
       openMcpDialogBtn: "開啟 MCP 與憑證管理",
       openMemoryDialogBtn: "開啟記憶管理",
       openExportDialogBtn: "開啟工作階段匯出",
       exportUnavailableHint: "請先建立或恢復工作階段再進行匯出。",
+      checkpointsUnavailableHint: "請先建立或恢復工作階段再管理其檢查點。",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -2779,6 +2917,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeSessionBrowser: "關閉工作階段瀏覽器",
       closeMcpDialog: "關閉 MCP 與憑證視窗",
       closeMemoryDialog: "關閉記憶管理視窗",
+      closeCheckpointsDialog: "關閉檢查點視窗",
       memoryQueryInput: "記憶查詢指令",
       memoryActionInput: "記憶操作指令",
       mcpServerInput: "MCP 伺服器名稱",

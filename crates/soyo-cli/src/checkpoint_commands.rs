@@ -5,15 +5,15 @@
 use clap::Subcommand;
 use serde_json::{Value, json};
 pub use soyo_app::checkpoint_admin::resolve_session_id;
-use soyo_app::checkpoint_admin::{CheckpointAction, CheckpointAdmin};
+use soyo_app::checkpoint_admin::{CheckpointAction, CheckpointAdmin, restore_authorize};
 use soyo_core::{
-    checkpoint::{CheckpointToken, RestoreOperation},
+    checkpoint::CheckpointToken,
     config::Config,
     contract::{BoundaryError, ErrorInfo, SessionId},
     credentials::SecretRegistry,
 };
 use std::{
-    path::{Component, Path, PathBuf},
+    collections::BTreeSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -201,115 +201,10 @@ fn safe_output(mut value: Value, secrets: &SecretRegistry) -> Result<Value, Boun
     Ok(value)
 }
 
-/// Mirror of `runtime_checkpoint`'s restore-target rule so the CLI approves
-/// exactly the same roots the model-facing restore path is bound to: resolved
-/// targets must stay inside the session's allowed write roots (here the
-/// checkpoint workspace itself) and never address protected host storage.
-fn resolve_future(path: &Path) -> Result<PathBuf, BoundaryError> {
-    if !path.is_absolute()
-        || path.as_os_str().len() > 4096
-        || path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-    {
-        return Err(failure(
-            "checkpoint_config",
-            "Checkpoint host paths must be bounded absolute paths",
-        ));
-    }
-    let mut parent = path.to_path_buf();
-    let mut suffix = Vec::new();
-    loop {
-        match std::fs::canonicalize(&parent) {
-            Ok(mut resolved) => {
-                for name in suffix.into_iter().rev() {
-                    resolved.push(name);
-                }
-                return Ok(resolved);
-            }
-            Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
-                if std::fs::symlink_metadata(&parent).is_ok() {
-                    return Err(failure(
-                        "checkpoint_path",
-                        "Checkpoint target has a dangling link",
-                    ));
-                }
-                suffix.push(
-                    parent
-                        .file_name()
-                        .ok_or_else(|| {
-                            failure(
-                                "checkpoint_path",
-                                "Checkpoint path has no existing ancestor",
-                            )
-                        })?
-                        .to_owned(),
-                );
-                parent.pop();
-            }
-            Err(_) => {
-                return Err(failure(
-                    "checkpoint_path",
-                    "Checkpoint path cannot be resolved safely",
-                ));
-            }
-        }
-    }
-}
-fn path_within(path: &Path, root: &Path) -> bool {
-    let fold = |path: &Path| {
-        path.to_string_lossy()
-            .chars()
-            .flat_map(|c| c.to_lowercase())
-            .collect::<String>()
-    };
-    let path = fold(path);
-    let root = fold(root);
-    let root = root.trim_end_matches('/');
-    path == root
-        || path
-            .strip_prefix(root)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-/// Decide whether one restore operation may write to disk. `approved` holds
-/// the per-file paths the user already approved in the interactive preview;
-/// the path must additionally resolve inside the session workspace (the CLI's
-/// write root) and outside the store's protected directory.
-fn restore_authorize(
-    workspace_root: &Path,
-    protected: &Path,
-    approved: Option<&std::collections::BTreeSet<String>>,
-) -> impl FnMut(&RestoreOperation) -> Result<(), BoundaryError> {
-    let workspace_root = workspace_root.to_owned();
-    let protected = protected.to_owned();
-    let approved = approved.cloned();
-    move |operation: &RestoreOperation| {
-        if let Some(approved) = &approved {
-            if !approved.contains(&operation.path) {
-                return Err(failure(
-                    "permission_denied",
-                    "Restore was not approved for this file",
-                ));
-            }
-        }
-        let target = workspace_root.join(&operation.path);
-        let resolved = resolve_future(&target)?;
-        if !path_within(&resolved, &workspace_root) {
-            return Err(failure(
-                "path_denied",
-                "Restore target is outside the session workspace",
-            ));
-        }
-        if path_within(&resolved, &protected) {
-            return Err(failure(
-                "path_denied",
-                "Restore target addresses protected host storage",
-            ));
-        }
-        Ok(())
-    }
-}
+/// Single-use confirm for a staged restore: the caller passes back the set of
+/// approved workspace-relative paths (`None` = batch approve after `--yes`).
+type ConfirmRestore =
+    Box<dyn FnOnce(Option<BTreeSet<String>>) -> Result<Value, BoundaryError> + Send>;
 
 /// Stage one mutating action up to its review. Returned to the async caller
 /// so the user can approve the exact bounded review JSON before `confirm`
@@ -321,10 +216,7 @@ pub enum Prepared {
     /// bounded redacted JSON shown to the user; `confirm` applies it once.
     Restore {
         review: Value,
-        confirm: Box<
-            dyn FnOnce(Option<std::collections::BTreeSet<String>>) -> Result<Value, BoundaryError>
-                + Send,
-        >,
+        confirm: ConfirmRestore,
     },
 }
 

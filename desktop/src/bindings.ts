@@ -37,6 +37,11 @@ export const commands = {
 	queryMemory: (command: string) => typedError<MemoryQueryResultDto, DesktopError>(__TAURI_INVOKE("query_memory", { command })),
 	prepareMemoryAction: (command: string) => typedError<PreparedMemoryReviewDto, DesktopError>(__TAURI_INVOKE("prepare_memory_action", { command })),
 	confirmMemoryAction: (actionId: string) => typedError<MemoryConfirmResultDto, DesktopError>(__TAURI_INVOKE("confirm_memory_action", { actionId })),
+	checkpointList: (sessionId: string | null, page: number | null) => typedError<CheckpointListDto, DesktopError>(__TAURI_INVOKE("checkpoint_list", { sessionId, page })),
+	checkpointDiff: (sessionId: string | null, checkpointId: string, sha256: string) => typedError<CheckpointDiffDto, DesktopError>(__TAURI_INVOKE("checkpoint_diff", { sessionId, checkpointId, sha256 })),
+	checkpointRecover: (sessionId: string | null) => typedError<CheckpointRecoverDto, DesktopError>(__TAURI_INVOKE("checkpoint_recover", { sessionId })),
+	prepareCheckpointAction: (sessionId: string | null, action: string, paths: string[], checkpointId: string | null, sha256: string | null, label: string | null) => typedError<PreparedCheckpointReviewDto, DesktopError>(__TAURI_INVOKE("prepare_checkpoint_action", { sessionId, action, paths, checkpointId, sha256, label })),
+	confirmCheckpointAction: (actionId: string, approvedPaths: string[] | null) => typedError<CheckpointConfirmResultDto, DesktopError>(__TAURI_INVOKE("confirm_checkpoint_action", { actionId, approvedPaths })),
 	exportSession: (sessionId: string | null, targetPath: string, format: ExportFormatDto, scope: ExportScopeDto, includeTools: boolean) => typedError<ExportResultDto, DesktopError>(__TAURI_INVOKE("export_session", { sessionId, targetPath, format, scope, includeTools })),
 	stageAttachments: (paths: string[]) => typedError<StagedAttachmentDto[], DesktopError>(__TAURI_INVOKE("stage_attachments", { paths })),
 	stagePastedAttachments: (items: PastedAttachmentItem[]) => typedError<StagedAttachmentDto[], DesktopError>(__TAURI_INVOKE("stage_pasted_attachments", { items })),
@@ -213,6 +218,25 @@ export type BootstrapStateDto_Serialize = {
 	session: ActiveSessionDto_Serialize | null,
 	run_active: boolean,
 	active_run_id: string | null,
+};
+
+export type CheckpointConfirmResultDto = {
+	result: unknown,
+};
+
+/**  Bounded, redacted unified-diff view (`checkpoint_admin.diff_view` JSON). */
+export type CheckpointDiffDto = {
+	data: unknown,
+};
+
+/**  Bounded, redacted checkpoint list view (`checkpoint_admin.list` JSON). */
+export type CheckpointListDto = {
+	data: unknown,
+};
+
+/**  Observed interrupted restore journals (`checkpoint_admin.recover` JSON). */
+export type CheckpointRecoverDto = {
+	data: unknown,
 };
 
 export type ContextEntryDto = {
@@ -739,6 +763,13 @@ export type PastedAttachmentItem = {
 };
 
 export type PermissionModeDto = "auto" | "bypass" | "manual";
+
+/**  Single-use prepared checkpoint action awaiting user confirmation. */
+export type PreparedCheckpointReviewDto = {
+	action_id: string,
+	operation_id: string,
+	review: unknown,
+};
 
 export type PreparedMemoryReviewDto = {
 	action_id: string,
