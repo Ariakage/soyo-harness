@@ -3,7 +3,7 @@ mod fixture;
 use serde_json::{Value, json};
 use soyo_core::{
     contract::{PermissionMode, RunId},
-    goal::{GoalAuthorization, GoalStore},
+    goal::{GoalAuthorization, GoalStatus, GoalStore},
 };
 use std::{
     fs,
@@ -531,6 +531,9 @@ async fn goal_worker_blocks_when_permissions_change_after_automatic_authorizatio
     let store = GoalStore::open(&root.path().join("data"), vec![]).unwrap();
     let goal_id = goal_id_text.parse().unwrap();
     let mut goal = store.load(goal_id).await.unwrap();
+    // D-111: only chained Goals are resumed by the durable worker, so the
+    // authorization gate is exercised on a chained record.
+    goal.auto_chain = true;
     goal.authorization = Some(GoalAuthorization {
         auto: true,
         mode: goal.mode,
@@ -1479,4 +1482,386 @@ executable = "{exe}"
             .unwrap();
         assert!(!rejected.status.success());
     }
+}
+
+// === D-111 auto_chain: opt-in persisted auto-advance ===
+
+#[test]
+fn auto_chain_completes_all_pending_steps_and_persists_flag() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, requests) = fixture::server(vec![
+        ("application/json", completion("step one done")),
+        ("application/json", completion("step two done")),
+        ("application/json", completion("step three done")),
+        // Manual evidence review for the acceptance criterion.
+        (
+            "application/json",
+            json!({"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"{\"satisfied\":true,\"reason\":\"chain evidence reviewed\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":6}})
+            .to_string(),
+        ),
+    ])
+    .unwrap();
+    let config = native_config(root.path(), &url, "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Run a chained three-step Goal",
+        "--accept",
+        "The result is verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let ids = [
+        "018bcfe5-6800-7000-8000-000000000111",
+        "018bcfe5-6800-7000-8000-000000000112",
+        "018bcfe5-6800-7000-8000-000000000113",
+    ];
+    let plan_path = root.path().join("chain-plan.json");
+    fs::write(&plan_path, plan(&ids, "criterion-1")).unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let started = json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "start", &goal_id, "--auto", "--chain"]),
+    );
+    let goal = &started["data"]["goal"];
+    // The chain persisted and advanced through every step in one authorization.
+    assert_eq!(goal["auto_chain"], true);
+    assert_eq!(goal["usage"]["runs"], 3);
+    assert_eq!(goal["status"], "waiting");
+    assert_eq!(goal["wait_reason"]["kind"], "verification");
+    assert!(
+        goal["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step["status"] == "completed")
+    );
+    for _ in 0..3 {
+        requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+
+    let verified = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "verify",
+        &goal_id,
+        "criterion-1",
+        "--summary",
+        "All three chained steps produced evidence",
+    ]));
+    assert_eq!(verified["data"]["goal"]["status"], "completed");
+    requests.recv_timeout(Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn auto_chain_replans_a_failed_step_then_resumes_the_chain() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, requests) = fixture::server(vec![
+        // Step 1 attempt 1: model claims done but never writes flag1.txt.
+        ("application/json", completion("flag1.txt is ready")),
+        // Step 1 attempt 2 (replan): model writes flag1.txt then finishes.
+        (
+            "application/json",
+            tool_call(
+                "w1",
+                "write_file",
+                json!({"path":"flag1.txt","content":"ok\n","expected_version":null}),
+            ),
+        ),
+        ("application/json", completion("wrote flag1.txt")),
+        // Step 2 completes.
+        ("application/json", completion("step two done")),
+    ])
+    .unwrap();
+    let config = native_config(root.path(), &url, "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Chain with one replanned verifier failure",
+        "--max-replans",
+        "1",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let s1 = "018bcfe5-6800-7000-8000-000000000121";
+    let s2 = "018bcfe5-6800-7000-8000-000000000122";
+    let plan_path = root.path().join("chain-replan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&json!({
+            "acceptance": [{
+                "id": "flag",
+                "text": "flag1.txt exists",
+                "verification": {"kind": "file_exists", "path": "flag1.txt"}
+            }],
+            "steps": [
+                {
+                    "id": s1,
+                    "title": "Produce flag1",
+                    "instruction": "Create flag1.txt",
+                    "depends_on": [],
+                    "verifier": {"argv": [test_exe(), "-f", "flag1.txt"], "timeout_seconds": 30}
+                },
+                {
+                    "id": s2,
+                    "title": "Finish",
+                    "instruction": "Report completion",
+                    "depends_on": [s1]
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let started = json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "start", &goal_id, "--auto", "--chain"]),
+    );
+    let goal = &started["data"]["goal"];
+    assert_eq!(goal["auto_chain"], true);
+    assert_eq!(goal["usage"]["replans"], 1);
+    assert_eq!(goal["steps"][0]["status"], "completed");
+    assert_eq!(goal["steps"][0]["attempts"], 2);
+    assert_eq!(goal["steps"][0]["last_verification"]["status"], "passed");
+    assert_eq!(goal["steps"][1]["status"], "completed");
+    // The file criterion is host-rechecked once the chain finishes, so the
+    // Goal completes without any extra manual evidence.
+    assert_eq!(goal["status"], "completed");
+    for _ in 0..4 {
+        requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+}
+
+#[test]
+fn auto_chain_stops_at_limit_reached_when_verifier_keeps_failing() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, _requests) = fixture::server(vec![
+        ("application/json", completion("attempt one: done")),
+        ("application/json", completion("attempt two: done")),
+    ])
+    .unwrap();
+    let config = native_config(root.path(), &url, "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Chain halts at replan limit on persistent verifier failure",
+        "--max-replans",
+        "1",
+        "--accept",
+        "Verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let s1 = "018bcfe5-6800-7000-8000-000000000131";
+    let plan_path = root.path().join("chain-limit.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&json!({
+            "acceptance": [{"id": "criterion-1", "text": "Verified", "verification": {"kind": "manual"}}],
+            "steps": [{
+                "id": s1,
+                "title": "Never verified",
+                "instruction": "Claim missing-output.txt exists",
+                "depends_on": [],
+                "verifier": {"argv": [test_exe(), "-f", "missing-output.txt"], "timeout_seconds": 15}
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let output = command(root.path(), home.path(), &config)
+        .args(["goal", "start", &goal_id, "--auto", "--chain"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(5));
+    let goal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let goal = &goal["data"]["goal"];
+    assert_eq!(goal["auto_chain"], true);
+    assert_eq!(goal["status"], "limit_reached");
+    assert_ne!(goal["status"], "completed");
+    assert_eq!(goal["usage"]["replans"], 1);
+    assert_eq!(goal["steps"][0]["status"], "failed");
+    assert_eq!(goal["steps"][0]["last_verification"]["status"], "failed");
+}
+
+#[test]
+fn auto_chain_halts_on_unconfirmed_verifier_change() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let config = native_config(root.path(), "http://127.0.0.1:9/v1", "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Chain refuses unconfirmed verifier edits",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let s1 = "018bcfe5-6800-7000-8000-000000000141";
+    let plan_path = root.path().join("chain-unconfirmed.json");
+    fs::write(&plan_path, plan(&[s1], "criterion-1")).unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+    // Mutating a verifier clears the confirmed digest and re-locks the plan.
+    json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "set-verifier",
+        &goal_id,
+        s1,
+        "--",
+        test_exe(),
+        "-d",
+        ".",
+    ]));
+    let rejected = command(root.path(), home.path(), &config)
+        .args(["goal", "start", &goal_id, "--auto", "--chain"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+}
+
+#[test]
+fn auto_chain_budget_exhaustion_stops_before_next_dispatch() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, requests) =
+        fixture::server(vec![("application/json", completion("first chained step"))]).unwrap();
+    let config = native_config(root.path(), &url, "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Chain stops at run budget",
+        "--max-runs",
+        "1",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let ids = [
+        "018bcfe5-6800-7000-8000-000000000151",
+        "018bcfe5-6800-7000-8000-000000000152",
+    ];
+    let plan_path = root.path().join("chain-budget.json");
+    fs::write(&plan_path, plan(&ids, "criterion-1")).unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let output = command(root.path(), home.path(), &config)
+        .args(["goal", "start", &goal_id, "--auto", "--chain"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(5));
+    let goal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let goal = &goal["data"]["goal"];
+    assert_eq!(goal["status"], "limit_reached");
+    assert_eq!(goal["usage"]["runs"], 1);
+    assert_eq!(goal["steps"][0]["status"], "completed");
+    assert_eq!(goal["steps"][1]["status"], "pending");
+    requests.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(requests.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn goal_worker_resumes_a_chained_goal_but_not_a_plain_auto_goal() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, requests) =
+        fixture::server(vec![("application/json", completion("resumed step two"))]).unwrap();
+    let config = native_config(root.path(), &url, "");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Worker resumes only chained goals",
+    ]));
+    let goal_id_text = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let ids = [
+        "018bcfe5-6800-7000-8000-000000000161",
+        "018bcfe5-6800-7000-8000-000000000162",
+    ];
+    let plan_path = root.path().join("worker-chain.json");
+    fs::write(&plan_path, plan(&ids, "criterion-1")).unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id_text, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "confirm",
+        &goal_id_text,
+    ]));
+
+    // Simulate a chain-authorized Goal whose first step completed before the
+    // worker stopped: mark step 1 done, leave step 2 pending and ready.
+    let store = GoalStore::open(&root.path().join("data"), vec![]).unwrap();
+    let goal_id = goal_id_text.parse().unwrap();
+    let mut goal = store.load(goal_id).await.unwrap();
+    goal.auto_chain = true;
+    goal.authorization = Some(GoalAuthorization {
+        auto: true,
+        mode: goal.mode,
+        permissions: PermissionMode::Auto,
+        config_fingerprint: soyo_app::goal::goal_profile_fingerprint(
+            &soyo_core::config::load(
+                soyo_core::config::Overrides {
+                    config: Some(config.clone()),
+                    data_dir: Some(root.path().join("data")),
+                    cwd: Some(root.path().to_path_buf()),
+                    ..Default::default()
+                },
+                soyo_core::config::Environment::capture(),
+                root.path(),
+            )
+            .unwrap(),
+            &goal.profile,
+        )
+        .unwrap(),
+        authorized_at: "2026-11-24T00:00:00Z".into(),
+    });
+    {
+        let first = &mut goal.steps[0];
+        first.status = soyo_core::goal::StepStatus::Completed;
+        first.attempts = 1;
+    }
+    // Step 1's Run was already accounted before the worker stopped.
+    goal.usage.runs = 1;
+    goal.status = GoalStatus::Ready;
+    let revision = goal.revision;
+    store.save(goal, revision).await.unwrap();
+
+    // The worker drives the chained goal's remaining step to completion.
+    let worked =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "worker", "--once"]));
+    assert_eq!(worked["data"]["continued"].as_array().unwrap().len(), 1);
+    let status = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "status",
+        &goal_id_text,
+    ]));
+    assert_eq!(status["data"]["goal"]["steps"][1]["status"], "completed");
+    assert_eq!(status["data"]["goal"]["usage"]["runs"], 2);
+    requests.recv_timeout(Duration::from_secs(1)).unwrap();
 }

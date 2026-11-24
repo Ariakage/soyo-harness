@@ -490,6 +490,7 @@ impl App {
                     if goal.status != GoalStatus::Ready {
                         return Err(failure("invalid_goal_state", text::GOAL_NOT_READY));
                     }
+                    goal.auto_chain = config.goal.auto_chain;
                     goal.authorization = Some(GoalAuthorization {
                         auto: true,
                         mode: goal.mode,

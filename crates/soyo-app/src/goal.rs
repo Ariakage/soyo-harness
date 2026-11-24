@@ -1325,10 +1325,13 @@ pub async fn report_goal(
 
 /// Enforce automatic-start preconditions and stamp explicit authorization on
 /// the record (fingerprint of profile, mode, permissions and runtime-relevant
-/// configuration). The caller persists the returned record.
+/// configuration). `chain` is the D-111 opt-in: it persists `auto_chain` so a
+/// durable worker keeps scheduling the next pending step while every guard
+/// holds. The caller persists the returned record.
 pub async fn authorize_auto_goal(
     config: &Config,
     goal: &mut GoalRecord,
+    chain: bool,
 ) -> Result<(), BoundaryError> {
     if config.permissions_mode == PermissionMode::Manual {
         return Err(failure(
@@ -1348,6 +1351,7 @@ pub async fn authorize_auto_goal(
             "Goal must be confirmed and ready before automatic start",
         ));
     }
+    goal.auto_chain = chain;
     goal.authorization = Some(soyo_core::goal::GoalAuthorization {
         auto: true,
         mode: goal.mode,

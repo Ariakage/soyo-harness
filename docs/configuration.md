@@ -618,6 +618,17 @@ auto_capture = false
 
 捕获遵守 `CheckpointLimits` 与内容门禁（仅 UTF-8、无 NUL、经 `SecretRegistry` 扫描），在阻塞工作线程上执行且**失败不阻塞工具调用**——capture 失败只影响该次自动快照，不写回工具结果。检查点存储位于 `<data_dir>/checkpoints/`（私有 0700 目录、0600 `O_NOFOLLOW`），与会话绑定；`soyo checkpoint`（`list`/`diff`/`create`/`accept`/`restore`/`recover`）、TUI `/checkpoint` 与桌面端「Checkpoints」设置页提供用户侧查看、比较与恢复，三端共享同一 `checkpoint_admin` 服务与 `restore_authorize` 写根/受保护根判定。restore 在无 TTY 时需 `--yes`、有 TTY 或桌面端时逐文件确认（桌面端经 helper IPC 两段式：先取 bounded review、勾选批准后再单次 confirm），且解析目标必须留在会话工作区内、不得指向受保护宿主存储。PLAN 只读；被中断的 restore 其日志在下次会话恢复时经 `recover` 上浮为 Unknown，绝不自动重放。
 
+## Goal 自动推进链（F-20）
+
+Goal 自动推进链**默认 `auto_chain = false`**；`soyo goal start --auto --chain` 或下面的配置显式开启：
+
+```toml
+[goal]
+auto_chain = false
+```
+
+开启后，`goal start --auto` 的显式授权会把 `auto_chain` 持久到 `GoalRecord`：每个步骤宿主 verifier 通过（退出码 `0`、`passed`）且 `confirmed_verifiers_digest` 未变、预算未耗尽、无 `waiting_unknown` 时，worker 自动调度下一 pending 步骤的 Run + verifier（每步仍有独立 Run 记录与租约心跳）。`[goal] auto_chain = true` 与 `--chain` 等价，前者作用于所有 `start --auto`。关闭时保持既有语义：一次 `start --auto` 在本进程内尽量推进，但 `soyo goal worker` 不会自动恢复普通 `--auto` Goal。verifier 失败仍在 `max_replans` 内 `replan_failed_step`；`unknown`／取消／超时／`!verifiers_confirmed()`（verifier 改动未重新 `goal confirm`）各自保守停止到既有 `blocked`／`waiting`／`limit_reached`，绝不自动重放未确认副作用。详见 [Goal 设计](goal.md)。
+
 ### 插件宿主绑定
 
 `[plugins] enabled = true`允许本次Run选择已由用户安装并启用的包，未启用的包保持未加载。包不能从工作区指令修改运行配置。宿主可在 `plugins.bindings.runtimes` 指定当前实际解释器，例如下面的绝对路径。绑定的解释器与只读运行库由宿主核对后进入私有entry视图。

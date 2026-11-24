@@ -1,6 +1,6 @@
 # Goal 目标编排设计
 
-**状态：DEV-069 至 DEV-074 已实现并通过本机受控验收；`DEV-091`（S3/D-080 步骤验证器模型、v2 存储、`set-verifier` 与沙箱化 `run_step_verifier`）与 `DEV-092`（`run_step` 验证门禁、`start --auto` 仅在验证通过后前进、失败有界重规划）已实现并通过本机验证。能力编号 F-20；跨平台固定源码证据和发行版本仍按验收记录单独维护。**
+**状态：DEV-069 至 DEV-074 已实现并通过本机受控验收；`DEV-091`（S3/D-080 步骤验证器模型、v2 存储、`set-verifier` 与沙箱化 `run_step_verifier`）与 `DEV-092`（`run_step` 验证门禁、`start --auto` 仅在验证通过后前进、失败有界重规划）已实现并通过本机验证；`D-111`（`auto_chain` 持久化自动推进链，`goal start --auto --chain` 与 `[goal] auto_chain`）已实现并通过本机验证。能力编号 F-20；跨平台固定源码证据和发行版本仍按验收记录单独维护。**
 
 ## 当前实现
 
@@ -18,7 +18,7 @@ soyo goal confirm GOAL_ID
 soyo goal list
 soyo goal status GOAL_ID
 soyo goal continue GOAL_ID [--approval-file PATH]
-soyo goal start GOAL_ID --auto
+soyo goal start GOAL_ID --auto [--chain]
 soyo goal pause|resume|cancel GOAL_ID
 soyo goal verify GOAL_ID CRITERION [--summary TEXT]
 soyo goal resolve GOAL_ID STEP_ID --retry
@@ -70,6 +70,14 @@ G1 可在共享基础稳定后单独开发，G2 的执行依赖按[后续开发�
 - **失败重规划**：verifier 退出非 `0` 时，`replan_failed_step` 在 `max_replans` 内把经 `SecretRegistry` 脱敏、控制字符替换为空格的单行宿主输出摘录写入该步骤的修正指令，保留已锁定的 verifier 并清除旧 `last_verification`，随后 `--auto` 继续重试；`max_replans` 耗尽后 Goal 进入 `limit_reached`（退出码 5），绝不 `completed`。
 - **保守停止**：`deny` 规则或权限拒绝进入 `Blocked(Authorization)` 且不重规划；超时、取消与未知基础设施错误进入 `Waiting(UnknownSideEffect)`，不自动重放；`PLAN` 跳过执行，步骤不会被视为通过。
 - **验收证据**：`crates/soyo-cli/tests/goal.rs` 以原生 Seatbelt（不设 `backend = "host"`）端到端覆盖：模型第一次谎称完成 → verifier 退出 1 → 重规划 → 第二次通过 → Goal `completed`；`max_replans = 1` 且持续谎报 → `limit_reached`；`deny`／超时／未确认分别 fail-closed。
+
+### 自动推进链（D-111）
+
+- **opt-in 持久化**：`GoalRecord.auto_chain` 默认 `false`，经 `soyo goal start GOAL_ID --auto --chain` 或 `[goal] auto_chain = true` 显式开启；`start --auto` 的既有配置指纹与授权记录原样复用——授权覆盖整条链，配置变化（含权限、profile、沙箱等指纹项）仍让链停在既有 `blocked / authorization` 状态，需人工恢复并重新显式授权。关闭时保留“一次 `start --auto` 在本进程内尽量推进”的语义，且 `soyo goal worker` 不会自动恢复普通 `--auto` Goal。
+- **推进条件**：当前步骤宿主 verifier 落库 `passed` 且退出码 `0`、`confirmed_verifiers_digest` 未变、剩余预算 > 0、无 `waiting_unknown` 副作用、Goal 未取消／暂停时，worker 在同一 `start --auto` 序列或后续 `goal worker` 轮次里调度下一 pending 步骤的 Run + verifier；每一步仍各有独立 `Run`、租约心跳与 dispatch intent 记录。
+- **保守停止绝对**：`unknown` 副作用、取消、超时、`!verifiers_confirmed()`（verifier 被修改而未重新 `goal confirm`）、`deny`／`PLAN` 跳过各自进入既有 `waiting`／`blocked`／`limit_reached`，绝不自动重放未确认副作用；verifier 失败仍在 `max_replans` 内 `replan_failed_step` 后继续。模型自述“完成”不关闭步骤或 Goal 的不变式保持。
+- **可见性**：`goal status` 在文本输出中为链式 Goal 打印 `Chain: on · N/M steps done · next step K`；`goal report` 的 JSON 记录含 `auto_chain`，Markdown 报告为链式 Goal 增加 `Auto-chain` 行。桌面端经 helper `goal_start` 启动时使用 `[goal] auto_chain` 配置值。
+- **验收证据**：`crates/soyo-cli/tests/goal.rs` 覆盖三步链全部通过 → `completed`、verifier 失败在 `max_replans` 内重规划后继续、持续失败落到 `limit_reached`、verifier 未重新确认时 `start --auto --chain` 被拒绝、`max_runs` 预算在下一步 dispatch 前耗尽转为 `limit_reached`、`goal worker` 恢复链式 Goal 但不恢复普通 `--auto` Goal。
 | Continuation | 显式 auto 标记、模式、权限模式、配置指纹、授权时间、worker owner／过期租约及持久 dispatch 状态 |
 
 当前实现将一个 Goal 绑定到一个专属 Session，步骤关联多个 Run；跨 Session 关联及子 Goal 按后续需求扩展。工具调用继续使用 `(run_id, call_id)` 关联。

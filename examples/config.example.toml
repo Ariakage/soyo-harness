@@ -150,6 +150,15 @@ enabled = true
 # max_patch_bytes = 262144
 # max_summary_bytes = 32768
 
+# Goal auto-advance chain (`F-20` D-111) defaults to off. With auto_chain = true,
+# an explicitly authorized `soyo goal start --auto` persists the chain: the
+# durable worker keeps scheduling the next pending step's Run + verifier after
+# each passed step while the confirmed verifier set, remaining budget and
+# unknown-side-effect state all allow it. Unknown / cancel / timeout / an
+# unconfirmed verifier change each stop the chain; nothing is auto-replayed.
+# [goal]
+# auto_chain = false
+
 # Opt-in model routing, capability filtering, circuit-breaker failover,
 # and explicit opaque-history migration (`F-16`).
 # [profiles.primary.capabilities]

@@ -395,6 +395,18 @@ pub fn goal_report_markdown(record: &GoalRecord) -> Result<Vec<u8>, BoundaryErro
         record.mode,
         record.permissions
     ));
+    if record.auto_chain {
+        let completed = record
+            .steps
+            .iter()
+            .filter(|step| step.status == StepStatus::Completed)
+            .count();
+        report.push_str(&format!(
+            "- Auto-chain: `on` · {}/{} steps completed\n\n",
+            completed,
+            record.steps.len()
+        ));
+    }
     report.push_str("## Objective\n\n");
     report.push_str(&report_text(&record.objective, MAX_GOAL_OBJECTIVE_BYTES));
     report.push_str("\n\n## Acceptance criteria\n\n");
@@ -1005,6 +1017,12 @@ pub struct GoalRecord {
     pub authorization: Option<GoalAuthorization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_verifiers_digest: Option<String>,
+    /// Opt-in auto-advance chain (`D-111`). When true and an automatic
+    /// authorization is active, the durable worker keeps scheduling the next
+    /// pending step's Run + verifier after each `passed` step, while budget,
+    /// verifier-confirmation and unknown-side-effect guards hold.
+    #[serde(default)]
+    pub auto_chain: bool,
     pub created_at: String,
     pub updated_at: String,
     pub revision: u64,
@@ -1108,6 +1126,7 @@ impl GoalRecord {
             failure: None,
             authorization: None,
             confirmed_verifiers_digest: None,
+            auto_chain: false,
             created_at: seed.now.clone(),
             updated_at: seed.now,
             revision: 0,

@@ -630,7 +630,8 @@ impl HostService {
     }
 
     /// Authorize and launch finite automatic continuation as a daemon job.
-    /// The caller-facing goal transitions to `running` once the job takes its
+    /// `[goal] auto_chain` enables the D-111 persisted chain host-wide. The
+    /// caller-facing goal transitions to `running` once the job takes its
     /// first step; stopping requires `goal_pause` or `goal_cancel`.
     pub async fn goal_start(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
         let config = require_idle_config_clone(self).await?;
@@ -648,7 +649,7 @@ impl HostService {
             .load(key)
             .await
             .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
-        goal::authorize_auto_goal(&config, &mut goal)
+        goal::authorize_auto_goal(&config, &mut goal, config.goal.auto_chain)
             .await
             .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
         let revision = goal.revision;

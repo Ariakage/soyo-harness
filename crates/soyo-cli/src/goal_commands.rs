@@ -144,6 +144,10 @@ pub enum GoalAction {
         goal_id: String,
         #[arg(long)]
         auto: bool,
+        /// Persist D-111 auto-advance: the worker keeps scheduling the next
+        /// pending step after each passed step while every guard holds.
+        #[arg(long)]
+        chain: bool,
         #[arg(long)]
         approval_file: Option<PathBuf>,
         #[arg(long)]
@@ -232,6 +236,22 @@ fn goal_text(goal: &GoalRecord) {
         goal.usage.tool_calls,
         goal.budget.max_tool_calls
     );
+    if goal.auto_chain {
+        let completed = goal
+            .steps
+            .iter()
+            .filter(|step| step.status == soyo_core::goal::StepStatus::Completed)
+            .count();
+        let next = goal.next_pending_step().map(|step| step.ordinal);
+        match next {
+            Some(ordinal) => println!(
+                "Chain: on · {}/{} steps done · next step {ordinal}",
+                completed,
+                goal.steps.len()
+            ),
+            None => println!("Chain: on · {}/{} steps done", completed, goal.steps.len()),
+        }
+    }
     for criterion in &goal.acceptance {
         println!(
             "[{}] {}: {}",
@@ -540,6 +560,7 @@ async fn auto_loop(
 async fn start(
     goal_id: GoalId,
     auto: bool,
+    chain: bool,
     cli: &Cli,
     config: &Config,
     approval_file: Option<&PathBuf>,
@@ -551,6 +572,7 @@ async fn start(
             "Use --auto to explicitly authorize finite automatic continuation",
         ));
     }
+    let chain = chain || config.goal.auto_chain;
     let store = store(config)?;
     let mut goal = store.load(goal_id).await?;
     goal.mode = config.mode;
@@ -559,7 +581,7 @@ async fn start(
             step.mode = config.mode;
         }
     }
-    soyo_app::goal::authorize_auto_goal(config, &mut goal).await?;
+    soyo_app::goal::authorize_auto_goal(config, &mut goal, chain).await?;
     let revision = goal.revision;
     goal = store.save(goal, revision).await?;
     let cancel = Arc::new(Cancel::new());
@@ -589,7 +611,12 @@ async fn worker_once(
     let goals = store.list().await?;
     let mut continued = Vec::new();
     for goal in goals {
-        if goal.status != GoalStatus::Ready || goal.authorization.is_none() {
+        // D-111: only an explicitly chained Goal auto-resumes. A plain
+        // `start --auto` burst is finite and never restarted by the worker.
+        if goal.status != GoalStatus::Ready
+            || goal.authorization.is_none()
+            || !(goal.auto_chain || config.goal.auto_chain)
+        {
             continue;
         }
         let configured = {
@@ -750,12 +777,14 @@ pub async fn run(action: &GoalAction, cli: &Cli, config: &Config) -> Result<u8, 
         GoalAction::Start {
             goal_id,
             auto,
+            chain,
             approval_file,
             accept_config_change,
         } => {
             start(
                 parse_goal(goal_id)?,
                 *auto,
+                *chain,
                 cli,
                 config,
                 approval_file.as_ref(),

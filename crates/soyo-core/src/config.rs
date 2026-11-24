@@ -639,6 +639,20 @@ pub struct TaskQueueSettings {
 pub struct CheckpointSettings {
     pub auto_capture: bool,
 }
+/// Opt-in Goal orchestration toggles (`F-20`, `D-111`). `auto_chain` stays
+/// `false` unless explicitly enabled: when a Goal is started with `--auto` the
+/// chain only auto-advances to the next pending step while every guard holds.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct GoalSettings {
+    /// Persisted opt-in: after an explicitly authorized `start --auto`, keep
+    /// scheduling the next pending step's Run + verifier when the step passes,
+    /// `confirmed_verifiers_digest` is unchanged, budget remains and no
+    /// `waiting_unknown` side-effect is pending. Conservative stops stay
+    /// absolute — unknown, cancel, timeout or an unconfirmed verifier each stop
+    /// the chain; nothing is auto-replayed.
+    pub auto_chain: bool,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -689,6 +703,8 @@ struct Document {
     checkpoint: CheckpointSettings,
     #[serde(default)]
     credentials: crate::credentials::settings::CredentialSettings,
+    #[serde(default)]
+    goal: GoalSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -734,6 +750,8 @@ pub struct Config {
     /// Credential backend selection + host-authored scoped grants (`F-18`).
     /// Defaults to the private `file` backend with no grants — zero drift.
     pub credentials: crate::credentials::settings::CredentialSettings,
+    /// Goal orchestration toggles (`F-20`, `D-111`); `auto_chain` defaults to `false`.
+    pub goal: GoalSettings,
     env: Environment,
 }
 impl Config {
@@ -1216,6 +1234,7 @@ pub fn load(
         file_text: doc.file_text,
         checkpoint: doc.checkpoint,
         credentials: doc.credentials,
+        goal: doc.goal,
         env,
     })
 }

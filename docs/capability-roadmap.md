@@ -362,7 +362,9 @@ Goal 生命周期与四工作模式分别表达。每次工具执行经过当前
 
 **N6 规划中增量（已由 `D-080` 定案，未实现）**：S3（`DEV-091` 至 `DEV-092`）在不重做现有 N4 Goal 的前提下，为 `GoalStep` 增加可选宿主验证器（仅结构化 argv，禁隐式 shell 拼接）；支持 `goal plan` 提议或 `--plan-file`／CLI 指定，并强制经 `goal confirm` 人工展示锁定，执行走原生沙箱与现行 `deny`／权限规则（`PLAN` 禁执行），`goal start --auto` 仅在宿主退出码为 0 并落库证据后前进、失败则在预算与 `max_replans` 内重规划，模型自述不得单独关闭 Goal。详见[N6 规划](n6-plan.md)。
 
-**已确认增量（D-111、D-112，方向定案）**：(1) **自动推进链**——`auto_chain` opt-in 下步骤 `passed`＋verifier 集合未变＋预算未超＋无 unknown 时自动调度后续步骤，verifier 失败仍 `replan_failed_step`、unknown/取消/`!verifiers_confirmed()` 保守停止；(2) **Goal×子 Agent 委派**（依赖 D-109/D-110）——`GoalStep.delegate.subagent` 使委派 step 的 Run spawn 持久子 Agent，step verifier 仍在 Goal 宿主侧执行，结合 auto_chain 可实现跨 run 自动 Goal 链。
+**已实现增量（D-111）**：**自动推进链**——`GoalRecord.auto_chain` opt-in（`goal start --auto --chain` 或 `[goal] auto_chain`），步骤宿主 verifier `passed`＋`confirmed_verifiers_digest` 未变＋预算未超＋无 `waiting_unknown` 时持久 worker 自动调度下一 pending 步骤的 Run + verifier，每步独立 Run／租约／dispatch 记录；verifier 失败仍在 `max_replans` 内 `replan_failed_step`，unknown／取消／超时／`!verifiers_confirmed()` 各进入既有 `waiting`／`blocked`／`limit_reached` 且绝不自动重放。普通 `start --auto`（未开启 `auto_chain`）不被 `goal worker` 隐式恢复——持久自动推进只属于显式链式授权。`goal status`／`report` 展示链进度；桌面端经 helper `goal_start` 时按 `[goal] auto_chain` 配置启用。详见[Goal 设计](goal.md)。
+
+**方向定案（D-112，未实现）**：**Goal×子 Agent 委派**（依赖 D-109/D-110）——`GoalStep.delegate.subagent` 使委派 step 的 Run spawn 持久子 Agent，step verifier 仍在 Goal 宿主侧执行，结合 auto_chain 可实现跨 run 自动 Goal 链。
 
 ## F-21 实验性程序化工具编排（已实现 · opt-in）
 
