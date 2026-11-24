@@ -94,8 +94,8 @@ GitHub Actions 使用 Rust 1.99.1 与相同的检查脚本，配置原生 runner
 
 | 目标平台 | 支持状态 | 原生沙箱与实测范围 | 未覆盖／阻塞说明 |
 | --- | --- | --- | --- |
-| `macos-aarch64` | 已支持 | Seatbelt（`/usr/bin/sandbox-exec`，后代清理为 `best_effort`）、CLI/TUI/Desktop、Colima VM Browser | 本机无原生 Chromium 遮蔽引擎，走专用 VM |
-| `macos-x86_64` | 已支持 | Seatbelt、CLI/TUI/Desktop | 同上（由 GitHub Actions `macos-15-intel` 验证） |
+| `macos-aarch64` | 已支持 | Seatbelt（`/usr/bin/sandbox-exec`，后代清理为 `best_effort`）、CLI/TUI/Desktop、Colima VM Browser | 本机无原生 Chromium 遮蔽引擎；定制遮蔽 `headless_shell` 为 Linux ELF，仅 VM guest 分发，macOS 双架构均不覆盖 |
+| `macos-x86_64` | 已支持 | Seatbelt、CLI/TUI/Desktop | 同上：定制遮蔽 `headless_shell` 为 Linux ELF，macOS 不覆盖（由 GitHub Actions `macos-15-intel` 验证） |
 | `linux-x86_64` | 已支持 | Bubblewrap（>= 0.13.1）+ Seccomp + socat、CLI/TUI/Desktop、Playwright Chromium Sandbox | 预编译定制遮蔽 `headless_shell` 仅针对 `linux-arm64` 构建分发 |
 | `linux-aarch64` | 已支持 | Bubblewrap（>= 0.13.1）+ Seccomp + socat、CLI/TUI/Desktop、`linux-arm64` 定制遮蔽 `headless_shell` | — |
 | `windows` | **不支持** | 阻塞边界（F-01 / F-15）：尚未实现 AppContainer／Job 原生沙箱及 POSIX `0700` 私有存储等效 DACL/ACL | 不得以纯编译代替安全隔离承诺；`soyo doctor` 亦显式报告 `unsupported` |

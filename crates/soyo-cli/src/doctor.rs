@@ -720,12 +720,12 @@ fn platform_support_matrix() -> Vec<PlatformSupportEntry> {
         PlatformSupportEntry {
             target: "macos-aarch64",
             status: "supported",
-            scope: "Seatbelt sandbox (process cleanup best_effort); CLI/TUI/Desktop; Colima VM browser",
+            scope: "Seatbelt sandbox (process cleanup best_effort); CLI/TUI/Desktop; Colima VM browser; custom masked headless_shell unsupported (Linux ELF, VM guest only)",
         },
         PlatformSupportEntry {
             target: "macos-x86_64",
             status: "supported",
-            scope: "Seatbelt sandbox (process cleanup best_effort); CLI/TUI/Desktop",
+            scope: "Seatbelt sandbox (process cleanup best_effort); CLI/TUI/Desktop; custom masked headless_shell unsupported (Linux ELF, VM guest only)",
         },
         PlatformSupportEntry {
             target: "linux-x86_64",
