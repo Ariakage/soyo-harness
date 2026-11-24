@@ -182,6 +182,7 @@ impl Assembler<'_> {
                         argv,
                         cwd: Some(cwd),
                         env: process.environment_references.clone(),
+                        env_credential_refs: std::collections::BTreeMap::new(),
                     }),
                     Some(process),
                     environment,

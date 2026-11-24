@@ -1,5 +1,6 @@
 mod approval;
 mod chat;
+mod credentials_commands;
 mod doctor;
 mod events;
 mod export;
@@ -151,6 +152,11 @@ enum Command {
     Mcp {
         #[command(subcommand)]
         action: mcp::McpAction,
+    },
+    /// Administer host-held credentials: list, import, rotate, revoke, grants, OAuth login.
+    Credentials {
+        #[command(subcommand)]
+        action: credentials_commands::CredentialsAction,
     },
     /// Manage runtime capability module switches (`browser`, `vm`).
     Module(module_commands::ModuleArgs),
@@ -1657,6 +1663,10 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Mcp { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),
             Ok(config) => mcp::run(&config, action).await,
+        },
+        Some(Command::Credentials { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => credentials_commands::run(&config, action).await,
         },
         Some(Command::Goal { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),

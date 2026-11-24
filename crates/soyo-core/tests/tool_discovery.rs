@@ -242,6 +242,7 @@ fn dummy_server_settings(eager_tools: BTreeSet<String>) -> McpServerSettings {
             argv: vec!["true".into()],
             cwd: None,
             env: BTreeMap::new(),
+            env_credential_refs: BTreeMap::new(),
         }),
         read_only_tools: BTreeSet::new(),
         eager_tools,
@@ -465,6 +466,7 @@ async fn mcp_defer_overrides_and_eager_tools_are_respected()
             Environment::default(),
             None,
             Arc::new(SecretRegistry::default()),
+            None,
         )?;
     register_fake_tools(&runtime, "billing", "r1", 24, 24, calls.clone());
     let defs = runtime.model_tool_definitions(WorkMode::Work)?;
@@ -491,6 +493,7 @@ async fn mcp_defer_overrides_and_eager_tools_are_respected()
             Environment::default(),
             None,
             Arc::new(SecretRegistry::default()),
+            None,
         )?;
     register_fake_tools(&runtime, "billing", "r1", 2, 2, calls.clone());
     let result = runtime.run(&mut session).await?;
@@ -523,6 +526,7 @@ async fn mcp_defer_overrides_and_eager_tools_are_respected()
             Environment::default(),
             None,
             Arc::new(SecretRegistry::default()),
+            None,
         )?;
     register_fake_tools(&runtime, "billing", "r1", 5, 5, calls);
     let defs = runtime.model_tool_definitions(WorkMode::Work)?;

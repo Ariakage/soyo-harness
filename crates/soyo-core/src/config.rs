@@ -236,6 +236,11 @@ pub struct Profile {
     pub model: String,
     pub auth: Auth,
     pub api_key_env: Option<String>,
+    /// Resolve the API key from the credential store instead of the
+    /// environment. Mutually exclusive with `api_key_env`; value is a
+    /// `CredentialRef` UUID bound to this profile's exact `base_url` scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_ref: Option<String>,
     pub context_window_tokens: u64,
     /// Resolved request target. Explicit configuration overrides the declared
     /// model default, which otherwise falls back to 65,536 tokens.
@@ -311,6 +316,7 @@ struct RawProfile {
     model: String,
     auth: Auth,
     api_key_env: Option<String>,
+    api_key_ref: Option<String>,
     context_window_tokens: u64,
     max_output_tokens: Option<u32>,
     limit: Option<ProfileLimits>,
@@ -365,6 +371,7 @@ impl TryFrom<RawProfile> for Profile {
             model: raw.model,
             auth: raw.auth,
             api_key_env: raw.api_key_env,
+            api_key_ref: raw.api_key_ref,
             context_window_tokens: raw.context_window_tokens,
             max_output_tokens,
             limit: raw.limit,
@@ -668,6 +675,8 @@ struct Document {
     tasks: TaskQueueSettings,
     #[serde(default)]
     file_text: FileTextSettings,
+    #[serde(default)]
+    credentials: crate::credentials::settings::CredentialSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -708,6 +717,9 @@ pub struct Config {
     pub tasks: TaskQueueSettings,
     /// Opt-in File-artifact text extraction (`F-11`); `enabled` defaults to `false`.
     pub file_text: FileTextSettings,
+    /// Credential backend selection + host-authored scoped grants (`F-18`).
+    /// Defaults to the private `file` backend with no grants — zero drift.
+    pub credentials: crate::credentials::settings::CredentialSettings,
     env: Environment,
 }
 impl Config {
@@ -939,17 +951,32 @@ fn validate_profile(p: &Profile, env: &Environment) -> Result<(), BoundaryError>
             "API base URL requires HTTPS or explicit remote HTTP opt-in",
         ));
     }
-    match (p.auth, &p.api_key_env) {
-        (Auth::None, None) => {}
-        (Auth::None, Some(_)) | (_, None) => {
+    if p.api_key_env.is_some() && p.api_key_ref.is_some() {
+        return Err(invalid(
+            "api_key_env and api_key_ref are mutually exclusive",
+        ));
+    }
+    if let Some(reference) = &p.api_key_ref {
+        reference
+            .parse::<crate::credentials::CredentialRef>()
+            .map_err(|_| invalid("api_key_ref is not a valid credential reference"))?;
+    }
+    match (p.auth, &p.api_key_env, &p.api_key_ref) {
+        (Auth::None, None, None) => {}
+        (Auth::None, _, _) | (_, None, None) => {
             return Err(invalid(
                 "authentication and API key reference are inconsistent",
             ));
         }
-        (_, Some(name)) => {
+        (_, Some(name), None) => {
             HeaderValue::from_str(env.reference(name)?)
                 .map_err(|_| invalid("invalid authentication value"))?;
         }
+        (_, None, Some(_)) => {
+            // api_key_ref resolves through the credential store at runtime;
+            // existence/scope/revocation are checked at resolve time, not here.
+        }
+        (_, Some(_), Some(_)) => unreachable!(),
     }
     if p.anthropic_official_provider && p.protocol != Protocol::AnthropicMessages {
         return Err(invalid(
@@ -1058,6 +1085,7 @@ pub fn load(
     doc.subagents.validate()?;
     doc.code_intel.validate(&env)?;
     doc.file_text.validate()?;
+    doc.credentials.validate()?;
     if doc
         .memory
         .default_fact_ttl_seconds
@@ -1172,6 +1200,7 @@ pub fn load(
         routing: doc.routing,
         code_intel: doc.code_intel,
         file_text: doc.file_text,
+        credentials: doc.credentials,
         env,
     })
 }

@@ -829,6 +829,7 @@ async fn runtime_exposes_and_redacts_mcp_resources_and_prompts_only_when_adverti
                     ],
                     cwd: None,
                     env: BTreeMap::new(),
+                    env_credential_refs: BTreeMap::new(),
                 }),
                 read_only_tools: BTreeSet::new(),
                 eager_tools: BTreeSet::new(),
@@ -846,7 +847,7 @@ async fn runtime_exposes_and_redacts_mcp_resources_and_prompts_only_when_adverti
         .unwrap()
         .with_execution_settings(sandbox, None)
         .unwrap()
-        .with_mcp_settings(settings, environment, None, registry)
+        .with_mcp_settings(settings, environment, None, registry, None)
         .unwrap();
     let mut session_mut = session;
     let res = runtime.run(&mut session_mut).await.unwrap();
@@ -943,6 +944,7 @@ async fn runtime_exposes_and_redacts_mcp_resources_and_prompts_only_when_adverti
                     ],
                     cwd: None,
                     env: BTreeMap::new(),
+                    env_credential_refs: BTreeMap::new(),
                 }),
                 read_only_tools: BTreeSet::new(),
                 eager_tools: BTreeSet::new(),
@@ -964,6 +966,7 @@ async fn runtime_exposes_and_redacts_mcp_resources_and_prompts_only_when_adverti
             Environment::from_pairs(std::env::vars_os()),
             None,
             Arc::new(SecretRegistry::default()),
+            None,
         )
         .unwrap();
     runtime2.run(&mut session2).await.unwrap();

@@ -78,7 +78,7 @@ flowchart TD
 | F-15 | 平台与分发完善 | 后期（已交付 `soyo doctor`；Windows 阻塞） | F-01、F-14 | 四平台非 Windows 目标安装与自检，明确支持矩阵与阻断诊断 |
 | F-16 | 模型路由与故障切换 | 中 | F-06、F-12、F-18 | 按能力、预算和可用性选择已配置模型 |
 | F-17 | 项目索引与 LSP 代码智能 | 高 | F-01、F-06 | 基于符号、引用和诊断理解代码，减少全文扫描 |
-| F-18 | 统一凭据与身份管理 | 高，配套第一批 | MVP 配置；执行侧注入依赖 F-01 | 管理服务凭据、授权范围、续期与撤销 |
+| F-18 | 统一凭据与身份管理 | 高，配套第一批 | 统一后端（`file`/`system`）+ 受控注入已交付 | 管理服务凭据、授权范围、续期与撤销 |
 | F-19 | Session Export | 近期 | MVP SQLite、只读一致性快照与脱敏 | 导出 Markdown／JSON 对话与可选工具、运行数据 |
 | F-20 | Goal 目标编排 | 分阶段 | 手动阶段依赖应用／存储；自动阶段依赖 F-01、F-05、F-06、F-08、F-12 | 定义目标与证据，手动推进后扩展有限自动续跑 |
 | F-21 | 实验性程序化工具编排（只读 Code Mode 风格 REPL） | 已实现（默认关闭，D-083/D-084） | F-01、F-02、F-04、F-06 | 在默认关闭的 opt-in 下，由沙箱内只读 QuickJS/Node 脚本编排多步只读工具并仅回传过滤结果，每次底层调用仍走既有权限与 Hooks |
@@ -319,7 +319,9 @@ GUI 方向已于 D-072 确认为 Tauri 2 + in-process 桌面端 `soyo-desktop`�
 
 **价值**：为模型、MCP、插件与远程任务提供一致的凭据生命周期和作用域。
 
-N2 已实现远程 MCP 所需子集，包括私有文件存储、环境变量导入、OAuth 登录、作用域绑定引用、刷新与永久撤销。首个存储后端为 0700／0600 私有明文文件，动态已知凭据集合接入模型、持久化、事件与界面边界。管理入口与本机、四平台联合验收已通过。系统凭据库、通用账号管理和插件／远程任务的统一身份继续按后续范围推进。[MCP 与凭据管理](mcp.md)
+N2 已实现远程 MCP 所需子集，包括私有文件存储、环境变量导入、OAuth 登录、作用域绑定引用、刷新与永久撤销。首个存储后端为 0700／0600 私有明文文件，动态已知凭据集合接入模型、持久化、事件与界面边界。管理入口与本机、四平台联合验收已通过。
+
+Batch 3 收尾补上了统一凭据层：`CredentialStore` 把元数据索引（仍走 0700 私有文件索引、保持 `file` 后端零漂移）与 material 后端分离，`[credentials] backend` 显式选择 `file`（默认）或 `system`；`system` 目前实现 macOS Keychain（`security-framework`），其余平台返回 `credential_backend_unavailable`、绝不静默回退到明文。`CredentialGrant`（绑定 `CredentialRef` + 工作区身份 + run kind + 工具名集合 + 过期时间）与 URL 绑定的 `CredentialScope` 分治——`env_credential_refs` 的 stdio MCP 注入必须同时通过 scope 匹配与 grant 门（`resolve_granted`），绝不把整套宿主凭据交给子进程。`soyo credentials list|import|revoke|rotate|grant|grant-revoke|grant-list|login` 统一管理、不再要求启用的 MCP server；`rotate` 对 secret 类凭据原地换值并 `revision` 自增（OAuth 经刷新/重新登录轮换），`import`/`revoke`/`login`/`grant` 写脱敏 `credential.event` 审计行。模型 profile 的 `api_key_ref` 也走 `credential_ref` 间接层。[MCP 与凭据管理](mcp.md)
 
 - 在 MVP 的环境变量引用之上增加系统凭据存储或受支持的安全后端，配置与会话只保存引用。
 - 管理 OAuth 登录、令牌续期、清除／撤销与账号切换；显示凭据用途和授权范围。

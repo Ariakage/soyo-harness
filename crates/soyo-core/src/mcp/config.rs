@@ -79,6 +79,11 @@ pub struct StdioMcpSettings {
     /// Destination environment name to captured host environment reference name.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Destination environment name to host credential reference. Resolved at
+    /// launch through the credential store's grant gate — the child receives
+    /// only the explicitly granted references, never the host secret set.
+    #[serde(default)]
+    pub env_credential_refs: BTreeMap<String, CredentialRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +215,11 @@ impl McpSettings {
                         || settings.env.len() > 64
                         || settings.env.iter().any(|(destination, source)| {
                             !valid_env_name(destination) || !valid_env_name(source)
+                        })
+                        || settings.env_credential_refs.len() > 32
+                        || settings.env_credential_refs.iter().any(|(destination, _)| {
+                            !valid_env_name(destination)
+                                || settings.env.contains_key(destination)
                         })
                     {
                         return Err(error(

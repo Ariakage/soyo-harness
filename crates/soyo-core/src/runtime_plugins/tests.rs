@@ -428,6 +428,7 @@ async fn normal_runtime_fails_closed_on_host_backend_before_model_or_plugin_star
             Environment::default(),
             None,
             fixture.secrets.clone(),
+            None,
         )
         .unwrap();
     runtime

@@ -540,3 +540,274 @@ async fn metadata_listing_rechecks_values_learned_from_later_records() {
         "credential_scope"
     );
 }
+
+// --- F-18: backend selection, scoped grants, rotation, controlled resolve ---
+
+use soyo_core::credentials::{
+    CredentialBackend, CredentialStore as HostCredentialStore, GrantRunKind, GrantStore,
+};
+
+fn backend_store() -> (tempfile::TempDir, HostCredentialStore, Arc<SecretRegistry>) {
+    let directory = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(SecretRegistry::default());
+    let store = HostCredentialStore::open_backend(
+        CredentialBackend::File,
+        directory.path(),
+        secrets.clone(),
+    )
+    .unwrap();
+    (directory, store, secrets)
+}
+
+#[test]
+fn default_backend_is_file_and_system_fails_closed_where_unsupported() {
+    assert_eq!(CredentialBackend::default(), CredentialBackend::File);
+    // `system` is opt-in. Where the platform cannot serve it the open must be
+    // an explicit error, never a silent file fallback.
+    if !CredentialBackend::system_supported() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = HostCredentialStore::open_backend(
+            CredentialBackend::System,
+            directory.path(),
+            Arc::new(SecretRegistry::default()),
+        )
+        .unwrap_err();
+        assert_eq!(error.0.code, "credential_backend_unavailable");
+    }
+    // Selecting the file backend explicitly is identical to the default open.
+    let directory = tempfile::tempdir().unwrap();
+    let store = HostCredentialStore::open_backend(
+        CredentialBackend::File,
+        directory.path(),
+        Arc::new(SecretRegistry::default()),
+    )
+    .unwrap();
+    assert_eq!(store.backend_name(), "file");
+    assert!(store.protected_path().ends_with("credentials"));
+}
+
+#[tokio::test]
+async fn grant_gate_filters_resolution_by_kind_tool_workspace_and_expiry() {
+    let (directory, store, _) = backend_store();
+    let scope = scope("srv");
+    let reference = store
+        .create(
+            scope.clone(),
+            CredentialValue::Secret(SecretValue::new("granted-secret").unwrap()),
+        )
+        .await
+        .unwrap();
+    let grants = GrantStore::open(store.protected_path()).unwrap();
+    let now = soyo_core::credentials::now_rfc3339();
+
+    // No grant → denied for every kind.
+    for kind in [GrantRunKind::Tool, GrantRunKind::Subagent, GrantRunKind::Profile] {
+        assert_eq!(
+            store
+                .resolve_granted(reference, &scope, &grants, kind, Some("srv"), None)
+                .await
+                .unwrap_err()
+                .0
+                .code,
+            "credential_grant_denied"
+        );
+    }
+
+    // A grant for a different tool does not authorize this server.
+    let wrong_tool = soyo_core::credentials::CredentialGrant {
+        grant_id: uuid::Uuid::now_v7(),
+        reference,
+        workspaces: Default::default(),
+        run_kinds: [GrantRunKind::Tool].into_iter().collect(),
+        tools: ["other-tool".to_owned()].into_iter().collect(),
+        expires_at: None,
+        server_id: "srv".into(),
+    };
+    grants.put(&wrong_tool).unwrap();
+    assert!(!grants
+        .check(reference, GrantRunKind::Tool, Some("srv"), None, &now)
+        .unwrap());
+
+    // Matching tool grant authorizes; a different run kind still does not.
+    let grant = soyo_core::credentials::CredentialGrant {
+        grant_id: uuid::Uuid::now_v7(),
+        reference,
+        workspaces: Default::default(),
+        run_kinds: [GrantRunKind::Tool].into_iter().collect(),
+        tools: ["srv".to_owned()].into_iter().collect(),
+        expires_at: None,
+        server_id: "srv".into(),
+    };
+    grants.put(&grant).unwrap();
+    let resolved = store
+        .resolve_granted(
+            reference,
+            &scope,
+            &grants,
+            GrantRunKind::Tool,
+            Some("srv"),
+            None,
+        )
+        .await
+        .unwrap();
+    let CredentialValue::Secret(value) = resolved.value else {
+        panic!("wrong kind")
+    };
+    assert_eq!(value.expose(), "granted-secret");
+    assert!(store
+        .resolve_granted(
+            reference,
+            &scope,
+            &grants,
+            GrantRunKind::Subagent,
+            Some("srv"),
+            None,
+        )
+        .await
+        .is_err());
+
+    // Workspace-bound grant only applies to that workspace. Ids are `ws_` +
+    // 64 lowercase hex (the workspace identity digest shape).
+    let ws_id = format!("ws_{}", "a".repeat(64));
+    let other_ws = format!("ws_{}", "b".repeat(64));
+    let ws_grant = soyo_core::credentials::CredentialGrant {
+        grant_id: uuid::Uuid::now_v7(),
+        reference,
+        workspaces: [ws_id.clone()].into_iter().collect(),
+        run_kinds: [GrantRunKind::Tool].into_iter().collect(),
+        tools: Default::default(),
+        expires_at: None,
+        server_id: "srv".into(),
+    };
+    grants.put(&ws_grant).unwrap();
+    assert!(grants
+        .check(reference, GrantRunKind::Tool, None, Some(&ws_id), &now)
+        .unwrap());
+    assert!(!grants
+        .check(reference, GrantRunKind::Tool, None, Some(&other_ws), &now)
+        .unwrap());
+    assert!(!grants
+        .check(reference, GrantRunKind::Tool, None, None, &now)
+        .unwrap());
+
+    drop(directory);
+}
+
+#[tokio::test]
+async fn expired_grant_never_applies_and_revoke_drops_grants() {
+    let (_directory, store, _) = backend_store();
+    let scope = scope("srv");
+    let reference = store
+        .create(
+            scope.clone(),
+            CredentialValue::Secret(SecretValue::new("short-lived").unwrap()),
+        )
+        .await
+        .unwrap();
+    let grants = GrantStore::open(store.protected_path()).unwrap();
+    let expired = soyo_core::credentials::CredentialGrant {
+        grant_id: uuid::Uuid::now_v7(),
+        reference,
+        workspaces: Default::default(),
+        run_kinds: [GrantRunKind::Tool].into_iter().collect(),
+        tools: Default::default(),
+        expires_at: Some("2000-01-01T00:00:00Z".into()),
+        server_id: "srv".into(),
+    };
+    grants.put(&expired).unwrap();
+    let now = soyo_core::credentials::now_rfc3339();
+    assert!(!grants
+        .check(reference, GrantRunKind::Tool, None, None, &now)
+        .unwrap());
+    assert!(store
+        .resolve_granted(reference, &scope, &grants, GrantRunKind::Tool, None, None)
+        .await
+        .is_err());
+
+    // Revoke drops the grant records alongside the tombstone.
+    let removed = store.revoke(reference, &scope).await.unwrap();
+    assert!(removed >= 1);
+    assert!(grants.list().unwrap().is_empty());
+    assert_eq!(
+        store.resolve(reference, &scope).await.unwrap_err().0.code,
+        "credential_revoked"
+    );
+}
+
+#[tokio::test]
+async fn rotate_secret_keeps_reference_bumps_revision_and_fails_oauth() {
+    let (_directory, store, secrets) = backend_store();
+    let scope = scope("srv");
+    let reference = store
+        .create(
+            scope.clone(),
+            CredentialValue::Secret(SecretValue::new("value-v1").unwrap()),
+        )
+        .await
+        .unwrap();
+    let revision = store
+        .rotate_secret(reference, &scope, SecretValue::new("value-v2").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(revision, 2);
+    let resolved = store.resolve(reference, &scope).await.unwrap();
+    assert_eq!(resolved.metadata.revision, 2);
+    let CredentialValue::Secret(value) = resolved.value else {
+        panic!("wrong kind")
+    };
+    assert_eq!(value.expose(), "value-v2");
+    // Both old and new remain registered for redaction.
+    let known = secrets.snapshot().unwrap();
+    assert!(known.contains(&"value-v1".to_owned()) && known.contains(&"value-v2".to_owned()));
+
+    // OAuth credentials do not rotate in place.
+    let oauth_ref = store
+        .create(
+            scope.clone(),
+            CredentialValue::oauth(oauth("oauth-access-token", "oauth-refresh-token")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .rotate_secret(oauth_ref, &scope, SecretValue::new("unused-rotate-value").unwrap())
+            .await
+            .unwrap_err()
+            .0
+            .code,
+        "credential_kind"
+    );
+    // Revoked cannot rotate.
+    store.revoke(reference, &scope).await.unwrap();
+    assert_eq!(
+        store
+            .rotate_secret(reference, &scope, SecretValue::new("value-v3").unwrap())
+            .await
+            .unwrap_err()
+            .0
+            .code,
+        "credential_revoked"
+    );
+}
+
+#[tokio::test]
+async fn file_backend_zero_drift_revoked_record_has_no_material() {
+    let (_directory, store, _) = store();
+    let scope = scope("one");
+    let reference = store
+        .create(
+            scope.clone(),
+            CredentialValue::Secret(SecretValue::new("drift-check").unwrap()),
+        )
+        .await
+        .unwrap();
+    store.revoke(reference, &scope).await.unwrap();
+    // The tombstone keeps metadata but the on-disk record must not carry the
+    // secret material — the historical invariant `revoked == material.is_none()`.
+    let raw = std::fs::read_to_string(store.protected_path().join(format!("{reference}.json")))
+        .unwrap();
+    assert!(!raw.contains("drift-check"));
+    let record: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(record["metadata"]["revoked"], true);
+    assert!(record.get("material").is_none() || record["material"].is_null());
+}
