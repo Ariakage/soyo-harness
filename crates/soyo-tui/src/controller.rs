@@ -20,6 +20,7 @@ mod picker_tests;
 #[cfg(test)]
 mod service_tests;
 mod services;
+mod task;
 mod turn_summary;
 use crate::{
     attachments, clipboard,

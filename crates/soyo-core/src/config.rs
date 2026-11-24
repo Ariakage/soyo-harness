@@ -593,6 +593,9 @@ pub struct MemorySettings {
     pub inject: bool,
     pub write: bool,
     pub root: Option<PathBuf>,
+    /// Default time-to-live for facts the model writes without an explicit
+    /// `expires_in_seconds`. `None` keeps new facts permanent by default.
+    pub default_fact_ttl_seconds: Option<u64>,
 }
 impl Default for MemorySettings {
     fn default() -> Self {
@@ -601,8 +604,21 @@ impl Default for MemorySettings {
             inject: true,
             write: true,
             root: None,
+            default_fact_ttl_seconds: None,
         }
     }
+}
+/// Persistent cross-run task queue (`F-08`). Disabled unless `enabled = true`:
+/// submit/list/pause/cancel/explicit-resume for durable tasks that survive a
+/// restart. Unknown side-effects are never auto-replayed.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct TaskQueueSettings {
+    pub enabled: bool,
+    /// Cap on tasks held in the durable queue (default falls back to Limits).
+    pub max_tasks: Option<usize>,
+    /// Cap on tasks a single worker drives concurrently (default 1).
+    pub max_running: Option<usize>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -646,6 +662,8 @@ struct Document {
     routing: RoutingSettings,
     #[serde(default)]
     code_intel: CodeIntelSettings,
+    #[serde(default)]
+    tasks: TaskQueueSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -682,6 +700,8 @@ pub struct Config {
     pub routing: RoutingSettings,
     /// Opt-in project indexing and sandboxed LSP code intelligence (`F-17`); `enabled` defaults to `false`.
     pub code_intel: CodeIntelSettings,
+    /// Opt-in persistent cross-run task queue (`F-08`); `enabled` defaults to `false`.
+    pub tasks: TaskQueueSettings,
     env: Environment,
 }
 impl Config {
@@ -1032,6 +1052,13 @@ pub fn load(
     doc.subagents.validate()?;
     doc.code_intel.validate(&env)?;
     if doc
+        .memory
+        .default_fact_ttl_seconds
+        .is_some_and(|seconds| seconds == 0 || seconds > 5 * 365 * 24 * 3600)
+    {
+        return Err(invalid("memory default_fact_ttl_seconds is out of range"));
+    }
+    if doc
         .review
         .max_output_tokens
         .is_some_and(|tokens| tokens == 0 || tokens > MAX_OUTPUT_TOKENS)
@@ -1128,6 +1155,7 @@ pub fn load(
         output_capture: doc.output_capture,
         context: doc.context,
         memory: doc.memory,
+        tasks: doc.tasks,
         plugins: doc.plugins,
         hooks: doc.hooks,
         web: doc.web,

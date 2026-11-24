@@ -219,6 +219,15 @@ impl App {
         if name == "/goal" {
             return self.goal(argument).await;
         }
+        if name == "/tasks" {
+            if !argument.is_empty() {
+                return Err(text::TASKS_NO_ARGUMENTS.into());
+            }
+            return self.open_tasks().await;
+        }
+        if name == "/task" {
+            return self.task(argument).await;
+        }
         if self.ui_job.is_some() {
             return Err(text::UI_ACTIVE.into());
         }

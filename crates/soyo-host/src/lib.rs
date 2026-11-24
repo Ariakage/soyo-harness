@@ -8,6 +8,7 @@ pub mod peripheral;
 pub mod prefs;
 pub mod server;
 pub mod service;
+pub mod task;
 
 pub use server::{HelperServer, ServerConfig};
 pub use service::{HostService, StreamSendError, StreamSink};

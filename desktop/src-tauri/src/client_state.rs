@@ -11,7 +11,8 @@ use crate::types::{
     McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModeStateDto, ModuleStatusDto,
     PermissionModeDto, PreparedMemoryReviewDto, ResumeSessionResultDto, RunStateDto,
     SandboxBackendDto, SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto,
-    SubmitPromptResultDto, UpdateDesktopPrefsParams, UsageStatsDto, WorkModeDto,
+    SubmitPromptResultDto, TaskDto, TaskJobDto, UpdateDesktopPrefsParams, UsageStatsDto,
+    WorkModeDto,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -528,6 +529,56 @@ impl DesktopState {
 
     pub async fn goal_start(&self, goal_id: &str) -> Result<GoalDto, DesktopError> {
         self.call_rpc("goal_start", &json!({ "goal_id": goal_id }))
+            .await
+    }
+
+    pub async fn task_list(&self) -> Result<Vec<TaskDto>, DesktopError> {
+        self.call_rpc("task_list", &json!({})).await
+    }
+
+    pub async fn task_jobs(&self) -> Result<Vec<TaskJobDto>, DesktopError> {
+        self.call_rpc("task_jobs", &json!({})).await
+    }
+
+    pub async fn task_status(&self, task_id: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_status", &json!({ "task_id": task_id }))
+            .await
+    }
+
+    pub async fn task_submit(&self, input: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_submit", &json!({ "input": input }))
+            .await
+    }
+
+    pub async fn task_pause(&self, task_id: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_pause", &json!({ "task_id": task_id }))
+            .await
+    }
+
+    pub async fn task_resume(&self, task_id: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_resume", &json!({ "task_id": task_id }))
+            .await
+    }
+
+    pub async fn task_cancel(&self, task_id: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_cancel", &json!({ "task_id": task_id }))
+            .await
+    }
+
+    pub async fn task_resolve(&self, task_id: &str, retry: bool) -> Result<TaskDto, DesktopError> {
+        self.call_rpc(
+            "task_resolve",
+            &json!({ "task_id": task_id, "retry": retry }),
+        )
+        .await
+    }
+
+    pub async fn task_recover(&self) -> Result<Vec<TaskDto>, DesktopError> {
+        self.call_rpc("task_recover", &json!({})).await
+    }
+
+    pub async fn task_continue(&self, task_id: &str) -> Result<TaskDto, DesktopError> {
+        self.call_rpc("task_continue", &json!({ "task_id": task_id }))
             .await
     }
 

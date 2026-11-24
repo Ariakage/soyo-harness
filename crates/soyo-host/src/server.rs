@@ -712,6 +712,48 @@ async fn dispatch(
             let r = async { service.goal_start(param_string(&params, "goal_id")?).await };
             r.await.and_then(ok)
         }
+        "task_list" => service.task_list().await.and_then(ok),
+        "task_jobs" => service.task_jobs().await.and_then(ok),
+        "task_status" => {
+            let r = async { service.task_status(param_string(&params, "task_id")?).await };
+            r.await.and_then(ok)
+        }
+        "task_submit" => {
+            let r = async { service.task_submit(param_string(&params, "input")?).await };
+            r.await.and_then(ok)
+        }
+        "task_pause" => {
+            let r = async { service.task_pause(param_string(&params, "task_id")?).await };
+            r.await.and_then(ok)
+        }
+        "task_resume" => {
+            let r = async { service.task_resume(param_string(&params, "task_id")?).await };
+            r.await.and_then(ok)
+        }
+        "task_cancel" => {
+            let r = async { service.task_cancel(param_string(&params, "task_id")?).await };
+            r.await.and_then(ok)
+        }
+        "task_resolve" => {
+            let r = async {
+                service
+                    .task_resolve(
+                        param_string(&params, "task_id")?,
+                        param_bool(&params, "retry")?,
+                    )
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "task_recover" => service.task_recover().await.and_then(ok),
+        "task_continue" => {
+            let r = async {
+                service
+                    .task_continue(param_string(&params, "task_id")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
         "get_experimental_settings" => service.get_experimental_settings().await.and_then(ok),
         "set_js_repl_enabled" => {
             let r = async {

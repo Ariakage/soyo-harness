@@ -63,6 +63,16 @@ export const commands = {
 	goalReport: (goalId: string, format: string) => typedError<GoalReportDto, DesktopError>(__TAURI_INVOKE("goal_report", { goalId, format })),
 	goalContinue: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_continue", { goalId })),
 	goalStart: (goalId: string) => typedError<GoalDto_Serialize, DesktopError>(__TAURI_INVOKE("goal_start", { goalId })),
+	taskList: () => typedError<TaskDto_Serialize[], DesktopError>(__TAURI_INVOKE("task_list")),
+	taskJobs: () => typedError<TaskJobDto_Serialize[], DesktopError>(__TAURI_INVOKE("task_jobs")),
+	taskStatus: (taskId: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_status", { taskId })),
+	taskSubmit: (input: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_submit", { input })),
+	taskPause: (taskId: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_pause", { taskId })),
+	taskResume: (taskId: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_resume", { taskId })),
+	taskCancel: (taskId: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_cancel", { taskId })),
+	taskResolve: (taskId: string, retry: boolean) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_resolve", { taskId, retry })),
+	taskRecover: () => typedError<TaskDto_Serialize[], DesktopError>(__TAURI_INVOKE("task_recover")),
+	taskContinue: (taskId: string) => typedError<TaskDto_Serialize, DesktopError>(__TAURI_INVOKE("task_continue", { taskId })),
 	getExperimentalSettings: () => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("get_experimental_settings")),
 	setJsReplEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_js_repl_enabled", { enabled })),
 	setSubagentsEnabled: (enabled: boolean) => typedError<ExperimentalSettingsDto, DesktopError>(__TAURI_INVOKE("set_subagents_enabled", { enabled })),
@@ -1213,6 +1223,98 @@ export type SubmitPromptResultDto_Serialize = {
 	recovered_runs?: number,
 	/**  Tool outcomes left unknown by recovery (`run_prompt`). */
 	recovered_tools?: number,
+};
+
+/**
+ *  Complete Task projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`continue`), if any.
+ */
+export type TaskDto = TaskDto_Serialize | TaskDto_Deserialize;
+
+/**
+ *  Complete Task projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`continue`), if any.
+ */
+export type TaskDto_Deserialize = {
+	task_id: string,
+	session_id: string,
+	workspace: string,
+	profile: string,
+	mode: string,
+	permissions: string,
+	input: string,
+	status: string,
+	failure?: string | null,
+	last_run_id?: string | null,
+	last_result?: TaskRunSummaryDto_Deserialize | null,
+	running_action?: string | null,
+	created_at: string,
+	updated_at: string,
+};
+
+/**
+ *  Complete Task projection for the desktop surface. `running_action` names
+ *  the in-flight helper job (`continue`), if any.
+ */
+export type TaskDto_Serialize = {
+	task_id: string,
+	session_id: string,
+	workspace: string,
+	profile: string,
+	mode: string,
+	permissions: string,
+	input: string,
+	status: string,
+	failure: string | null,
+	last_run_id: string | null,
+	last_result: TaskRunSummaryDto_Serialize | null,
+	running_action: string | null,
+	created_at: string,
+	updated_at: string,
+};
+
+/**  In-flight helper Task job surfaced for badges and stop controls. */
+export type TaskJobDto = TaskJobDto_Serialize | TaskJobDto_Deserialize;
+
+/**  In-flight helper Task job surfaced for badges and stop controls. */
+export type TaskJobDto_Deserialize = {
+	task_id: string,
+	action: string,
+	state: string,
+	error?: string | null,
+};
+
+/**  In-flight helper Task job surfaced for badges and stop controls. */
+export type TaskJobDto_Serialize = {
+	task_id: string,
+	action: string,
+	state: string,
+	error: string | null,
+};
+
+/**  Persisted summary of a Task's last finished Run attempt. */
+export type TaskRunSummaryDto = TaskRunSummaryDto_Serialize | TaskRunSummaryDto_Deserialize;
+
+/**  Persisted summary of a Task's last finished Run attempt. */
+export type TaskRunSummaryDto_Deserialize = {
+	run_id: string,
+	status: string,
+	stop_reason?: string | null,
+	text?: string | null,
+	error_code?: string | null,
+	persistence_saved: boolean,
+	finished_at: string,
+};
+
+/**  Persisted summary of a Task's last finished Run attempt. */
+export type TaskRunSummaryDto_Serialize = {
+	run_id: string,
+	status: string,
+	stop_reason: string | null,
+	text: string | null,
+	error_code: string | null,
+	persistence_saved: boolean,
+	finished_at: string,
 };
 
 export type ThinkingSnapshotDto = {

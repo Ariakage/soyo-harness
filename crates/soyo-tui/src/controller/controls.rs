@@ -712,7 +712,7 @@ impl App {
             }
             "/new" | "/profile" | "/model" | "/profiles" | "/resume" | "/resume-accept"
             | "/sessions" | "/tools" | "/jobs" | "/export" | "/export-full" | "/cancel-job"
-            | "/goals" | "/goal" => self.service(name, argument).await?,
+            | "/goals" | "/goal" | "/tasks" | "/task" => self.service(name, argument).await?,
             _ => return Err(text::UNKNOWN_COMMAND.into()),
         }
         Ok(false)

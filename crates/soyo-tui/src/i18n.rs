@@ -63,6 +63,15 @@ pub(crate) mod command {
     pub const GOAL_REPORT: &str = "Open the complete Goal report";
     pub const GOAL_VERIFY: &str = "Record user evidence for one acceptance criterion";
     pub const GOAL_REPLAN: &str = "Apply one bounded replan to a known failed step";
+    pub const TASKS: &str = "List durable Tasks";
+    pub const TASK_SUBMIT: &str = "Submit a durable Task with a dedicated session";
+    pub const TASK_STATUS: &str = "Show one durable Task";
+    pub const TASK_CONTINUE: &str = "Drive one queued Task attempt";
+    pub const TASK_PAUSE: &str = "Pause a queued, running or blocked Task";
+    pub const TASK_RESUME: &str = "Requeue a paused Task";
+    pub const TASK_CANCEL: &str = "Cancel a non-terminal Task";
+    pub const TASK_RESOLVE: &str = "Resolve a Task waiting on an unknown Run outcome";
+    pub const TASK_RECOVER: &str = "Recover in-flight Tasks whose worker lease expired";
     pub const THINKING_LEVEL: &str = "Set thinking effort for subsequent requests";
     pub const AUTOCOMPACT_AUTO: &str = "Restore the configured percentage trigger";
     pub const AUTOCOMPACT_OFF: &str = "Disable automatic compaction";
@@ -631,6 +640,11 @@ pub(crate) mod services {
     pub const GOAL_VERIFIER_UNCONFIRMED: &str = "unconfirmed";
     pub const GOAL_VERIFIER_UNCONFIRMED_START: &str =
         "Goal step verifiers require confirmation before automatic start";
+    pub const TASK_USAGE: &str =
+        "Use /task submit|status|continue|pause|resume|cancel|resolve|recover";
+    pub const TASKS_NO_ARGUMENTS: &str = "Use /tasks without arguments";
+    pub const TASK_SUBMIT_USAGE: &str = "Use /task submit INPUT";
+    pub const TASK_MANUAL_UNAVAILABLE: &str = "Task execution in TUI requires auto or bypass permissions. Use the CLI for manual approvals.";
     pub const HISTORY_OMITTED: &str = "Earlier stored history is omitted from this view. Use session export to inspect the full history.";
     pub const SESSION_RESTORED: &str = "Session restored. Waiting for new input.";
     pub const NEW_SESSION_READY: &str = "New session ready. Waiting for your message.";

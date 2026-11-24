@@ -11,6 +11,7 @@ mod memory_commands;
 mod module_commands;
 mod plugin_commands;
 mod signals;
+mod task_commands;
 mod terminal;
 use soyo_app::{new_session, session};
 use terminal::{
@@ -130,6 +131,11 @@ enum Command {
     Goal {
         #[command(subcommand)]
         action: goal_commands::GoalAction,
+    },
+    /// Submit, inspect and continue durable cross-run Tasks.
+    Task {
+        #[command(subcommand)]
+        action: task_commands::TaskAction,
     },
     /// Inspect and administer the configured managed global memory.
     Memory {
@@ -1655,6 +1661,13 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Goal { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),
             Ok(config) => match goal_commands::run(action, cli, &config).await {
+                Ok(code) => code,
+                Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
+            },
+        },
+        Some(Command::Task { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match task_commands::run(action, cli, &config).await {
                 Ok(code) => code,
                 Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
             },

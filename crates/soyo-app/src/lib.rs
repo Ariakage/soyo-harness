@@ -9,6 +9,7 @@ pub mod interaction;
 pub mod mcp;
 pub mod memory_admin;
 pub mod session;
+pub mod task_queue;
 pub mod thinking;
 use soyo_core::{
     approvals::Preauthorizations,

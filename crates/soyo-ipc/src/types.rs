@@ -1264,6 +1264,47 @@ pub struct GoalReportDto {
     pub content: String,
 }
 
+/// Persisted summary of a Task's last finished Run attempt.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct TaskRunSummaryDto {
+    pub run_id: String,
+    pub status: String,
+    pub stop_reason: Option<String>,
+    pub text: Option<String>,
+    pub error_code: Option<String>,
+    pub persistence_saved: bool,
+    pub finished_at: String,
+}
+
+/// Complete Task projection for the desktop surface. `running_action` names
+/// the in-flight helper job (`continue`), if any.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct TaskDto {
+    pub task_id: String,
+    pub session_id: String,
+    pub workspace: String,
+    pub profile: String,
+    pub mode: String,
+    pub permissions: String,
+    pub input: String,
+    pub status: String,
+    pub failure: Option<String>,
+    pub last_run_id: Option<String>,
+    pub last_result: Option<TaskRunSummaryDto>,
+    pub running_action: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// In-flight helper Task job surfaced for badges and stop controls.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct TaskJobDto {
+    pub task_id: String,
+    pub action: String,
+    pub state: String,
+    pub error: Option<String>,
+}
+
 /// Experimental feature toggles surfaced in Settings. Each flag mutates the
 /// helper's loaded configuration and applies to newly created sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

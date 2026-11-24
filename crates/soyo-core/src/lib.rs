@@ -53,6 +53,7 @@ pub mod runtime;
 pub mod skills;
 pub mod sqlite;
 pub mod subagent;
+pub mod task_queue;
 pub use soyo_contract::text;
 pub mod tools;
 mod wal_recovery;

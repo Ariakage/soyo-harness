@@ -238,6 +238,42 @@ pub const COMMANDS: &[Suggestion] = &[
         text: "/goal replan ",
         description: text::GOAL_REPLAN,
     },
+    Suggestion {
+        text: "/tasks",
+        description: text::TASKS,
+    },
+    Suggestion {
+        text: "/task submit ",
+        description: text::TASK_SUBMIT,
+    },
+    Suggestion {
+        text: "/task status ",
+        description: text::TASK_STATUS,
+    },
+    Suggestion {
+        text: "/task continue ",
+        description: text::TASK_CONTINUE,
+    },
+    Suggestion {
+        text: "/task pause ",
+        description: text::TASK_PAUSE,
+    },
+    Suggestion {
+        text: "/task resume ",
+        description: text::TASK_RESUME,
+    },
+    Suggestion {
+        text: "/task cancel ",
+        description: text::TASK_CANCEL,
+    },
+    Suggestion {
+        text: "/task resolve ",
+        description: text::TASK_RESOLVE,
+    },
+    Suggestion {
+        text: "/task recover",
+        description: text::TASK_RECOVER,
+    },
 ];
 
 /// Completion state for a single editor prefix. Updates perform no I/O.
@@ -445,6 +481,15 @@ mod tests {
             "/goal report ",
             "/goal verify ",
             "/goal replan ",
+            "/tasks",
+            "/task submit ",
+            "/task status ",
+            "/task continue ",
+            "/task pause ",
+            "/task resume ",
+            "/task cancel ",
+            "/task resolve ",
+            "/task recover",
         ];
         assert_eq!(
             COMMANDS.iter().map(|item| item.text).collect::<Vec<_>>(),

@@ -8,7 +8,8 @@ use crate::{
         ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
         ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto,
         McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModuleStatusDto,
-        PreparedMemoryReviewDto, SandboxBackendDto, StagedAttachmentDto, UpdateDesktopPrefsParams,
+        PreparedMemoryReviewDto, SandboxBackendDto, StagedAttachmentDto, TaskDto, TaskJobDto,
+        UpdateDesktopPrefsParams,
     },
 };
 use tauri::State;
@@ -441,6 +442,88 @@ pub async fn goal_start(
     goal_id: String,
 ) -> Result<GoalDto, DesktopError> {
     state.goal_start(&goal_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_list(state: State<'_, DesktopState>) -> Result<Vec<TaskDto>, DesktopError> {
+    state.task_list().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_jobs(state: State<'_, DesktopState>) -> Result<Vec<TaskJobDto>, DesktopError> {
+    state.task_jobs().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_status(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_status(&task_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_submit(
+    state: State<'_, DesktopState>,
+    input: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_submit(&input).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_pause(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_pause(&task_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_resume(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_resume(&task_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_cancel(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_cancel(&task_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_resolve(
+    state: State<'_, DesktopState>,
+    task_id: String,
+    retry: bool,
+) -> Result<TaskDto, DesktopError> {
+    state.task_resolve(&task_id, retry).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_recover(state: State<'_, DesktopState>) -> Result<Vec<TaskDto>, DesktopError> {
+    state.task_recover().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_continue(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<TaskDto, DesktopError> {
+    state.task_continue(&task_id).await
 }
 
 #[tauri::command]
