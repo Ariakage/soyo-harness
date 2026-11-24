@@ -66,7 +66,7 @@ impl MemoryBackupV1 {
         }
         self.workspace.validate()?;
         document::validate(&self.document, store.limits, &store.secrets.snapshot()?)?;
-        let active = document::active_document(&self.document);
+        let active = document::active_document(&self.document, memory_now());
         if active.entries != self.document.entries || active.sources != self.document.sources {
             return Err(error(
                 "memory_backup_invalid",
@@ -183,7 +183,7 @@ impl GlobalMemoryStore {
     }
     pub fn export_backup(&self) -> Result<MemoryBackupV1, BoundaryError> {
         let loaded = self.load()?;
-        let current = document::active_document(&loaded.document);
+        let current = document::active_document(&loaded.document, memory_now());
         let document = MemoryDocument {
             schema_version: 1,
             entries: loaded.snapshot.entries.clone(),
@@ -255,7 +255,7 @@ pub(super) fn reconcile(
     backup: &MemoryBackupV1,
 ) -> Result<MemoryDocument, BoundaryError> {
     backup.validate(store)?;
-    let current_active = document::active_document(current);
+    let current_active = document::active_document(current, memory_now());
     let mut restored = backup.document.clone();
     let foreign = current_active
         .entries
@@ -295,7 +295,7 @@ pub(super) fn reconcile(
         },
     )?;
     document::validate(&restored, store.limits, &store.secrets.snapshot()?)?;
-    restored = document::active_document(&restored);
+    restored = document::active_document(&restored, memory_now());
     let required = restored
         .entries
         .iter()

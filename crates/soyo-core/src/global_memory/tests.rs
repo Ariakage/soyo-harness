@@ -34,6 +34,7 @@ pub(super) fn fact(id: &str, text: &str, source: &MemorySource) -> MemoryFact {
         }],
         aliases: Vec::new(),
         derived_from: Vec::new(),
+        expires_at: None,
     }
 }
 pub(super) fn document() -> MemoryDocument {

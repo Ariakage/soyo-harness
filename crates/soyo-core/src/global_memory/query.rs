@@ -211,13 +211,33 @@ fn field_score(text: &str, query: &Query, exact: u32, term: u32) -> u32 {
     if text.contains(&query.text) {
         return exact;
     }
-    query
+    // Per-term score: a term that aligns on a token boundary counts double.
+    // Covering every query term adds a coverage bonus so a complete match
+    // always outranks a partial one; the per-term cap keeps one dense field
+    // from dominating longer queries.
+    let matched = query
         .terms
         .iter()
         .filter(|part| text.contains(part.as_str()))
-        .take(3)
-        .count() as u32
-        * term
+        .count();
+    if matched == 0 {
+        return 0;
+    }
+    let boundary = query
+        .terms
+        .iter()
+        .filter(|part| {
+            text.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|token| token == part.as_str())
+        })
+        .count();
+    let base = (matched.min(3) as u32) * term + (boundary.min(3) as u32) * term;
+    let coverage = if matched == query.terms.len() && !query.terms.is_empty() {
+        term * 2
+    } else {
+        0
+    };
+    base + coverage
 }
 pub(super) fn ranked<'a>(
     snapshot: &'a MemorySnapshot,
@@ -263,6 +283,15 @@ pub(super) fn ranked<'a>(
                 .max()
                 .unwrap_or(0);
             let mut score = title_score + text_score + alias_score + source_score;
+            // Explicit user-stated facts rank above observed/inferred ones at
+            // equal text relevance — an explainable, additive tie-breaker.
+            if score > 0 {
+                score += match fact.kind {
+                    MemoryKind::ExplicitPreference | MemoryKind::UserCorrection => 4,
+                    MemoryKind::TaskDecision => 2,
+                    MemoryKind::ObservedFact | MemoryKind::Inference => 0,
+                };
+            }
             let mut fields = Vec::new();
             if title_score > 0 {
                 fields.push(MemoryMatchField::Title);

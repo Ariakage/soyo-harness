@@ -54,6 +54,10 @@ pub(super) struct FactArgs {
     pub(super) aliases: Vec<String>,
     #[serde(default)]
     pub(super) derived_from: Vec<String>,
+    /// Optional time-to-live in seconds; the host converts it to an absolute
+    /// `unix:<secs>` expiry at commit time. `None` means the fact never expires.
+    #[serde(default)]
+    pub(super) expires_in_seconds: Option<u64>,
     pub(super) evidence: Vec<EvidenceSelector>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +124,11 @@ fn invalid() -> BoundaryError {
         "invalid_args",
         "Memory tool arguments are invalid or exceed their limits",
     )
+}
+/// Accept a positive TTL bounded at five years so a fact never lives past a
+/// representable unix instant while rejecting `0` and absurd values.
+fn valid_ttl(seconds: u64) -> bool {
+    (1..=5 * 365 * 24 * 3600).contains(&seconds)
 }
 fn page(
     max_bytes: Option<usize>,
@@ -243,6 +252,9 @@ pub(super) fn parse(
                     })
                     || fact.derived_from.len() > 32
                     || fact.derived_from.iter().any(|id| !valid_id(id, "fact_"))
+                    || fact
+                        .expires_in_seconds
+                        .is_some_and(|value| !valid_ttl(value))
                     || fact.evidence.is_empty()
                     || fact.evidence.len() > limits.max_evidence_per_fact
                 {
@@ -297,6 +309,7 @@ pub(super) fn definitions(
         "text":{"type":"string","minLength":1,"maxLength":memory.max_fact_bytes},
         "aliases":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":256}},
         "derived_from":{"type":"array","maxItems":32,"items":id("fact_")},
+        "expires_in_seconds":{"type":"integer","minimum":1,"maximum":157680000},
         "evidence":{"type":"array","minItems":1,"maxItems":limits.max_evidence_per_fact,"items":evidence}},
         "required":["kind","text","evidence"],"additionalProperties":false});
     let page_bytes = json!({"type":"integer","minimum":1,"maximum":queries.max_page_bytes});
@@ -320,7 +333,7 @@ pub(super) fn definitions(
         ),
         (
             "memory_update",
-            "Add or update memory facts using current-session evidence selectors returned by memory_evidence. Existing facts omitted from the request remain. Use stable IDs for corrections and memory_forget for deletion. A global fact requires user-message support. Memory tool outputs cannot provide independent fact evidence. A proposal is saved only after a successful recorded result.",
+            "Add or update memory facts using current-session evidence selectors returned by memory_evidence. Existing facts omitted from the request remain. Use stable IDs for corrections and memory_forget for deletion. A global fact requires user-message support. Memory tool outputs cannot provide independent fact evidence. Set expires_in_seconds on a fact to give it a time-to-live; the fact stays in the index until its expiry then drops out of visibility without losing history. Omit it (or re-update without it) to keep a fact permanent. A proposal is saved only after a successful recorded result.",
             json!({"type":"object","properties":{"operation_id":id("op_"),"expected_revision":revision,"scope":scope,"entry_id":id("mem_"),"title":{"type":"string","minLength":1,"maxLength":256},
                 "facts":{"type":"array","maxItems":limits.max_changed_facts,"items":fact}},"required":["operation_id","expected_revision","scope","facts"],"additionalProperties":false}),
         ),

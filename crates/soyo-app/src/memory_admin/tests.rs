@@ -47,6 +47,7 @@ pub(super) fn seed(admin: &MemoryAdmin) -> String {
             }],
             aliases: vec!["focused".into()],
             derived_from: vec![],
+            expires_at: None,
         }],
         resources: vec![],
     };

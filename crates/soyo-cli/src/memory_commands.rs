@@ -406,7 +406,7 @@ fn fact_preview(fact: &MemoryFact) -> Value {
         end -= 1;
     }
     json!({"id":fact.id,"kind":fact.kind,"text":&fact.text[..end],"text_complete":end==fact.text.len(),"sources":fact.sources,
-        "aliases":fact.aliases.iter().take(8).collect::<Vec<_>>(),"aliases_omitted":fact.aliases.len().saturating_sub(8),"derived_from":fact.derived_from})
+        "aliases":fact.aliases.iter().take(8).collect::<Vec<_>>(),"aliases_omitted":fact.aliases.len().saturating_sub(8),"derived_from":fact.derived_from,"expires_at":fact.expires_at})
 }
 fn review_output(
     store: &GlobalMemoryStore,

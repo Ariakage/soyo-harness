@@ -256,6 +256,8 @@ pub struct ManagedMemoryTools {
     query_limits: MemoryQueryLimits,
     limits: ManagedMemoryLimits,
     gate: Arc<dyn MemoryGate>,
+    /// Default TTL applied to facts written without `expires_in_seconds`.
+    default_fact_ttl_seconds: Option<u64>,
 }
 impl ManagedMemoryTools {
     pub fn new(
@@ -271,7 +273,13 @@ impl ManagedMemoryTools {
             query_limits,
             limits,
             gate,
+            default_fact_ttl_seconds: None,
         })
+    }
+    /// Apply the configured default TTL to facts that carry no explicit expiry.
+    pub fn with_default_fact_ttl(mut self, seconds: Option<u64>) -> Self {
+        self.default_fact_ttl_seconds = seconds;
+        self
     }
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         args::definitions(self.store.limits(), self.query_limits, self.limits)
@@ -565,6 +573,9 @@ impl ManagedMemoryTools {
             entry.title = title.clone();
         }
         entry.updated_at = "not_recorded".into();
+        // One clock read per change so every fact shares the same expiry base
+        // and a retry of the same call resolves to an identical document.
+        let now = crate::global_memory::memory_now();
         let mut sources = std::collections::BTreeMap::new();
         for (index, fact) in args.facts.iter().enumerate() {
             let selections = fact
@@ -633,6 +644,10 @@ impl ManagedMemoryTools {
                 sources: references,
                 aliases: fact.aliases.clone(),
                 derived_from: fact.derived_from.clone(),
+                expires_at: fact
+                    .expires_in_seconds
+                    .or(self.default_fact_ttl_seconds)
+                    .map(|seconds| format!("unix:{}", now.saturating_add(seconds))),
             };
             if let Some(existing) = entry.facts.iter_mut().find(|fact| fact.id == id) {
                 *existing = replacement;

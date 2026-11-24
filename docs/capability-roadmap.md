@@ -67,8 +67,8 @@ flowchart TD
 | F-04 | Hooks 与自动化规则 | 高（已扩展 8 事件与 `[hooks]`） | F-01、F-12 | 在运行／模型／工具／澄清／压缩事件前后执行受控检查和动作 |
 | F-05 | 工作区隔离、Diff 与检查点 | 高 | MVP 文件与执行记录 | 查看、比较和恢复受控文件改动 |
 | F-06 | 上下文管理 | 高 | MVP 协议状态、F-12 | 长任务继续工作，控制上下文占用 |
-| F-07 | 全局／项目记忆与模型编辑 | 中 | F-06、F-12 | 通过可读MEMORY.md、专用工具和审阅恢复机制维护跨会话知识 |
-| F-08 | 后台与持久任务 | 高 | F-01、F-05、F-12 | 运行长任务、暂停、继续和管理任务队列 |
+| F-07 | 全局／项目记忆与模型编辑 | 中（已扩展事实 TTL 与检索增强） | F-06、F-12 | 通过可读MEMORY.md、专用工具和审阅恢复机制维护跨会话知识 |
+| F-08 | 后台与持久任务 | 高（已实现跨运行持久队列 opt-in） | F-01、F-05、F-12 | 运行长任务、暂停、继续和管理任务队列 |
 | F-09 | 多 Agent 协作 | 中 | F-01、F-05、F-06、F-08、F-12 | 将任务交给有独立上下文与预算的子 Agent |
 | F-10 | 联网读取与浏览器 | 中 | F-01、F-02 | 获取网页资料，随后扩展到受控网页操作 |
 | F-11 | 多模态与附件 | 中 | F-01、F-06 | 使用图片、PDF 和其他附件完成任务 |
@@ -177,7 +177,7 @@ ContextBuilder、OutputStore、引用检索和自动／手动 Compact 已接入�
 
 **价值**：跨会话复用项目知识，同时让用户能够查看和纠正记忆。
 
-N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／注入、五个模型工具、来源及workspace作用域、更正／遗忘、原子发布、历史回滚和 CLI／TUI 管理。DEV-084至DEV-089 已通过固定源码的四平台验收。语义检索、自动过期及更广的知识管理按后续需求扩展。[全局记忆](memory.md)、[N3 验收](n3-validation.md#四平台最终验收)
+N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／注入、五个模型工具、来源及workspace作用域、更正／遗忘、原子发布、历史回滚和 CLI／TUI 管理。DEV-084至DEV-089 已通过固定源码的四平台验收。**本批已扩展（D-092）**：`MemoryFact` 新增可选 `expires_at`（`unix:<secs>`，`skip_serializing_if` 保持向后兼容），到期事实在 `active_document` 统一过滤并从快照／读取／检索／投影中一致消失；`memory_update` 工具新增 `expires_in_seconds`（1 秒至 5 年），`[memory] default_fact_ttl_seconds` 提供默认 TTL；检索评分加入整词命中加权、全 term 覆盖加成与事实类型加权（`ExplicitPreference`/`UserCorrection`/`TaskDecision`）。语义检索与更广的知识管理按后续需求扩展。[全局记忆](memory.md)、[N3 验收](n3-validation.md#四平台最终验收)
 
 - 区分会话历史、项目记忆和用户级偏好，不把保存所有日志当作记忆系统。
 - 支持记住、查看、编辑、删除和过期；每条知识带来源、作用域和更新时间。
@@ -189,6 +189,8 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 ## F-08 后台与持久任务
 
 **价值**：将一次前台循环扩展成可以管理的长任务。D-029 已将不跨运行的后台工具纳入 MVP；下述跨运行持久队列和调度仍属于后续能力。
+
+> **实现状态（D-093）**：跨运行持久任务队列已按默认关闭（`[tasks] enabled = false`）实现：`TaskStore`（`<data_dir>/tasks/tasks.sqlite3`，0700／0600、`APPLICATION_ID 0x5354_5131`、WAL、`synchronous=FULL`、无 `workspace_leases`）与 `task_leases`＋`task_dispatches`（`(task_id, attempt)` 主键，intent→running→completed/failed/unknown）三表；`begin_attempt` 在单事务内完成租约检查＋`queued→running`＋dispatch intent 落库，崩溃后 `recover_unknown` 将到期在飞 dispatch 标记为 `waiting_unknown` 并**绝不自动重放**——只有显式 `resolve`（`retry` 重新排队或 `blocked` 挂起）或 `transition` 才能继续。每次 attempt 复用同一 `Session`，一次只驱动一个 `Run`（`run_task_once`，与 Goal `continue_once` 同型：lease 心跳、pause/cancel 控制轮询、结果按 `persistence_saved` 映射 `completed`/`failed`/`waiting_unknown`）。CLI `soyo task submit|list|status|pause|resume|cancel|resolve|continue|recover`、TUI `/task`（submit/status/continue/pause/resume/cancel/resolve/recover）与 helper RPC（`task_list`/`task_jobs`/`task_status`/`task_submit`/`task_pause`/`task_resume`/`task_cancel`/`task_resolve`/`task_recover`/`task_continue`）三端接入，桌面端经 Tauri commands 暴露同一组方法。[使用指南](usage.md)、[配置](configuration.md)。
 
 - 持久任务队列、后台 worker、任务状态与产物，支持提交、查看、取消、暂停和显式继续。
 - 明确“恢复上下文”“继续未完成步骤”“重试已执行操作”的差别，结合执行意图／结果和幂等设计。

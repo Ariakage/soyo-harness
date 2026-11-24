@@ -129,7 +129,10 @@ impl MemoryState {
         )
     }
     fn tools(&self, gate: Arc<dyn MemoryGate>) -> Result<ManagedMemoryTools, BoundaryError> {
-        ManagedMemoryTools::new(self.store.clone(), self.queries, self.limits, gate)
+        Ok(
+            ManagedMemoryTools::new(self.store.clone(), self.queries, self.limits, gate)?
+                .with_default_fact_ttl(self.settings.default_fact_ttl_seconds),
+        )
     }
     pub fn definitions(
         &self,

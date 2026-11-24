@@ -14,6 +14,9 @@ pub struct MemoryFactReview {
     pub kind: MemoryKind,
     pub aliases: Vec<String>,
     pub derived_from: Vec<String>,
+    /// Expiry instants so a reviewer sees a TTL change, not just text changes.
+    pub before_expires_at: Option<String>,
+    pub after_expires_at: Option<String>,
     pub sources: Vec<MemorySourceRef>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +99,8 @@ fn diff(
             kind: fact.kind,
             aliases: fact.aliases.clone(),
             derived_from: fact.derived_from.clone(),
+            before_expires_at: old.and_then(|(_, fact)| fact.expires_at.clone()),
+            after_expires_at: new.and_then(|(_, fact)| fact.expires_at.clone()),
             sources: fact.sources.clone(),
         });
     }

@@ -77,6 +77,7 @@ impl Fixture {
                     }],
                     aliases: Vec::new(),
                     derived_from: Vec::new(),
+                    expires_at: None,
                 }],
             },
             sources: vec![source],

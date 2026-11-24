@@ -200,7 +200,7 @@ pub(super) fn propose(
                 .collect::<BTreeSet<_>>();
             document.sources.retain(|source| used.contains(&source.id));
             document::validate(&document, store.limits, &store.secrets.snapshot()?)?;
-            let active = document::active_document(&document);
+            let active = document::active_document(&document, memory_now());
             if entry.facts.iter().any(|fact| {
                 !invalidated.contains(&fact.id)
                     && !active
@@ -223,7 +223,7 @@ pub(super) fn propose(
             {
                 return Err(error("memory_args", "Memory forget targets are invalid"));
             }
-            let active = document::active_document(&document);
+            let active = document::active_document(&document, memory_now());
             let mut fingerprints = BTreeSet::new();
             let mut matched = BTreeSet::new();
             for entry in &active.entries {
@@ -348,7 +348,7 @@ pub(super) fn propose(
                 .iter()
                 .any(|old| old.source_id == *source_id && old.revision == *revision)
             {
-                let before = document::active_document(&document);
+                let before = document::active_document(&document, memory_now());
                 let retraction = SourceRetraction {
                     source_id: source_id.clone(),
                     revision: revision.clone(),
@@ -357,7 +357,7 @@ pub(super) fn propose(
                     entry_metadata: Vec::new(),
                 };
                 document.retractions.push(retraction);
-                let after = document::active_document(&document);
+                let after = document::active_document(&document, memory_now());
                 let affected = before
                     .entries
                     .iter()
@@ -444,7 +444,7 @@ pub(super) fn propose(
         }
     }
     document::validate(&document, store.limits, &store.secrets.snapshot()?)?;
-    document = document::active_document(&document);
+    document = document::active_document(&document, memory_now());
     let used_sources = document
         .entries
         .iter()

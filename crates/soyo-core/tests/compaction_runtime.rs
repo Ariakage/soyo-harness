@@ -793,6 +793,7 @@ fn seed_memory(memory: &soyo_core::global_memory::GlobalMemoryStore) {
             }],
             aliases: vec![],
             derived_from: vec![],
+            expires_at: None,
         }],
     };
     let proposal = memory

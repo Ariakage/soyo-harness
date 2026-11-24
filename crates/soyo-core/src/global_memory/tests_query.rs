@@ -602,3 +602,86 @@ fn memory_context_prompt_is_ascii_and_matches_the_documented_snapshot() {
         assert!(MEMORY_CONTEXT_INSTRUCTIONS.contains(marker));
     }
 }
+
+#[test]
+fn expired_facts_drop_out_of_search_read_and_projection() {
+    let temp = TempDir::new().unwrap();
+    let store = store(&temp);
+    let mut original = document();
+    let entry = &mut original.entries[0];
+    let source = entry.facts[0].sources[0].clone();
+    let live = fact(
+        "fact_live",
+        "A fact that never expires.",
+        &MemorySource {
+            id: source.source_id.clone(),
+            kind: MemorySourceKind::User,
+            scope: MemoryScope::Global,
+            reference: String::new(),
+            revision: source.revision.clone(),
+            observed_at: "2026-11-10T00:00:00Z".into(),
+            description: "Explicit user evidence".into(),
+            metadata_withheld: false,
+        },
+    );
+    let mut stale = live.clone();
+    stale.id = "fact_stale".into();
+    stale.text = "A fact that already expired.".into();
+    // `unix:1` is far in the past so the fact is always expired.
+    stale.expires_at = Some("unix:1".into());
+    entry.facts.push(live);
+    entry.facts.push(stale);
+    save(&store, &original);
+
+    // The snapshot keeps only the live fact; expiry cascades through
+    // active_document so every read path agrees.
+    let snapshot = store.snapshot().unwrap();
+    let ids: Vec<&str> = snapshot.entries[0]
+        .facts
+        .iter()
+        .map(|fact| fact.id.as_str())
+        .collect();
+    assert!(ids.contains(&"fact_live"));
+    assert!(!ids.contains(&"fact_stale"));
+
+    let search = store
+        .search(
+            MemorySearchOptions {
+                query: "expired".into(),
+                ..MemorySearchOptions::default()
+            },
+            MemoryQueryLimits::default(),
+        )
+        .unwrap();
+    assert!(
+        search
+            .matches
+            .iter()
+            .all(|hit| { hit.fact.reference.fact_id != "fact_stale" })
+    );
+
+    let read = store.read_page(
+        MemoryReadOptions {
+            fact_id: Some("fact_stale".into()),
+            ..MemoryReadOptions::default()
+        },
+        MemoryQueryLimits::default(),
+    );
+    assert!(read.is_err(), "an expired fact is not addressable by id");
+
+    let projection = store
+        .project(
+            MemoryProjectionOptions {
+                query: "expired".into(),
+                ..MemoryProjectionOptions::default()
+            },
+            MemoryQueryLimits::default(),
+        )
+        .unwrap();
+    assert!(
+        projection
+            .selected
+            .iter()
+            .all(|fragment| fragment.reference.fact_id != "fact_stale")
+    );
+}

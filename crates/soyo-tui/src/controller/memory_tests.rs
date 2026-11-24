@@ -38,6 +38,7 @@ fn seed(app: &App) -> GlobalMemoryStore {
             }],
             aliases: vec![],
             derived_from: vec![],
+            expires_at: None,
         }],
         resources: vec![],
     };

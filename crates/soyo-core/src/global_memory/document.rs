@@ -25,6 +25,8 @@ struct FactHeader {
     sources: Vec<MemorySourceRef>,
     aliases: Vec<String>,
     derived_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<String>,
 }
 
 fn metadata<T: Serialize>(kind: &str, value: &T) -> Result<String, BoundaryError> {
@@ -131,6 +133,7 @@ pub(super) fn parse(
                 sources: fact.sources,
                 aliases: fact.aliases,
                 derived_from: fact.derived_from,
+                expires_at: fact.expires_at,
             });
         }
         document.entries.push(MemoryEntry {
@@ -180,6 +183,7 @@ pub(super) fn render(
                     sources: fact.sources.clone(),
                     aliases: fact.aliases.clone(),
                     derived_from: fact.derived_from.clone(),
+                    expires_at: fact.expires_at.clone(),
                 },
             )?);
             text.push_str(&fact.text);
@@ -280,6 +284,10 @@ pub(super) fn validate(
                 || fact.sources.len() > 32
                 || fact.aliases.len() > 32
                 || fact.derived_from.len() > 32
+                || fact
+                    .expires_at
+                    .as_deref()
+                    .is_some_and(|value| parse_memory_instant(value).is_none())
                 || fact
                     .aliases
                     .iter()
@@ -423,9 +431,12 @@ pub(super) fn validate(
     Ok(())
 }
 
-/// Applies current forget and source-withdrawal constraints to an already
-/// validated document. Derived facts disappear when any required parent does.
-pub(super) fn active_document(document: &MemoryDocument) -> MemoryDocument {
+/// Applies current forget, source-withdrawal and expiry constraints to an
+/// already validated document. `now` is seconds since the epoch: a fact whose
+/// `expires_at` parses to a time at or before `now` is removed like a forgotten
+/// fact, cascading to its derived facts. Derived facts disappear when any
+/// required parent does.
+pub(super) fn active_document(document: &MemoryDocument, now: u64) -> MemoryDocument {
     let mut active = document.clone();
     let mut removed = BTreeSet::<String>::new();
     let mut forgotten = BTreeMap::<&MemoryScope, (BTreeSet<&str>, BTreeSet<&str>)>::new();
@@ -466,7 +477,7 @@ pub(super) fn active_document(document: &MemoryDocument) -> MemoryDocument {
             fact.sources.retain(|source| {
                 !retracted.contains(&(source.source_id.as_str(), source.revision.as_str()))
             });
-            let keep = !forgotten && !fact.sources.is_empty();
+            let keep = !forgotten && !fact.sources.is_empty() && !fact.is_expired(now);
             if !keep {
                 removed.insert(fact.id.clone());
             }

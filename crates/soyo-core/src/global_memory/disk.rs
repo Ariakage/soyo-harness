@@ -264,7 +264,7 @@ impl GlobalMemoryStore {
         };
         state::merge(&mut document, &ledger)?;
         document::validate(&document, self.limits, &secrets)?;
-        let active = document::active_document(&document);
+        let active = document::active_document(&document, memory_now());
         let entries = active
             .entries
             .iter()

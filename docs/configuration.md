@@ -487,6 +487,7 @@ read = true
 inject = true
 write = true
 # root = "/absolute/private/soyo-memory-root"
+# default_fact_ttl_seconds = 7776000   # 90 天；memory_update 未显式给 expires_in_seconds 时的默认 TTL
 ```
 
 默认根为启动环境 `HOME` 下的 `.soyo`，索引为 `MEMORY.md`，主题目录为 `memory/`。显式root要求绝对路径。运行配置仍从本次显式选择的配置文件加载，指令／Skill发现保持独立规则。
@@ -496,6 +497,23 @@ write = true
 write与内容读取独立，read关闭时显式CLI仍可按给定版本执行持久变更，版本和receipt只返回元数据。TUI完整review包含旧正文，需先启用read，关闭read会使待确认review失效。
 
 PLAN只读，Manual Approval对每次模型记忆工具调用确认，auto变更采用规则与独立模型核查。显式deny和宿主受保护路径继续生效。`soyo memory`提供离线管理，TUI `/memory`提供有界浏览、差异、确认、导出、恢复和空闲时的进程级开关。[实际工具、默认限额与保留范围](memory.md)
+
+事实级 TTL：`memory_update` 的 `add`／`update` 接受 `expires_in_seconds`（1 秒至 5 年），宿主在写入时按当前时刻展开为 `expires_at`（`unix:<secs>`）落盘；`default_fact_ttl_seconds` 在未显式给出时套用同一范围。到期事实在 `active_document` 统一过滤——快照、检索、读取与投影一致消失，级联删除与资源清理照常生效，`expires_at` 不进入 `fact_fingerprint`、不搅动 `snapshot.revision`。
+
+## 持久任务队列（F-08）
+
+跨运行持久任务队列**默认 `enabled = false`**；启用后 `soyo task`／TUI `/task`／桌面端 RPC 才接管任务：
+
+```toml
+[tasks]
+enabled = false
+# max_tasks = 1024        # 持久队列容量上限；缺省跟随 Limits
+# max_running = 1         # 单 worker 并发驱动上限；缺省 1
+```
+
+`TaskStore` 位于 `<data_dir>/tasks/tasks.sqlite3`（0700 目录、0600 文件、`O_NOFOLLOW`、canonicalize＋symlink 拒绝、`busy_timeout`、`foreign_keys`、`synchronous=FULL`、`application_id=0x5354_5131`、`user_version=1`、WAL），含 `tasks`／`task_leases`／`task_dispatches`（`(task_id, attempt)` 主键）三表；多个任务可共享一个工作区，故无 `workspace_leases`。
+
+生命周期 `queued→running→paused/blocked/completed/failed/cancelled`，另有 `waiting_unknown`：派发意图在 `Run` 启动前单事务落库，崩溃后由 `recover_unknown` 将在飞 dispatch 标记为 `waiting_unknown`，**绝不自动重放**——只有显式 `resolve`（`retry` 重新排队或置 `blocked`）或 `transition` 才能继续。`run_task_once` 复用同一 `Session` 驱动单个 `Run`，带租约心跳与 pause/cancel 轮询，结果按 `persistence_saved` 映射 `completed`/`failed`/`waiting_unknown`。
 
 ### 插件宿主绑定
 

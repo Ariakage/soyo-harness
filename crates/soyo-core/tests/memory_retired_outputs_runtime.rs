@@ -242,6 +242,7 @@ impl Fixture {
                         }],
                         aliases: vec![],
                         derived_from: vec![],
+                        expires_at: None,
                     }],
                 },
                 sources: vec![source],

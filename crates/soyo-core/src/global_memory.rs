@@ -283,6 +283,45 @@ pub struct MemoryFact {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub derived_from: Vec<String>,
+    /// Optional expiry instant (`unix:<secs>`) after which the fact becomes
+    /// inactive. `None` means the fact never expires. Expired facts stay in the
+    /// index but are removed by `active_document`, so they never reach search,
+    /// read, projection or forget. Serialized only when present so documents
+    /// without TTL keep the pre-TTL byte shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+impl MemoryFact {
+    /// Report whether the fact is expired at `now` seconds since the epoch.
+    /// A missing or unparsable `expires_at` never expires (fail open to keep
+    /// durable memory readable); an expired fact is removed by `active_document`.
+    pub fn is_expired(&self, now: u64) -> bool {
+        self.expires_at
+            .as_deref()
+            .and_then(parse_memory_instant)
+            .is_some_and(|deadline| now >= deadline)
+    }
+}
+
+/// Parse a memory timestamp into seconds since the epoch. Accepts the host
+/// `unix:<secs>` form (used by `observed_at`/`updated_at`) and, for hand-edited
+/// indexes, a bare positive integer. Anything else returns `None` so a malformed
+/// value never silently deletes a fact at write-validation time.
+pub(crate) fn parse_memory_instant(text: &str) -> Option<u64> {
+    let digits = text.strip_prefix("unix:").unwrap_or(text);
+    if digits.is_empty() || digits.len() > 20 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok()
+}
+
+/// Seconds since the epoch for expiry checks; `0` (nothing expires) when the
+/// clock is unavailable so memory stays readable rather than hiding.
+pub(crate) fn memory_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
