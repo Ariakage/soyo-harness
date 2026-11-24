@@ -475,6 +475,32 @@ impl TaskStore {
         .map_err(|_| storage("task_storage", "Task storage worker failed"))?
     }
 
+    /// Current lease row for a task, if any. Remote claims renew and confirm
+    /// a start through the stored lease rather than holding it in memory.
+    pub async fn lease(&self, task_id: TaskId) -> Result<Option<TaskLease>, BoundaryError> {
+        let connection = self.connection.clone();
+        tokio::task::spawn_blocking(move || {
+            let connection = connection
+                .lock()
+                .map_err(|_| storage("task_storage", "Task database lock poisoned"))?;
+            let lease: Option<(String, u64)> = connection
+                .query_row(
+                    "SELECT owner,expires_at_ms FROM task_leases WHERE task_id=?1",
+                    [id(task_id.0)],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            Ok(lease.map(|(owner, expires_at_ms)| TaskLease {
+                task_id,
+                owner,
+                expires_at_ms,
+            }))
+        })
+        .await
+        .map_err(|_| storage("task_storage", "Task storage worker failed"))?
+    }
+
     pub async fn release_lease(&self, lease: &TaskLease) -> Result<(), BoundaryError> {
         let connection = self.connection.clone();
         let task_id = lease.task_id;
@@ -921,7 +947,7 @@ impl TaskStore {
             record.revision = record.revision.saturating_add(1);
             record.validate()?;
             write_connection(&transaction, &record, &secrets, None)?;
-            transaction
+            let changed = transaction
                 .execute(
                     "UPDATE task_dispatches SET state=?3 WHERE task_id=?1 AND attempt=?2",
                     params![
@@ -931,6 +957,12 @@ impl TaskStore {
                     ],
                 )
                 .map_err(sql_error)?;
+            if changed != 1 {
+                return Err(storage(
+                    "task_dispatch_conflict",
+                    "Task dispatch does not match the finished attempt",
+                ));
+            }
             transaction.commit().map_err(sql_error)?;
             Ok(record)
         })

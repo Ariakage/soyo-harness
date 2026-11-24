@@ -250,6 +250,7 @@ pub struct HostService {
     /// Pending single-use checkpoint actions keyed by helper-assigned
     /// `ck_<uuid>`; the bound session id is stored alongside so confirm can
     /// re-open the admin under the session's exclusive lock.
+    pub remote_workers: crate::remote::RemoteWorkerRegistry,
     pub pending_checkpoint_actions:
         Arc<StdMutex<HashMap<String, (SessionId, PreparedCheckpointAction)>>>,
     pub secrets: Arc<SecretRegistry>,
@@ -454,6 +455,7 @@ impl HostService {
                     attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
                     staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
                     pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
+                    remote_workers: crate::remote::new_worker_registry(),
                     pending_checkpoint_actions: Arc::new(StdMutex::new(HashMap::new())),
                     secrets,
                     health_tracker: Arc::new(Default::default()),
@@ -486,6 +488,7 @@ impl HostService {
             attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
             staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
             pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
+            remote_workers: crate::remote::new_worker_registry(),
             pending_checkpoint_actions: Arc::new(StdMutex::new(HashMap::new())),
             secrets: registry,
             health_tracker: Arc::new(Default::default()),

@@ -6,6 +6,7 @@ pub mod envfile;
 pub mod goal;
 pub mod peripheral;
 pub mod prefs;
+pub mod remote;
 pub mod server;
 pub mod service;
 pub mod task;

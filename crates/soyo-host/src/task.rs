@@ -40,7 +40,7 @@ fn failure(code: &str, message: impl Into<String>) -> DesktopError {
     DesktopError::new(code, message.into())
 }
 
-fn parse_task_id(raw: &str) -> Result<TaskId, DesktopError> {
+pub(crate) fn parse_task_id(raw: &str) -> Result<TaskId, DesktopError> {
     raw.parse::<TaskId>()
         .map_err(|_| failure("invalid_args", "Task id is invalid"))
 }
@@ -112,7 +112,7 @@ impl HostService {
         })
     }
 
-    fn map_task_with_job(&self, task: &TaskRecord, secrets: &[String]) -> TaskDto {
+    pub(crate) fn map_task_with_job(&self, task: &TaskRecord, secrets: &[String]) -> TaskDto {
         map_task(
             task,
             self.running_task_action(&task.id.0.to_string()),

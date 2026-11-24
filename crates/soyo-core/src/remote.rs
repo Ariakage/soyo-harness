@@ -254,6 +254,39 @@ pub enum RemoteApplyOutcome {
     Conflict(Vec<RemoteConflict>),
 }
 
+/// One chunk of a content-addressed blob download.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteBlobChunk {
+    pub sha256: String,
+    pub total_bytes: u64,
+    pub next_offset: u64,
+    pub data_b64: String,
+}
+
+impl RemoteBlobChunk {
+    pub fn encode(
+        sha256: &str,
+        offset: u64,
+        total_bytes: u64,
+        bytes: &[u8],
+    ) -> Result<Self, BoundaryError> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        Ok(Self {
+            sha256: sha256.to_owned(),
+            total_bytes,
+            next_offset: offset.saturating_add(bytes.len() as u64),
+            data_b64: STANDARD.encode(bytes),
+        })
+    }
+
+    pub fn data(&self) -> Result<Vec<u8>, BoundaryError> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        STANDARD
+            .decode(&self.data_b64)
+            .map_err(|_| failure(error_codes::INVALID_ARGS, "blob chunk is not valid base64"))
+    }
+}
+
 /// Task dispatch handed to a claiming worker over the helper wire contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteDispatch {
@@ -473,6 +506,13 @@ impl RemoteSyncStore {
         self.blob_path(sha256)
             .map(|path| fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()))
             .unwrap_or(false)
+    }
+
+    /// Stored size of a committed blob, if present (no content read).
+    pub fn blob_len(&self, sha256: &str) -> Option<u64> {
+        let path = self.blob_path(sha256).ok()?;
+        let meta = fs::symlink_metadata(&path).ok()?;
+        (meta.is_file() && !meta.file_type().is_symlink()).then_some(meta.len())
     }
 
     /// Store a complete blob, refusing a mismatched digest or oversized file.

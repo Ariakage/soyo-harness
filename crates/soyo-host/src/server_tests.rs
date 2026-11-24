@@ -279,9 +279,18 @@ mod tests {
         std::fs::write(&config_path, remote_config(port)).unwrap();
         let env = Environment::from_pairs([
             ("HOME".into(), OsString::from(dir.path())),
-            ("XDG_STATE_HOME".into(), OsString::from(dir.path().join("state"))),
-            ("XDG_DATA_HOME".into(), OsString::from(dir.path().join("data-xdg"))),
-            ("XDG_CACHE_HOME".into(), OsString::from(dir.path().join("cache"))),
+            (
+                "XDG_STATE_HOME".into(),
+                OsString::from(dir.path().join("state")),
+            ),
+            (
+                "XDG_DATA_HOME".into(),
+                OsString::from(dir.path().join("data-xdg")),
+            ),
+            (
+                "XDG_CACHE_HOME".into(),
+                OsString::from(dir.path().join("cache")),
+            ),
         ]);
         let cfg = config::load(
             Overrides {
@@ -340,9 +349,7 @@ mod tests {
             let endpoint = endpoint.clone();
             let token = token.to_owned();
             let ca = ca.clone();
-            async move {
-                soyo_ipc::remote::connect_remote(&endpoint, &token, Some(ca.as_path())).await
-            }
+            async move { soyo_ipc::remote::connect_remote(&endpoint, &token, Some(ca.as_path())).await }
         };
         let stream = river(&token).await.expect("remote https connect");
         let client = HelperClient::from_stream(stream)
@@ -439,6 +446,463 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(HelperClient::connect_for(&target).await.is_err());
         drop(local);
+    }
+
+    fn remote_worker_config(port: u16) -> String {
+        format!(
+            "schema_version = 1\n\
+             [defaults]\nprofile = \"test\"\nmode = \"work\"\npermissions = \"auto\"\n\
+             [profiles.test]\nprotocol = \"openai-chat-completions\"\n\
+             base_url = \"http://127.0.0.1:9/v1\"\nmodel = \"fixture\"\nauth = \"none\"\n\
+             context_window_tokens = 64000\nstream = false\n\
+             [tasks]\nenabled = true\n\
+             [remote]\nenabled = true\nbind = \"127.0.0.1:{port}\"\ntoken_ttl_days = 30\n\
+             [remote.tls]\ncert_path = \"{}\"\nkey_path = \"{}\"\n",
+            fixture("chain.pem").display(),
+            fixture("server-key.pem").display()
+        )
+    }
+
+    async fn upload_remote_blob(client: &HelperClient, bytes: &[u8]) -> String {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let sha = soyo_core::remote::sha256_hex(bytes);
+        let _: serde_json::Value = client
+            .call_typed(
+                "remote_blob_begin",
+                &json!({"sha256": sha, "total_bytes": bytes.len()}),
+            )
+            .await
+            .expect("blob begin");
+        let next: u64 = client
+            .call_typed(
+                "remote_blob_put",
+                &json!({"sha256": sha, "offset": 0, "data_b64": STANDARD.encode(bytes)}),
+            )
+            .await
+            .expect("blob put");
+        assert_eq!(next, bytes.len() as u64);
+        let _: serde_json::Value = client
+            .call_typed(
+                "remote_blob_finish",
+                &json!({"sha256": sha, "total_bytes": bytes.len()}),
+            )
+            .await
+            .expect("blob finish");
+        sha
+    }
+
+    async fn fetch_remote_blob(client: &HelperClient, sha: &str) -> Vec<u8> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let chunk: serde_json::Value = client
+            .call_typed("remote_blob_get", &json!({"sha256": sha, "offset": 0}))
+            .await
+            .expect("blob get");
+        STANDARD
+            .decode(chunk["data_b64"].as_str().expect("data_b64"))
+            .expect("decode blob")
+    }
+
+    /// D-113 path (c): a remote worker registers over the authenticated HTTPS
+    /// transport, claims an assigned task, syncs workspace inputs as blobs,
+    /// reports a result, and the owning side materializes it only through the
+    /// explicit three-way apply. Also covers divergence refusal and the
+    /// never-auto-replay lease rules.
+    #[tokio::test]
+    async fn remote_worker_dispatch_sync_apply_and_lease_rules() {
+        use soyo_core::config::{self, Environment, Overrides};
+        use soyo_core::credentials::{CredentialBackend, CredentialStore, SecretRegistry};
+        use std::ffi::OsString;
+
+        let _guard = serial().await;
+        let _helper_dir_env = EnvGuard::set(&[("SOYO_HELPER_DIR", "")]);
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::write(workspace.join("notes.txt"), b"base\n").unwrap();
+        let config_path = dir.path().join("config.toml");
+        let data_dir = dir.path().join("data");
+        let port = free_tcp_port();
+        std::fs::write(&config_path, remote_worker_config(port)).unwrap();
+        let env = Environment::from_pairs([
+            ("HOME".into(), OsString::from(dir.path())),
+            (
+                "XDG_STATE_HOME".into(),
+                OsString::from(dir.path().join("state")),
+            ),
+            (
+                "XDG_DATA_HOME".into(),
+                OsString::from(dir.path().join("data-xdg")),
+            ),
+            (
+                "XDG_CACHE_HOME".into(),
+                OsString::from(dir.path().join("cache")),
+            ),
+        ]);
+        let cfg = config::load(
+            Overrides {
+                config: Some(config_path.clone()),
+                data_dir: Some(data_dir.clone()),
+                ..Default::default()
+            },
+            env,
+            &workspace,
+        )
+        .expect("fixture config must load");
+        let state_dir = cfg.state_dir.clone();
+        let target = soyo_ipc::HelperTarget::from_config(&cfg);
+        let server = HelperServer::new(HostService::with_config(cfg));
+        let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let handle = tokio::spawn(async move {
+            if let Err(err) = server.run().await {
+                let _ = error_tx.send(format!("{}: {}", err.code, err.message));
+            }
+        });
+        let mut local = None;
+        for _ in 0..500 {
+            if let Ok(client) = HelperClient::connect_for(&target).await {
+                local = Some(client);
+                break;
+            }
+            match error_rx.try_recv() {
+                Ok(message) => panic!("helper failed to start: {message}"),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("helper task exited before binding")
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let local = local.expect("helper did not start listening locally");
+
+        let store = CredentialStore::open_backend(
+            CredentialBackend::File,
+            &state_dir,
+            std::sync::Arc::new(SecretRegistry::default()),
+        )
+        .unwrap();
+        let endpoint_url = format!("https://127.0.0.1:{port}");
+        let endpoint = soyo_ipc::RemoteEndpoint::parse(&endpoint_url).unwrap();
+        let issued = store.issue_remote_token(&endpoint_url, 30).await.unwrap();
+        let stream = soyo_ipc::remote::connect_remote(
+            &endpoint,
+            issued.token.expose(),
+            Some(fixture_cert().as_path()),
+        )
+        .await
+        .expect("remote worker transport");
+        let worker = HelperClient::from_stream(stream)
+            .await
+            .expect("worker handshake over https");
+
+        // Malformed registration fails closed; a valid one is listed.
+        let bad = json!({
+            "schema_version": 1,
+            "worker_id": "bad id",
+            "arch": "aarch64",
+            "sandbox_backends": ["seatbelt"],
+            "version": "0.3.0"
+        });
+        let err = worker
+            .call_typed::<_, serde_json::Value>("remote_worker_register", &bad)
+            .await
+            .expect_err("bad worker id");
+        assert_eq!(err.code, "invalid_args", "{}", err.message);
+        let info: serde_json::Value = worker
+            .call_typed(
+                "remote_worker_register",
+                &json!({
+                    "schema_version": 1,
+                    "worker_id": "worker-1",
+                    "arch": "aarch64",
+                    "sandbox_backends": ["seatbelt"],
+                    "version": "0.3.0"
+                }),
+            )
+            .await
+            .expect("register worker");
+        assert_eq!(info["worker_id"], "worker-1");
+        let workers: Vec<serde_json::Value> = worker
+            .call_typed("remote_workers", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0]["arch"], "aarch64");
+
+        // Submit, assign, claim, and check the content-addressed input.
+        let task: serde_json::Value = local
+            .call_typed("task_submit", &json!({"input": "remote task"}))
+            .await
+            .expect("task submit");
+        let task_id = task["task_id"].as_str().unwrap().to_owned();
+        let assigned: serde_json::Value = worker
+            .call_typed(
+                "remote_task_assign",
+                &json!({"task_id": task_id, "worker_id": "worker-1"}),
+            )
+            .await
+            .expect("assign");
+        assert_eq!(assigned["status"], "queued");
+        let dispatch: serde_json::Value = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1", "lease_ttl_ms": 60000}),
+            )
+            .await
+            .expect("claim")
+            .expect("a dispatched task");
+        let attempt = dispatch["attempt"].as_u64().unwrap() as u32;
+        let run_id = dispatch["run_id"].as_str().unwrap().to_owned();
+        assert_eq!(attempt, 1);
+        assert_eq!(dispatch["input"], "remote task");
+        assert_eq!(dispatch["permissions"], "auto");
+        let entries = dispatch["workspace"].as_array().unwrap();
+        let notes = entries
+            .iter()
+            .find(|entry| entry["path"] == "notes.txt")
+            .expect("workspace manifest carries notes.txt");
+        let base_sha = notes["sha256"].as_str().unwrap().to_owned();
+        assert_eq!(base_sha, soyo_core::remote::sha256_hex(b"base\n"));
+        assert_eq!(fetch_remote_blob(&worker, &base_sha).await, b"base\n");
+
+        // Confirm the start, then report progress and a completed result with
+        // one modified file uploaded as a blob.
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_start",
+                &json!({"worker_id": "worker-1", "task_id": task_id, "attempt": attempt}),
+            )
+            .await
+            .expect("start");
+        let heartbeat: serde_json::Value = worker
+            .call_typed(
+                "remote_task_heartbeat",
+                &json!({"worker_id": "worker-1", "task_id": task_id, "attempt": attempt}),
+            )
+            .await
+            .expect("heartbeat");
+        assert_eq!(heartbeat["renewed"], true);
+        assert_eq!(heartbeat["cancel"], false);
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_progress",
+                &json!({
+                    "worker_id": "worker-1",
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "phase": "running",
+                    "detail": "model loop"
+                }),
+            )
+            .await
+            .expect("progress");
+        let workers: Vec<serde_json::Value> = worker
+            .call_typed("remote_workers", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(workers[0]["progress"]["phase"], "running");
+
+        let new_sha = upload_remote_blob(&worker, b"remote\n").await;
+        let finished: serde_json::Value = worker
+            .call_typed(
+                "remote_task_finish",
+                &json!({
+                    "schema_version": 1,
+                    "worker_id": "worker-1",
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "run_id": run_id,
+                    "status": "completed",
+                    "text": "remote output",
+                    "persistence_saved": true,
+                    "summary": "remote summary",
+                    "changed_files": [{
+                        "path": "notes.txt",
+                        "kind": "modified",
+                        "base_sha256": base_sha,
+                        "new_sha256": new_sha,
+                        "bytes": 7
+                    }]
+                }),
+            )
+            .await
+            .expect("finish");
+        assert_eq!(finished["status"], "completed");
+        let shown: serde_json::Value = worker
+            .call_typed("remote_task_show", &json!({"task_id": task_id}))
+            .await
+            .unwrap();
+        assert_eq!(shown["result"]["changed_files"][0]["path"], "notes.txt");
+        // The result is held back until the explicit apply.
+        assert_eq!(
+            std::fs::read(workspace.join("notes.txt")).unwrap(),
+            b"base\n".as_slice()
+        );
+        let applied: serde_json::Value = worker
+            .call_typed("remote_task_apply", &json!({"task_id": task_id}))
+            .await
+            .expect("apply");
+        assert_eq!(applied["applied"], true, "{applied}");
+        assert_eq!(applied["receipts"][0]["operation"], "modified");
+        assert_eq!(
+            std::fs::read(workspace.join("notes.txt")).unwrap(),
+            b"remote\n".as_slice()
+        );
+
+        // Divergence: a local edit after dispatch makes apply refuse and write
+        // nothing.
+        let task: serde_json::Value = local
+            .call_typed("task_submit", &json!({"input": "diverging task"}))
+            .await
+            .unwrap();
+        let task_id = task["task_id"].as_str().unwrap().to_owned();
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_assign",
+                &json!({"task_id": task_id, "worker_id": "worker-1"}),
+            )
+            .await
+            .unwrap();
+        let dispatch: serde_json::Value = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1", "lease_ttl_ms": 60000}),
+            )
+            .await
+            .unwrap()
+            .expect("second dispatch");
+        let attempt = dispatch["attempt"].as_u64().unwrap() as u32;
+        let run_id = dispatch["run_id"].as_str().unwrap().to_owned();
+        let base_sha = dispatch["workspace"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["path"] == "notes.txt")
+            .unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_start",
+                &json!({"worker_id": "worker-1", "task_id": task_id, "attempt": attempt}),
+            )
+            .await
+            .unwrap();
+        let new_sha = upload_remote_blob(&worker, b"worker-two\n").await;
+        std::fs::write(workspace.join("notes.txt"), b"local-edit\n").unwrap();
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_finish",
+                &json!({
+                    "schema_version": 1,
+                    "worker_id": "worker-1",
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "run_id": run_id,
+                    "status": "completed",
+                    "persistence_saved": true,
+                    "changed_files": [{
+                        "path": "notes.txt",
+                        "kind": "modified",
+                        "base_sha256": base_sha,
+                        "new_sha256": new_sha,
+                        "bytes": 11
+                    }]
+                }),
+            )
+            .await
+            .unwrap();
+        let refused: serde_json::Value = worker
+            .call_typed("remote_task_apply", &json!({"task_id": task_id}))
+            .await
+            .expect("apply report");
+        assert_eq!(refused["applied"], false, "{refused}");
+        assert_eq!(refused["conflicts"][0]["path"], "notes.txt");
+        assert_eq!(
+            std::fs::read(workspace.join("notes.txt")).unwrap(),
+            b"local-edit\n".as_slice()
+        );
+
+        // Lease rules: an unconfirmed dispatch returns to the queue; a
+        // confirmed start never replays automatically.
+        let task: serde_json::Value = local
+            .call_typed("task_submit", &json!({"input": "lease task"}))
+            .await
+            .unwrap();
+        let task_id = task["task_id"].as_str().unwrap().to_owned();
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_assign",
+                &json!({"task_id": task_id, "worker_id": "worker-1"}),
+            )
+            .await
+            .unwrap();
+        let dispatch: serde_json::Value = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1", "lease_ttl_ms": 1000}),
+            )
+            .await
+            .unwrap()
+            .expect("unstarted dispatch");
+        assert_eq!(dispatch["attempt"], 1);
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+        let recovered: Vec<serde_json::Value> =
+            local.call_typed("task_recover", &json!({})).await.unwrap();
+        let record = recovered
+            .iter()
+            .find(|record| record["task_id"] == task_id.as_str())
+            .expect("recovered record");
+        assert_eq!(record["status"], "queued", "{record}");
+        let dispatch: serde_json::Value = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1", "lease_ttl_ms": 1000}),
+            )
+            .await
+            .unwrap()
+            .expect("requeued dispatch");
+        assert_eq!(dispatch["attempt"], 2);
+        let attempt = dispatch["attempt"].as_u64().unwrap() as u32;
+        worker
+            .call_typed::<_, serde_json::Value>(
+                "remote_task_start",
+                &json!({"worker_id": "worker-1", "task_id": task_id, "attempt": attempt}),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+        let recovered: Vec<serde_json::Value> =
+            local.call_typed("task_recover", &json!({})).await.unwrap();
+        let record = recovered
+            .iter()
+            .find(|record| record["task_id"] == task_id.as_str())
+            .expect("recovered record");
+        assert_eq!(record["status"], "waiting_unknown", "{record}");
+        // Never replayed without an explicit resolution.
+        let none: Option<serde_json::Value> = worker
+            .call_typed("remote_task_claim", &json!({"worker_id": "worker-1"}))
+            .await
+            .unwrap();
+        assert!(none.is_none());
+        let resolved: serde_json::Value = local
+            .call_typed("task_resolve", &json!({"task_id": task_id, "retry": true}))
+            .await
+            .unwrap();
+        assert_eq!(resolved["status"], "queued");
+        let dispatch: serde_json::Value = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1"}),
+            )
+            .await
+            .unwrap()
+            .expect("explicitly retried dispatch");
+        assert_eq!(dispatch["attempt"], 3);
+
+        local.shutdown_daemon().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(HelperClient::connect_for(&target).await.is_err());
     }
 
     /// Process-global env vars must be restored on drop so other tests in the

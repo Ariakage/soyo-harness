@@ -577,6 +577,17 @@ fn param_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, DesktopErro
     })
 }
 
+fn param_u64(params: &Value, key: &str) -> Result<u64, DesktopError> {
+    param(params, key)?
+        .as_u64()
+        .ok_or_else(|| DesktopError::new("invalid_params", format!("Param '{key}' must be a u64")))
+}
+
+fn param_attempt(params: &Value) -> Result<u32, DesktopError> {
+    u32::try_from(param_u64(params, "attempt")?)
+        .map_err(|_| DesktopError::new("invalid_params", "Param 'attempt' is out of range"))
+}
+
 fn param_bool(params: &Value, key: &str) -> Result<bool, DesktopError> {
     param(params, key)?
         .as_bool()
@@ -976,6 +987,148 @@ async fn dispatch(
             let r = async {
                 service
                     .task_continue(param_string(&params, "task_id")?)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        // Internal remote-worker surface (D-117). These methods are not part
+        // of the D-106 frozen SDK set; they sit behind the same authenticated
+        // transport and task store as every other method.
+        "remote_worker_register" => {
+            let registration =
+                serde_json::from_value::<soyo_core::remote::RemoteWorkerRegistration>(
+                    params.clone(),
+                )
+                .map_err(|err| {
+                    DesktopError::new(
+                        "invalid_params",
+                        format!("remote_worker_register params: {err}"),
+                    )
+                });
+            match registration {
+                Ok(registration) => service
+                    .remote_worker_register(registration)
+                    .await
+                    .and_then(ok),
+                Err(err) => Err(err),
+            }
+        }
+        "remote_workers" => service.remote_workers().await.and_then(ok),
+        "remote_task_assign" => {
+            let r = async {
+                let task_id = param_string(&params, "task_id")?;
+                let worker_id = param_opt_str(&params, "worker_id");
+                service.remote_task_assign(task_id, worker_id).await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_task_claim" => {
+            let r = async {
+                let worker_id = param_string(&params, "worker_id")?;
+                let ttl = param_opt(&params, "lease_ttl_ms").and_then(Value::as_u64);
+                service.remote_task_claim(worker_id, ttl).await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_task_start" => {
+            let r = async {
+                let worker_id = param_string(&params, "worker_id")?;
+                let task_id = param_string(&params, "task_id")?;
+                let attempt = param_attempt(&params)?;
+                service.remote_task_start(worker_id, task_id, attempt).await
+            };
+            r.await.and_then(|_| ok(Value::Null))
+        }
+        "remote_task_heartbeat" => {
+            let r = async {
+                let worker_id = param_string(&params, "worker_id")?;
+                let task_id = param_string(&params, "task_id")?;
+                let attempt = param_attempt(&params)?;
+                service
+                    .remote_task_heartbeat(worker_id, task_id, attempt)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_task_progress" => {
+            let r = async {
+                let worker_id = param_string(&params, "worker_id")?;
+                let task_id = param_string(&params, "task_id")?;
+                let attempt = param_attempt(&params)?;
+                let phase = param_string(&params, "phase")?;
+                let detail = param_opt_str(&params, "detail").map(str::to_owned);
+                service
+                    .remote_task_progress(worker_id, task_id, attempt, phase, detail)
+                    .await
+            };
+            r.await.and_then(|_| ok(Value::Null))
+        }
+        "remote_blob_get" => {
+            let r = async {
+                let sha256 = param_string(&params, "sha256")?;
+                let offset = param_opt(&params, "offset")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                service.remote_blob_get(sha256, offset).await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_blob_begin" => {
+            let r = async {
+                let sha256 = param_string(&params, "sha256")?;
+                let total = param_u64(&params, "total_bytes")?;
+                service.remote_blob_begin(sha256, total).await
+            };
+            r.await.and_then(|_| ok(Value::Null))
+        }
+        "remote_blob_put" => {
+            let r = async {
+                let sha256 = param_string(&params, "sha256")?;
+                let offset = param_u64(&params, "offset")?;
+                let data = param_string(&params, "data_b64")?;
+                service.remote_blob_put(sha256, offset, data).await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_blob_finish" => {
+            let r = async {
+                let sha256 = param_string(&params, "sha256")?;
+                let total = param_u64(&params, "total_bytes")?;
+                service.remote_blob_finish(sha256, total).await
+            };
+            r.await.and_then(|_| ok(Value::Null))
+        }
+        "remote_task_finish" => {
+            let finish = serde_json::from_value::<soyo_core::remote::RemoteFinish>(params.clone())
+                .map_err(|err| {
+                    DesktopError::new(
+                        "invalid_params",
+                        format!("remote_task_finish params: {err}"),
+                    )
+                });
+            match finish {
+                Ok(finish) => service.remote_task_finish(finish).await.and_then(ok),
+                Err(err) => Err(err),
+            }
+        }
+        "remote_task_apply" => {
+            let r = async {
+                let task_id = param_string(&params, "task_id")?;
+                let paths = param_opt(&params, "paths")
+                    .map(|value| {
+                        serde_json::from_value::<Vec<String>>(value.clone()).map_err(|err| {
+                            DesktopError::new("invalid_params", format!("Param 'paths': {err}"))
+                        })
+                    })
+                    .transpose()?;
+                service.remote_task_apply(task_id, paths).await
+            };
+            r.await.and_then(ok)
+        }
+        "remote_task_show" => {
+            let r = async {
+                service
+                    .remote_task_show(param_string(&params, "task_id")?)
                     .await
             };
             r.await.and_then(ok)
