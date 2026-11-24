@@ -358,7 +358,7 @@ DEV-043 至 DEV-046 已实现并通过本机离线验收。
 
 ## F-20 Goal 目标编排
 
-现已提供 `/goal` 与 `soyo goal ...`，保存目标、步骤、验收证据、预算和显式自动授权。手动与有限自动阶段复用有界 Run、原生隔离、Compact、检查点与独立持久 worker；多 Agent Goal 继续归 F-09。
+现已提供 `/goal` 与 `soyo goal ...`，保存目标、步骤、验收证据、预算和显式自动授权。手动与有限自动阶段复用有界 Run、原生隔离、Compact、检查点与独立持久 worker；委派步骤（D-112）可把单步执行交给持久子 Agent，通用多 Agent 协作能力继续归 F-09。
 
 Goal 生命周期与四工作模式分别表达。每次工具执行经过当前权限与隔离边界，自动阶段需要显式有限授权及总预算，目标完成以验收证据判定。具体方案见[Goal 设计](goal.md)，任务为 DEV-069 至 DEV-074。
 
@@ -366,7 +366,7 @@ Goal 生命周期与四工作模式分别表达。每次工具执行经过当前
 
 **已实现增量（D-111）**：**自动推进链**——`GoalRecord.auto_chain` opt-in（`goal start --auto --chain` 或 `[goal] auto_chain`），步骤宿主 verifier `passed`＋`confirmed_verifiers_digest` 未变＋预算未超＋无 `waiting_unknown` 时持久 worker 自动调度下一 pending 步骤的 Run + verifier，每步独立 Run／租约／dispatch 记录；verifier 失败仍在 `max_replans` 内 `replan_failed_step`，unknown／取消／超时／`!verifiers_confirmed()` 各进入既有 `waiting`／`blocked`／`limit_reached` 且绝不自动重放。普通 `start --auto`（未开启 `auto_chain`）不被 `goal worker` 隐式恢复——持久自动推进只属于显式链式授权。`goal status`／`report` 展示链进度；桌面端经 helper `goal_start` 时按 `[goal] auto_chain` 配置启用。详见[Goal 设计](goal.md)。
 
-**方向定案（D-112，未实现）**：**Goal×子 Agent 委派**（依赖 D-109/D-110）——`GoalStep.delegate.subagent` 使委派 step 的 Run spawn 持久子 Agent，step verifier 仍在 Goal 宿主侧执行，结合 auto_chain 可实现跨 run 自动 Goal 链。
+**已实现增量（D-112）**：**Goal×子 Agent 委派**（依赖 D-109/D-110）——`GoalStep.delegate.subagent` 使委派 step 以 `run_kind = "subagent"` 持久任务执行，Goal worker 在自身 lease 心跳下等待子 Agent 终态，宿主合并隔离工作区变更后再执行已确认的 `StepVerifier`；子 Agent 自述、合并冲突与已知失败、`waiting_unknown`／取消／超时的保守停止均保持既有语义。委派步骤必须有 verifier，`goal plan`／`--plan-file` 可提议，经 `goal confirm` 锁定；`goals.sqlite3` v2→v3 增加 `dispatches.subagent_id` 关联。结合 `auto_chain` 可跨 run 自动推进 Goal 链，`goal status`／`report` 展示子任务 id 与状态；TUI／桌面端 Goal 面板展示为后续增量。详见[Goal 设计](goal.md)与[受控子 Agent](subagents.md)。
 
 ## F-21 实验性程序化工具编排（已实现 · opt-in）
 

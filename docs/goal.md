@@ -1,6 +1,6 @@
 # Goal 目标编排设计
 
-**状态：DEV-069 至 DEV-074 已实现并通过本机受控验收；`DEV-091`（S3/D-080 步骤验证器模型、v2 存储、`set-verifier` 与沙箱化 `run_step_verifier`）与 `DEV-092`（`run_step` 验证门禁、`start --auto` 仅在验证通过后前进、失败有界重规划）已实现并通过本机验证；`D-111`（`auto_chain` 持久化自动推进链，`goal start --auto --chain` 与 `[goal] auto_chain`）已实现并通过本机验证。能力编号 F-20；跨平台固定源码证据和发行版本仍按验收记录单独维护。**
+**状态：DEV-069 至 DEV-074 已实现并通过本机受控验收；`DEV-091`（S3/D-080 步骤验证器模型、v2 存储、`set-verifier` 与沙箱化 `run_step_verifier`）与 `DEV-092`（`run_step` 验证门禁、`start --auto` 仅在验证通过后前进、失败有界重规划）已实现并通过本机验证；`D-111`（`auto_chain` 持久化自动推进链，`goal start --auto --chain` 与 `[goal] auto_chain`）与 `D-112`（委派步骤以持久子 Agent 执行、宿主 verifier 闭环，v3 存储）已实现并通过本机验证。能力编号 F-20；跨平台固定源码证据和发行版本仍按验收记录单独维护。**
 
 ## 当前实现
 
@@ -56,13 +56,13 @@ G1 可在共享基础稳定后单独开发，G2 的执行依赖按[后续开发�
 | 对象 | 主要字段 |
 | --- | --- |
 | Goal | UUID、专属 Session、objective、acceptance criteria、工作区、profile、模式、状态／阶段、预算／usage、当前 Step、wait／failure、auto authorization、confirmed_verifiers_digest、revision、创建／更新时间 |
-| Step | UUID、ordinal、依赖、标题／指令、可选结构化 `verifier`、运行模式、状态、尝试次数、关联 Run、最近结构化 Run 结果与最近 `last_verification` 宿主验证证据 |
+| Step | UUID、ordinal、依赖、标题／指令、可选结构化 `verifier`、可选 `delegate`、`subagent_id`、运行模式、状态、尝试次数、关联 Run、最近结构化 Run 结果与最近 `last_verification` 宿主验证证据 |
 | Evidence | UUID、验收项 ID、来源 Step／Run、manual／file-exists／file-digest／artifact 类型、摘要、相对路径、SHA-256、核验时间（v2 `step_verifications` 表另行审计保存步骤验证器退出码与有界摘录） |
 
 ### 步骤宿主验证器（D-080 / DEV-091）
 
 - **结构与确认锁定**：`PlannedStep.verifier` 与 `GoalStep.verifier` 仅接受结构化 `argv`（禁止隐式 shell 字符串拼接）、可选工作区相对 `cwd`（禁止绝对路径、`..`、控制字符与 `.git` 控制路径）、有界超时（`1–600s`，默认 `120s`）与流摘录上限（`256B–32KiB`，默认 `8KiB`）。`goal plan` 草案与 `--plan-file` 可提议 verifier，亦可经 `soyo goal set-verifier`（或 `--clear`）调整；任何更改均清除 `confirmed_verifiers_digest` 并使 Goal 回到 `Waiting(PlanConfirmation)`，必须经 `goal confirm` 人工核对锁定后方可进入可执行状态。
-- **沙箱执行与不变量**：宿主侧 `run_step_verifier` / `execute_host_verifier` 校验 `verifiers_confirmed()`、剩余活跃时间预算、`PLAN` 跳过、`[permissions]` `deny`/`ask`/`Manual` 确认、`ExecutionBackend`（原生沙箱＋受保护宿主路径）与 `SecretRegistry` 脱敏。`goals.sqlite3`（schema v2，含 v1→v2 原子迁移）持久化 `step_verifications` 审计记录，`GoalRecord::validate` 强制约束带 verifier 的步骤不得在缺少退出码 `0` 且状态 `passed` 的宿主验证证据时标记为 `Completed`。
+- **沙箱执行与不变量**：宿主侧 `run_step_verifier` / `execute_host_verifier` 校验 `verifiers_confirmed()`、剩余活跃时间预算、`PLAN` 跳过、`[permissions]` `deny`/`ask`/`Manual` 确认、`ExecutionBackend`（原生沙箱＋受保护宿主路径）与 `SecretRegistry` 脱敏。`goals.sqlite3`（schema v2 引入 `step_verifications`，v3 增加 `dispatches.subagent_id`；含原子迁移链）持久化宿主验证审计记录，`GoalRecord::validate` 强制约束带 verifier 的步骤不得在缺少退出码 `0` 且状态 `passed` 的宿主验证证据时标记为 `Completed`。
 
 ### 自动推进门禁与有界重规划（D-080 / DEV-092）
 
@@ -78,6 +78,19 @@ G1 可在共享基础稳定后单独开发，G2 的执行依赖按[后续开发�
 - **保守停止绝对**：`unknown` 副作用、取消、超时、`!verifiers_confirmed()`（verifier 被修改而未重新 `goal confirm`）、`deny`／`PLAN` 跳过各自进入既有 `waiting`／`blocked`／`limit_reached`，绝不自动重放未确认副作用；verifier 失败仍在 `max_replans` 内 `replan_failed_step` 后继续。模型自述“完成”不关闭步骤或 Goal 的不变式保持。
 - **可见性**：`goal status` 在文本输出中为链式 Goal 打印 `Chain: on · N/M steps done · next step K`；`goal report` 的 JSON 记录含 `auto_chain`，Markdown 报告为链式 Goal 增加 `Auto-chain` 行。桌面端经 helper `goal_start` 启动时使用 `[goal] auto_chain` 配置值。
 - **验收证据**：`crates/soyo-cli/tests/goal.rs` 覆盖三步链全部通过 → `completed`、verifier 失败在 `max_replans` 内重规划后继续、持续失败落到 `limit_reached`、verifier 未重新确认时 `start --auto --chain` 被拒绝、`max_runs` 预算在下一步 dispatch 前耗尽转为 `limit_reached`、`goal worker` 恢复链式 Goal 但不恢复普通 `--auto` Goal。
+
+### 步骤委派持久子 Agent（D-112）
+
+- **模型与确认**：`GoalStep.delegate` 为可选 `{"subagent": true}`；`PlannedStep` 同样接受该字段，`goal plan` 草案与 `--plan-file` 均可提议。委派步骤**必须**同时具有宿主 `verifier`，否则 `GoalPlan::parse`／`apply_plan`／`GoalRecord::validate` 以 `invalid_goal` 拒绝；`goal set-verifier --clear` 也不能清除委派步骤的 verifier。计划替换或 verifier 修改仍清除 `confirmed_verifiers_digest` 并要求重新 `goal confirm`，与 D-080 的锁定语义一致。
+- **执行边界**：执行前要求 `[subagents] enabled = true` 与 `[tasks] enabled = true`，且 Goal／步骤模式不是 `PLAN`（`plan_write_denied`）；配置缺失在 `begin_dispatch` 之前失败，不会留下悬挂 dispatch。Goal worker 以 Goal 的会话、工作区、profile 与模式为父，经 `spawn_persistent_job` 创建 `run_kind = "subagent"` 的持久任务（D-110），子策略由 `Policy::derive_for_subagent` 从 Goal 当前策略逐级收紧，使用隔离工作区；宿主数据／状态／凭据目录等受保护路径不会进入子工作区拷贝。子 Agent 的 exec 仍受 Goal 继承的 `deny`／`ask`、权限模式与原生沙箱约束。
+- **等待与租约**：Goal worker 在自身 lease 心跳与暂停／取消轮询下，用与 D-110 相同的 `run_subagent_once` 驱动该任务。步骤的 Run 记录保留，`GoalStep.subagent_id` 与 `goals.sqlite3` schema v3 的 `dispatches.subagent_id` 共同记录关联；子 Agent 的模型请求、工具调用与活跃时间计入 Goal 预算。
+- **宿主 verifier 闭环**：子 Agent 到达 `Completed` 后，宿主以三方 SHA-256 检测把隔离工作区变更合入 Goal 工作区；合并成功后仍由 Goal 侧 `run_step_verifier` 在原生沙箱与现行权限规则下执行已确认的 verifier。只有子 Run 完成、合并成功且 verifier 退出码 `0`／`passed` 时步骤才 `Completed`；子 Agent 自述完成不关闭步骤或 Goal。verifier 失败进入既有 `max_replans` 重规划；合并冲突或子任务已知失败记为已知失败并允许有界重规划。
+- **保守停止**：子任务 `waiting_unknown`、运行被取消、超时或结果无法确认时，步骤记为 `Failed`，Goal 进入既有 `Waiting(unknown_side_effect)`，`auto_chain` 停止推进且绝不自动重放；`goal resolve STEP --retry` 清除旧 `subagent_id` 并显式重新排队（重试会 spawn 新子 Agent），`goal replan` 仍受 `max_replans` 限制。旧子 Agent 任务仍可经 `soyo subagent status|resolve|cancel` 独立检查。
+- **自动推进链**：结合 D-111，委派步骤 verifier 通过后与直接步骤完全一致地调度下一步；unknown／取消／超时／预算／未确认的保守停止保持不变。
+- **可见性**：`goal status` 文本为委派步骤打印 `Delegated subagent: <task-id> · <state>`；`goal report` JSON 含 `delegate`／`subagent_id`，Markdown 增加 `Delegated subagent` 行。TUI 与桌面端 Goal 面板暂未展示委派字段，作为后续增量。
+- **存储迁移**：`goals.sqlite3` 由 v2 原子迁移到 v3（`dispatches` 增加 `subagent_id TEXT`），v1 数据库按 v1→v2→v3 链式升级；旧记录在字段缺省时继续可读。
+- **验收证据**：`crates/soyo-cli/tests/goal.rs` 覆盖委派子 Agent 写入 → 宿主合并 → verifier 通过；子 Agent 谎报完成 → verifier 失败 → 有界重规划；运行中暂停 → 子任务 `waiting_unknown` → Goal `waiting` 且 `goal worker` 不重放；委派步骤缺少 verifier 被计划校验拒绝；`auto_chain` 在委派步骤通过后继续调度下一步。`crates/soyo-core/src/goal/tests.rs` 覆盖 v2→v3 迁移、委派链接与 unknown 收尾的 store 不变量。
+
 | Continuation | 显式 auto 标记、模式、权限模式、配置指纹、授权时间、worker owner／过期租约及持久 dispatch 状态 |
 
 当前实现将一个 Goal 绑定到一个专属 Session，步骤关联多个 Run；跨 Session 关联及子 Goal 按后续需求扩展。工具调用继续使用 `(run_id, call_id)` 关联。

@@ -1,6 +1,6 @@
 # 受控子 Agent 协作（F-09，D-085／D-109／D-110）
 
-**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。深度由 `[subagents] max_depth` 控制（默认 `1`，允许 `1..=3`）；持久子 Agent（D-110）复用 `[tasks]` 队列，可跨父 run 由后台 worker 续跑。跨进程分布式子 Agent 仍属后续范围。**
+**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。深度由 `[subagents] max_depth` 控制（默认 `1`，允许 `1..=3`）；持久子 Agent（D-110）复用 `[tasks]` 队列，可跨父 run 由后台 worker 续跑；Goal 步骤委派（D-112）以同一持久任务执行，但 verifier 仍由 Goal 宿主执行。跨进程分布式子 Agent 仍属后续范围。**
 
 ## 定位与开关边界
 
@@ -92,13 +92,21 @@
 - **清理**：成功 merge 默认删除隔离工作区（`discard_after = true`）并移除基线目录；`soyo subagent cancel <id> --discard` 立即清理；未合并的已完成作业保留工作区供检查，由操作者显式丢弃。
 - **非提权不变**：持久化不放宽任何规则——子级仍由 `derive_for_subagent` 从父策略逐级收紧，不继承父级一次性授权，PLAN/只读父级仍不能创建可写持久作业。
 
+### Goal 步骤委派（D-112）
+
+`GoalStep.delegate = { "subagent": true }` 是持久子 Agent 的第一个一等编排入口，不再要求 Goal 步骤的模型自行调用 `subagent_spawn`／`subagent_merge`：
+
+- **创建与父边界**：Goal worker 以 Goal 会话／工作区／profile／模式为父，调用与 `subagent_spawn persistent: true` 相同的 `spawn_persistent_job` 创建 queued 任务；子策略由 Goal 当前 `Policy::derive_for_subagent` 派生，使用隔离工作区，宿主数据／状态／凭据目录不会进入子工作区拷贝。委派步骤必须带宿主 verifier，且 `PLAN` 模式、`[subagents]`／`[tasks]` 关闭时在 dispatch 前明确失败。
+- **执行与合并**：Goal worker 在自己的 lease 心跳下用 `run_subagent_once` 驱动子任务；子 Agent 到达 `Completed` 后由宿主按当前 Goal 工作区做三方冲突检测并合入变更，再由 Goal 侧 `run_step_verifier` 执行已确认的 verifier。合并冲突、子任务已知失败与 verifier 失败走 `max_replans` 有界重规划；`waiting_unknown`／取消／超时进入 Goal 既有保守等待，绝不自动重放。
+- **归档与可见性**：步骤 Run 保留，`GoalStep.subagent_id` 与 `goals.sqlite3` schema v3 的 `dispatches.subagent_id` 记录关联；`goal status`／`goal report` 展示子任务 id 与委派状态。详细的确认、预算与停止规则见 [Goal 设计](goal.md)。
+
 ## 共享预算、Metrics 与 Goal 集成
 
 - **共享时间与调用上限**：子 Agent 接收从父 `SharedBudget` 派生的受限预算（同时受子级 `timeout_seconds`、父级剩余活跃时间与共享父 `model_requests` 计数约束），并共享原子父工具调用计数器，防止通过并行扇出突破父级 Run 预算。多层委派下每层都以同一方式串联：孙代请求同样逐级扣减至顶层父 Run 的 `SharedBudget` 与工具计数器，任一层都不会获得新的独立额度。
 - **子代生成计数沿链汇总（D-109）**：`max_concurrent` 与 `max_total` 由整条委派链共享的计数器统计（`SubagentSupervisor` 的内部 `SubtreeCounters`），子级 supervisor 与祖父级使用同一份计数，因此深层扇出不能突破顶层 Run 的并发与总数上限。
 - **单源 Metrics 汇总**：`SubagentStore` 在每次子工具完成与模型请求后直接向子 `MeasuredModel` 与记录表累积明细；子任务返回时仅通过 `Metrics::merge_child` 增量回滚进父 `Metrics` 一次（支持多轮 `subagent_message` 续跑而不重复计算）。
 - **取消链路**：通过 `SubagentCancel` 串联父 `Cancellation` 与局部取消信号，父 Run 取消、Ctrl-C、超时或 helper 断线会立即终止运行中的子 Agent 并清理临时工作区；多层委派下串联关系逐级成立，顶层取消会传播到整棵子树。
-- **Goal 指纹集成**：[goal_profile_fingerprint](../crates/soyo-app/src/goal.rs) 纳入 `&config.subagents`；`goal start --auto` 在执行期发现 `[subagents]` 开关或限额漂移时明确拒绝继续，步骤产物经 `subagent_merge` 落入父工作区后由宿主 `StepVerifier` 独立核验。
+- **Goal 指纹集成**：[goal_profile_fingerprint](../crates/soyo-app/src/goal.rs) 纳入 `&config.subagents`；`goal start --auto` 在执行期发现 `[subagents]` 开关或限额漂移时明确拒绝继续。直接步骤仍可由模型调用 `subagent_spawn`／`subagent_merge`，产物合入父工作区后由宿主 `StepVerifier` 独立核验；`delegate` 步骤则走 D-112 的宿主编排路径，其子任务的请求数、工具调用与活跃时间计入 Goal 预算。
 
 ## CLI、TUI 与桌面端呈现
 
