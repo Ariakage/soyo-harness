@@ -1047,3 +1047,22 @@ async fn dispatch_streaming(
     let _ = forwarder.await;
     result.and_then(ok)
 }
+
+#[cfg(test)]
+mod dispatch_tests {
+    /// Every method the SDK freeze publishes (D-106) must have a dispatch arm
+    /// in `dispatch`/`dispatch_streaming` — this guards against a rename that
+    /// silently turns a frozen method into `unknown_method`.
+    #[test]
+    fn published_methods_all_dispatch() {
+        let source = include_str!("server.rs");
+        for method in soyo_ipc::protocol::PUBLISHED_METHODS {
+            let arm = format!("\"{method}\" =>");
+            let streaming_arm = format!("\"{method}\"");
+            assert!(
+                source.contains(&arm) || source.contains(&streaming_arm),
+                "published method '{method}' has no dispatch arm in server.rs"
+            );
+        }
+    }
+}
