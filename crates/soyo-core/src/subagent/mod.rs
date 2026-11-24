@@ -11,6 +11,7 @@ pub mod supervisor;
 pub mod workspace;
 
 pub use persist::{PersistentSubagentJob, SubagentPersistence};
+pub use supervisor::{PersistentSpawnRequest, spawn_persistent_job};
 
 #[cfg(test)]
 mod tests;

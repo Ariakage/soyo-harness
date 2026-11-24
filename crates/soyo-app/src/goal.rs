@@ -4,7 +4,8 @@ use crate::{
     Launch,
     events::timestamp,
     session::{self, ResumeOptions},
-    spawn_build_runtime,
+    spawn_build_runtime, subagent_jobs,
+    task_queue::TaskRunContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,17 +14,20 @@ use soyo_core::{
     boundary::{Cancellation, Model, ModelRequest, ModelUpdate},
     config::Config,
     contract::{
-        BoundaryError, ErrorInfo, HistoryItem, PermissionMode, RunId, RunResult, RunStatus,
-        SCHEMA_VERSION, Usage, WorkMode,
+        BoundaryError, ErrorInfo, HistoryItem, PermissionMode, Persistence, RunId, RunResult,
+        RunStatus, SCHEMA_VERSION, Usage, WorkMode,
     },
     goal::{
-        AcceptanceCriterion, GoalId, GoalLease, GoalPlan, GoalRecord, GoalRunSummary, GoalStatus,
-        GoalStep, GoalStore, StepVerificationResult, StepVerificationStatus, VerificationSpec,
-        verify_file_criterion,
+        AcceptanceCriterion, DelegatedUsage, GoalId, GoalLease, GoalPlan, GoalRecord,
+        GoalRunSummary, GoalStatus, GoalStep, GoalStore, StepVerificationResult,
+        StepVerificationStatus, VerificationSpec, verify_file_criterion,
     },
     input::InputHandler,
+    metrics::RunMetrics,
     permissions::Policy,
     runtime::{ApprovalHandler, PersonalContext},
+    subagent::{PersistentSpawnRequest, SpawnArgs, SubagentIsolation, spawn_persistent_job},
+    task_queue::{TaskId, TaskRecord, TaskStatus},
     tools::{
         exec::{ExecConfig, HostVerifierRequest, execute_host_verifier},
         read::{ReadLimits, ReadTools},
@@ -331,6 +335,9 @@ async fn run_step(
     step: &GoalStep,
     context: &mut GoalRunContext,
 ) -> Result<GoalRunOutcome, BoundaryError> {
+    if step.delegate.is_some() {
+        return run_delegated_step(config, store, lease, goal, step, context).await;
+    }
     let mut prepared = session::resume(
         config,
         &goal.session_id.0.to_string(),
@@ -520,7 +527,21 @@ async fn run_step(
             timestamp()?,
         )
         .await?;
-    let mut goal = goal;
+    let goal = refresh_goal_file_evidence(store, goal).await?;
+    Ok(GoalRunOutcome {
+        goal,
+        result,
+        streamed,
+    })
+}
+
+/// Recheck workspace-relative file acceptance criteria after a step finishes.
+/// Shared by direct and delegated step execution so evidence refresh semantics
+/// stay identical.
+async fn refresh_goal_file_evidence(
+    store: &GoalStore,
+    mut goal: GoalRecord,
+) -> Result<GoalRecord, BoundaryError> {
     if matches!(goal.status, GoalStatus::Ready | GoalStatus::Waiting) {
         let final_verification = !goal.steps.is_empty()
             && goal
@@ -552,11 +573,458 @@ async fn run_step(
             }
         }
     }
-    Ok(GoalRunOutcome {
-        goal,
-        result,
-        streamed,
-    })
+    Ok(goal)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelegatedFinish {
+    Completed,
+    Failed,
+    Unknown,
+}
+
+/// A cancelled or conservatively unrecorded child attempt is treated as an
+/// unknown outcome: the Goal waits for explicit resolution and never replays.
+fn delegated_finish(status: TaskStatus) -> DelegatedFinish {
+    match status {
+        TaskStatus::Completed => DelegatedFinish::Completed,
+        TaskStatus::Failed => DelegatedFinish::Failed,
+        _ => DelegatedFinish::Unknown,
+    }
+}
+
+enum DelegatedAttempt {
+    Finished {
+        task: TaskRecord,
+        result: RunResult,
+        verification: Option<StepVerificationResult>,
+    },
+    Unknown {
+        task: TaskRecord,
+        result: RunResult,
+        error: ErrorInfo,
+    },
+}
+
+fn goal_delegation_label(step: &GoalStep) -> String {
+    format!("goal-step-{}", step.ordinal)
+}
+
+fn delegated_result(
+    mut child: RunResult,
+    run_id: RunId,
+    session_id: soyo_core::contract::SessionId,
+) -> RunResult {
+    child.run_id = Some(run_id);
+    child.session_id = Some(session_id);
+    child
+}
+
+fn delegated_failure(
+    child: RunResult,
+    run_id: RunId,
+    session_id: soyo_core::contract::SessionId,
+    code: &str,
+    message: String,
+) -> RunResult {
+    let mut result = delegated_result(child, run_id, session_id);
+    result.status = RunStatus::Failed;
+    result.stop_reason = Some(code.to_owned());
+    result.error = Some(ErrorInfo {
+        code: code.to_owned(),
+        message,
+    });
+    // The child's terminal outcome is fully recorded in the task store, so a
+    // bounded replan may proceed from a known failure.
+    result.persistence = Some(Persistence {
+        saved: true,
+        error: None,
+    });
+    result
+}
+
+fn delegated_usage(task: &TaskRecord, result: &RunResult, elapsed: Duration) -> DelegatedUsage {
+    let job = task.subagent.as_ref();
+    DelegatedUsage {
+        request_count: job.map_or(0, |job| job.execution_requests),
+        tool_calls: job.map_or(0, |job| job.tool_calls),
+        active_seconds: u64::try_from(elapsed.as_millis())
+            .unwrap_or(u64::MAX)
+            .div_ceil(1000),
+        usage: job
+            .and_then(|job| job.usage.clone())
+            .or_else(|| result.usage.clone()),
+    }
+}
+
+fn delegated_metrics(usage: &DelegatedUsage, elapsed: Duration) -> RunMetrics {
+    RunMetrics {
+        execution_requests: usage.request_count,
+        tool_calls: usage.tool_calls,
+        duration_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        ..Default::default()
+    }
+}
+
+/// Execute one delegated Goal step by spawning a persistent subagent (`D-112`)
+/// and waiting for its terminal state under the Goal lease. The host verifier
+/// runs only after the child's changes have been merged into the Goal
+/// workspace; model self-report never closes the step.
+async fn run_delegated_step(
+    config: &Config,
+    store: &GoalStore,
+    lease: &GoalLease,
+    goal: &GoalRecord,
+    step: &GoalStep,
+    context: &mut GoalRunContext,
+) -> Result<GoalRunOutcome, BoundaryError> {
+    let Some(verifier) = step.verifier.clone() else {
+        return Err(failure(
+            "invalid_goal",
+            "a delegated Goal step requires a host-side step verifier",
+        ));
+    };
+    if matches!(goal.mode, WorkMode::Plan) || matches!(step.mode, WorkMode::Plan) {
+        return Err(failure(
+            "plan_write_denied",
+            "PLAN Goal steps cannot delegate writable subagents",
+        ));
+    }
+    let limits = config
+        .subagents
+        .resolve()?
+        .ok_or_else(|| failure("subagents_disabled", "subagents are not enabled"))?;
+    if !config.tasks.enabled {
+        return Err(failure(
+            "task_queue_disabled",
+            "delegated Goal steps require the task queue; set [tasks] enabled = true",
+        ));
+    }
+    // Hold the Goal session lock for the delegated attempt as well. The child
+    // runs in its own isolated workspace, but no other surface may resume this
+    // Goal session while the step is in flight.
+    let _prepared = session::resume(
+        config,
+        &goal.session_id.0.to_string(),
+        ResumeOptions {
+            accept_config_change: context.accept_config_change,
+            cwd_explicit: false,
+            profile_explicit: false,
+            mode_override: Some(goal.mode),
+        },
+    )
+    .await
+    .map_err(|_| failure("goal_session", "Goal session cannot be resumed"))?;
+
+    let run_id = RunId::new();
+    let now = timestamp()?;
+    let dispatch = store.begin_dispatch(lease, run_id, now_ms(), now).await?;
+    store.mark_running(&dispatch, lease, now_ms()).await?;
+    let started = Instant::now();
+
+    let heartbeat_store = store.clone();
+    let mut heartbeat_lease = lease.clone();
+    let heartbeat_ttl = lease.expires_at_ms.saturating_sub(now_ms()).max(1);
+    let heartbeat_wait = Duration::from_millis((heartbeat_ttl / 3).clamp(1_000, 30_000));
+    let heartbeat_error = Arc::new(Mutex::new(None::<BoundaryError>));
+    let heartbeat_failure = heartbeat_error.clone();
+    let heartbeat_cancellation = context.cancellation.clone();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(heartbeat_wait).await;
+            if let Err(error) = heartbeat_store
+                .renew_lease(&mut heartbeat_lease, now_ms(), Some(heartbeat_ttl))
+                .await
+            {
+                heartbeat_cancellation.cancel();
+                if let Ok(mut failure) = heartbeat_failure.lock() {
+                    *failure = Some(error);
+                }
+                break;
+            }
+        }
+    });
+    let control_store = store.clone();
+    let control_cancellation = context.cancellation.clone();
+    let control_goal_id = goal.id;
+    let control = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            match control_store.load(control_goal_id).await {
+                Ok(current)
+                    if matches!(current.status, GoalStatus::Paused | GoalStatus::Cancelled) =>
+                {
+                    control_cancellation.cancel();
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    control_cancellation.cancel();
+                    break;
+                }
+            }
+        }
+    });
+
+    let attempt = async {
+        let persistence = subagent_jobs::open_subagent_persistence(config)?;
+        let parent_policy = Policy::new(&goal.workspace, config.permissions.clone())?;
+        let (mut sandbox, _) =
+            config
+                .sandbox
+                .resolve_with_environment(&goal.workspace, config.environment())?;
+        let extra_protected =
+            crate::configure_host_sandbox(config, &goal.workspace, &mut sandbox)
+                .map_err(|error| failure("sandbox_unavailable", &error.to_string()))?;
+        let remaining = goal
+            .budget
+            .max_active_seconds
+            .saturating_sub(goal.usage.active_seconds);
+        if remaining == 0 {
+            return Err(failure(
+                "goal_budget",
+                "Goal active time budget is exhausted",
+            ));
+        }
+        let timeout_secs = limits.limits.default_timeout.as_secs().min(remaining).max(1);
+        let args = SpawnArgs {
+            label: goal_delegation_label(step),
+            task: step.instruction.clone(),
+            mode: Some(step.mode),
+            isolation: Some(SubagentIsolation::Isolated),
+            allow_exec: true,
+            allowed_paths: Vec::new(),
+            background: false,
+            persistent: true,
+            timeout: Duration::from_secs(timeout_secs),
+        };
+        let snapshot = spawn_persistent_job(
+            &persistence,
+            PersistentSpawnRequest {
+                parent_session_id: goal.session_id,
+                parent_workspace: &goal.workspace,
+                parent_profile: &goal.profile,
+                parent_mode: goal.mode,
+                parent_perm: context.permissions,
+                parent_read_only: false,
+                parent_policy: &parent_policy,
+                limits: &limits.limits,
+                extra_protected: &extra_protected,
+                parent_depth: 0,
+                args: &args,
+            },
+        )
+        .await?;
+        let task_id: TaskId = snapshot.id.parse().map_err(|_| {
+            failure(
+                "subagent_error",
+                "delegated subagent task identifier is invalid",
+            )
+        })?;
+        if let Err(error) = store
+            .begin_delegation(lease, &dispatch, task_id, timestamp()?)
+            .await
+        {
+            let _ = subagent_jobs::cancel(config, &snapshot.id, true).await;
+            return Err(error);
+        }
+        let task_context = TaskRunContext {
+            permissions: context.permissions,
+            confirmation: context.confirmation.clone(),
+            input: context.input.clone(),
+            approvals: context.approvals.take(),
+            personal_context: context.personal_context.clone(),
+            anthropic_prompt_cache: context.anthropic_prompt_cache,
+            accept_config_change: context.accept_config_change,
+            cancellation: context.cancellation.clone(),
+        };
+        let outcome = subagent_jobs::run_subagent_once(config, task_id, task_context).await?;
+        let task = outcome.task;
+        let finish = delegated_finish(task.status);
+        let child = outcome.result;
+        match finish {
+            DelegatedFinish::Completed => {
+                let (result, verification) =
+                    match subagent_jobs::merge(config, &task.id.0.to_string(), None, true).await {
+                        Ok(report) if report.conflicts.is_empty() => {
+                            let mut result = delegated_result(child, run_id, goal.session_id);
+                            result.persistence = Some(Persistence {
+                                saved: true,
+                                error: None,
+                            });
+                            let verification = if result.status == RunStatus::Completed {
+                                let mut verifier_goal = dispatch.goal.clone();
+                                verifier_goal.usage.active_seconds = verifier_goal
+                                    .usage
+                                    .active_seconds
+                                    .saturating_add(
+                                        u64::try_from(started.elapsed().as_millis())
+                                            .unwrap_or(u64::MAX)
+                                            .div_ceil(1000),
+                                    );
+                                match run_step_verifier(
+                                    config,
+                                    &verifier_goal,
+                                    step,
+                                    dispatch.attempt,
+                                    run_id,
+                                    context.permissions,
+                                    context.confirmation.clone(),
+                                    context.cancellation.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(outcome) => Some(outcome),
+                                    Err(error) => Some(StepVerificationResult {
+                                        step_id: step.id,
+                                        attempt: dispatch.attempt,
+                                        run_id,
+                                        argv: verifier.argv.clone(),
+                                        cwd: verifier.cwd.clone(),
+                                        status: StepVerificationStatus::Unknown,
+                                        exit_code: None,
+                                        stdout_excerpt: String::new(),
+                                        stderr_excerpt: String::new(),
+                                        stdout_truncated: false,
+                                        stderr_truncated: false,
+                                        duration_ms: 0,
+                                        recorded_at: timestamp()?,
+                                        error_code: Some(error.0.code),
+                                        error_message: Some(error.0.message),
+                                    }),
+                                }
+                            } else {
+                                None
+                            };
+                            (result, verification)
+                        }
+                        Ok(report) => (
+                            delegated_failure(
+                                child,
+                                run_id,
+                                goal.session_id,
+                                "subagent_conflict",
+                                format!(
+                                    "persistent subagent changes conflict with the Goal workspace ({} conflicted file(s)); replan after inspecting the parent workspace",
+                                    report.conflicts.len()
+                                ),
+                            ),
+                            None,
+                        ),
+                        Err(error) => (
+                            delegated_failure(
+                                child,
+                                run_id,
+                                goal.session_id,
+                                &error.0.code,
+                                error.0.message,
+                            ),
+                            None,
+                        ),
+                    };
+                Ok(DelegatedAttempt::Finished {
+                    task,
+                    result,
+                    verification,
+                })
+            }
+            DelegatedFinish::Failed => {
+                let mut result = delegated_result(child, run_id, goal.session_id);
+                if result.status == RunStatus::Completed {
+                    result.status = RunStatus::Failed;
+                    result.stop_reason = Some("subagent_failed".into());
+                }
+                if result.error.is_none() {
+                    result.error = task.failure.clone().or_else(|| {
+                        Some(ErrorInfo {
+                            code: "subagent_failed".into(),
+                            message: "the delegated subagent did not complete".into(),
+                        })
+                    });
+                }
+                result.persistence = Some(Persistence {
+                    saved: true,
+                    error: None,
+                });
+                Ok(DelegatedAttempt::Finished {
+                    task,
+                    result,
+                    verification: None,
+                })
+            }
+            DelegatedFinish::Unknown => {
+                let error = task.failure.clone().unwrap_or(ErrorInfo {
+                    code: "subagent_outcome_unknown".into(),
+                    message: format!(
+                        "delegated subagent {} ended with an unknown outcome; resolve the Goal step explicitly",
+                        task.id.0
+                    ),
+                });
+                let result = delegated_result(child, run_id, goal.session_id);
+                Ok(DelegatedAttempt::Unknown {
+                    task,
+                    result,
+                    error,
+                })
+            }
+        }
+    }
+    .await;
+
+    heartbeat.abort();
+    control.abort();
+    let _ = heartbeat.await;
+    let _ = control.await;
+    if let Some(error) = heartbeat_error
+        .lock()
+        .ok()
+        .and_then(|mut failure| failure.take())
+    {
+        return Err(error);
+    }
+    let attempt = attempt?;
+    let elapsed = started.elapsed();
+    match attempt {
+        DelegatedAttempt::Finished {
+            task,
+            result,
+            verification,
+        } => {
+            let usage = delegated_usage(&task, &result, elapsed);
+            let metrics = delegated_metrics(&usage, elapsed);
+            let goal = store
+                .finish_dispatch_with_verification(
+                    lease,
+                    &dispatch,
+                    GoalRunSummary::from_result(&result, timestamp()?)?,
+                    verification,
+                    &metrics,
+                    timestamp()?,
+                )
+                .await?;
+            let goal = refresh_goal_file_evidence(store, goal).await?;
+            Ok(GoalRunOutcome {
+                goal,
+                result,
+                streamed: false,
+            })
+        }
+        DelegatedAttempt::Unknown {
+            task,
+            result,
+            error,
+        } => {
+            let usage = delegated_usage(&task, &result, elapsed);
+            let goal = store
+                .finish_unknown_dispatch(lease, &dispatch, usage, error, timestamp()?)
+                .await?;
+            Ok(GoalRunOutcome {
+                goal,
+                result,
+                streamed: false,
+            })
+        }
+    }
 }
 
 /// Execute exactly one ready Goal step under a durable lease and session lock.

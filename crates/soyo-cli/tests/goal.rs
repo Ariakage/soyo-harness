@@ -1865,3 +1865,433 @@ async fn goal_worker_resumes_a_chained_goal_but_not_a_plain_auto_goal() {
     assert_eq!(status["data"]["goal"]["usage"]["runs"], 2);
     requests.recv_timeout(Duration::from_secs(1)).unwrap();
 }
+
+fn delegated_config(root: &Path, url: &str) -> std::path::PathBuf {
+    native_config(
+        root,
+        url,
+        r#"
+[subagents]
+enabled = true
+[tasks]
+enabled = true
+"#,
+    )
+}
+
+fn delegated_plan(step_id: &str, verifier: Option<Value>) -> String {
+    let mut step = json!({
+        "id": step_id,
+        "title": "Delegated artifact",
+        "instruction": "Create ready.txt through the delegated persistent subagent",
+        "depends_on": [],
+        "delegate": {"subagent": true}
+    });
+    if let Some(verifier) = verifier {
+        step["verifier"] = verifier;
+    }
+    serde_json::to_string_pretty(&json!({
+        "acceptance": [{
+            "id": "criterion-1",
+            "text": "The delegated artifact is verified",
+            "verification": {"kind": "manual"}
+        }],
+        "steps": [step]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn delegated_goal_step_runs_a_persistent_subagent_and_host_verifier() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, _requests) = fixture::server(vec![
+        (
+            "application/json",
+            tool_call(
+                "w1",
+                "write_file",
+                json!({"path":"ready.txt","content":"verified\n","expected_version":null}),
+            ),
+        ),
+        (
+            "application/json",
+            completion("Created ready.txt inside the delegated workspace."),
+        ),
+    ])
+    .unwrap();
+    let config = delegated_config(root.path(), &url);
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Delegate a verified artifact",
+        "--accept",
+        "The delegated artifact is verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let step_id = "018bcfe5-6800-7000-8000-000000000201";
+    let plan_path = root.path().join("delegated-plan.json");
+    fs::write(
+        &plan_path,
+        delegated_plan(
+            step_id,
+            Some(json!({"argv":[test_exe(), "-f", "ready.txt"], "timeout_seconds": 30})),
+        ),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let started = json_output(
+        command(root.path(), home.path(), &config).args(["goal", "start", &goal_id, "--auto"]),
+    );
+    let goal = &started["data"]["goal"];
+    assert_eq!(goal["status"], "waiting");
+    assert_eq!(goal["wait_reason"]["kind"], "verification");
+    assert_eq!(goal["steps"][0]["status"], "completed");
+    assert_eq!(goal["steps"][0]["last_verification"]["status"], "passed");
+    assert_eq!(goal["steps"][0]["last_verification"]["exit_code"], 0);
+    // The delegated child's model requests and tool calls are attributed to
+    // the Goal budget, not lost with the child run.
+    assert_eq!(goal["usage"]["model_requests"], 2);
+    assert_eq!(goal["usage"]["tool_calls"], 1);
+    let subagent_id = goal["steps"][0]["subagent_id"].as_str().unwrap().to_owned();
+    assert!(uuid::Uuid::parse_str(&subagent_id).is_ok());
+    assert_eq!(
+        fs::read_to_string(root.path().join("ready.txt")).unwrap(),
+        "verified\n"
+    );
+
+    let report = root.path().join("delegated-report.md");
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "report", &goal_id, "--format", "markdown", "--file"])
+            .arg(&report),
+    );
+    let markdown = fs::read_to_string(&report).unwrap();
+    assert!(markdown.contains("Delegated subagent"));
+    assert!(markdown.contains(&subagent_id));
+    let text = text_command(root.path(), home.path(), &config)
+        .args(["goal", "status", &goal_id])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.contains("Delegated subagent"));
+    assert!(text.contains(&subagent_id));
+
+    let status = json_output(command(root.path(), home.path(), &config).args([
+        "subagent",
+        "status",
+        &subagent_id,
+    ]));
+    assert_eq!(status["data"]["subagent"]["state"], "merged");
+}
+
+#[test]
+fn delegated_goal_step_replans_when_the_subagent_lies_and_the_verifier_fails() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, _requests) = fixture::server(vec![
+        (
+            "application/json",
+            completion("Done: everything is complete."),
+        ),
+        (
+            "application/json",
+            completion("Done again: everything is definitely complete."),
+        ),
+    ])
+    .unwrap();
+    let config = delegated_config(root.path(), &url);
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Delegated work must be verified",
+        "--accept",
+        "The delegated artifact is verified",
+        "--max-replans",
+        "1",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let step_id = "018bcfe5-6800-7000-8000-000000000202";
+    let plan_path = root.path().join("delegated-lying-plan.json");
+    fs::write(
+        &plan_path,
+        delegated_plan(
+            step_id,
+            Some(json!({"argv":[test_exe(), "-f", "ready.txt"], "timeout_seconds": 15})),
+        ),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let output = command(root.path(), home.path(), &config)
+        .args(["goal", "start", &goal_id, "--auto"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(5));
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let goal = &body["data"]["goal"];
+    assert_eq!(goal["status"], "limit_reached");
+    assert_eq!(goal["usage"]["replans"], 1);
+    assert_eq!(goal["steps"][0]["status"], "failed");
+    assert_eq!(goal["steps"][0]["last_verification"]["status"], "failed");
+    assert_eq!(goal["steps"][0]["last_verification"]["exit_code"], 1);
+    assert!(!root.path().join("ready.txt").exists());
+
+    // Each attempt persists its own delegated subagent task.
+    let jobs = json_output(command(root.path(), home.path(), &config).args(["subagent", "list"]));
+    assert_eq!(jobs["data"]["subagents"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn delegated_goal_waits_when_the_subagent_outcome_is_unknown_and_never_replays() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, requests, release) =
+        fixture::server_gated(completion("late subagent response")).unwrap();
+    let config = delegated_config(root.path(), &url);
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Delegate work that is paused while running",
+        "--accept",
+        "The delegated artifact is verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let step_id = "018bcfe5-6800-7000-8000-000000000203";
+    let plan_path = root.path().join("delegated-unknown-plan.json");
+    fs::write(
+        &plan_path,
+        delegated_plan(
+            step_id,
+            Some(json!({"argv":[test_exe(), "-f", "ready.txt"], "timeout_seconds": 15})),
+        ),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let mut running = command(root.path(), home.path(), &config)
+        .args(["goal", "start", &goal_id, "--auto"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The gated model request proves the persistent child is running and the
+    // delegated step already links its task id.
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let status =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "status", &goal_id]));
+    let subagent_id = status["data"]["goal"]["steps"][0]["subagent_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let paused =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "pause", &goal_id]));
+    assert_eq!(paused["data"]["goal"]["status"], "paused");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if running.try_wait().unwrap().is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !exited {
+        running.kill().unwrap();
+    }
+    let _output = running.wait_with_output().unwrap();
+    let _ = release.send(());
+    assert!(exited, "delegated Goal did not observe pause/cancellation");
+
+    let paused_status =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "status", &goal_id]));
+    assert_eq!(paused_status["data"]["goal"]["status"], "paused");
+    assert_eq!(
+        paused_status["data"]["goal"]["steps"][0]["status"],
+        "failed"
+    );
+    assert_eq!(
+        paused_status["data"]["goal"]["wait_reason"]["kind"],
+        "unknown_side_effect"
+    );
+    let child = json_output(command(root.path(), home.path(), &config).args([
+        "subagent",
+        "status",
+        &subagent_id,
+    ]));
+    assert_eq!(child["data"]["subagent"]["state"], "needs_confirmation");
+
+    // Resume surfaces the existing conservative wait; the durable worker must
+    // not dispatch the step again.
+    let resumed =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "resume", &goal_id]));
+    assert_eq!(resumed["data"]["goal"]["status"], "waiting");
+    assert_eq!(
+        resumed["data"]["goal"]["wait_reason"]["kind"],
+        "unknown_side_effect"
+    );
+    let worker =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "worker", "--once"]));
+    assert!(
+        worker["data"]["continued"].as_array().unwrap().is_empty(),
+        "unknown delegated step must not be replayed"
+    );
+    let still =
+        json_output(command(root.path(), home.path(), &config).args(["goal", "status", &goal_id]));
+    assert_eq!(still["data"]["goal"]["status"], "waiting");
+    assert_eq!(still["data"]["goal"]["usage"]["runs"], 1);
+    assert!(requests.try_recv().is_err());
+
+    // Explicit resolution is the only requeue path.
+    let resolved = json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "resolve", &goal_id, step_id, "--retry"]),
+    );
+    assert_eq!(resolved["data"]["goal"]["status"], "ready");
+    assert!(
+        resolved["data"]["goal"]["steps"][0]["subagent_id"].is_null(),
+        "retry drops the stale subagent link"
+    );
+}
+
+#[test]
+fn delegated_goal_plan_without_a_verifier_is_rejected() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let config = delegated_config(root.path(), "http://127.0.0.1:1/v1");
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Reject unverified delegation",
+        "--accept",
+        "The delegated artifact is verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let step_id = "018bcfe5-6800-7000-8000-000000000204";
+    let plan_path = root.path().join("delegated-no-verifier-plan.json");
+    fs::write(&plan_path, delegated_plan(step_id, None)).unwrap();
+    let output = command(root.path(), home.path(), &config)
+        .args(["goal", "plan", &goal_id, "--plan-file"])
+        .arg(&plan_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("verifier") || stderr.contains("verifier"),
+        "stdout={stdout} stderr={stderr}"
+    );
+}
+
+#[test]
+fn auto_chain_advances_after_a_delegated_step_passes_its_host_verifier() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let (url, _requests) = fixture::server(vec![
+        (
+            "application/json",
+            tool_call(
+                "w1",
+                "write_file",
+                json!({"path":"chain.txt","content":"linked\n","expected_version":null}),
+            ),
+        ),
+        (
+            "application/json",
+            completion("Delegated first step created chain.txt."),
+        ),
+        (
+            "application/json",
+            completion("Direct second step finished."),
+        ),
+    ])
+    .unwrap();
+    let config = delegated_config(root.path(), &url);
+    let created = json_output(command(root.path(), home.path(), &config).args([
+        "goal",
+        "create",
+        "Chain a delegated step into a direct step",
+        "--accept",
+        "The chained work is verified",
+    ]));
+    let goal_id = created["data"]["goal"]["id"].as_str().unwrap().to_owned();
+    let first = "018bcfe5-6800-7000-8000-000000000205";
+    let second = "018bcfe5-6800-7000-8000-000000000206";
+    let plan_path = root.path().join("delegated-chain-plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&json!({
+            "acceptance": [{
+                "id": "criterion-1",
+                "text": "The chained work is verified",
+                "verification": {"kind": "manual"}
+            }],
+            "steps": [
+                {
+                    "id": first,
+                    "title": "Delegated first step",
+                    "instruction": "Create chain.txt through the delegated subagent",
+                    "depends_on": [],
+                    "delegate": {"subagent": true},
+                    "verifier": {
+                        "argv": [test_exe(), "-f", "chain.txt"],
+                        "timeout_seconds": 30
+                    }
+                },
+                {
+                    "id": second,
+                    "title": "Direct second step",
+                    "instruction": "Report completion of the chained Goal",
+                    "depends_on": [first]
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "plan", &goal_id, "--plan-file"])
+            .arg(&plan_path),
+    );
+    json_output(command(root.path(), home.path(), &config).args(["goal", "confirm", &goal_id]));
+
+    let started = json_output(
+        command(root.path(), home.path(), &config)
+            .args(["goal", "start", &goal_id, "--auto", "--chain"]),
+    );
+    let goal = &started["data"]["goal"];
+    assert_eq!(goal["auto_chain"], true);
+    assert_eq!(goal["status"], "waiting");
+    assert_eq!(goal["wait_reason"]["kind"], "verification");
+    assert_eq!(goal["steps"][0]["status"], "completed");
+    assert_eq!(goal["steps"][0]["last_verification"]["status"], "passed");
+    assert_eq!(goal["steps"][1]["status"], "completed");
+    // Two Goal Runs; the first Run also carries the child's two model
+    // requests, the second carries the direct step's request.
+    assert_eq!(goal["usage"]["runs"], 2);
+    assert_eq!(goal["usage"]["model_requests"], 3);
+    assert_eq!(goal["usage"]["tool_calls"], 1);
+    assert_eq!(
+        fs::read_to_string(root.path().join("chain.txt")).unwrap(),
+        "linked\n"
+    );
+}

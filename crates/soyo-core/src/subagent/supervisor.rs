@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
@@ -178,6 +178,170 @@ fn validate_non_escalation(
         ));
     }
     Ok((child_mode, isolation))
+}
+
+/// Inputs for persisting a child subagent when no live parent runtime exists.
+/// The Goal worker uses this path so a delegated Goal step (`D-112`) reuses the
+/// same validation, workspace and TaskStore record as `subagent_spawn`.
+pub struct PersistentSpawnRequest<'a> {
+    pub parent_session_id: SessionId,
+    pub parent_workspace: &'a Path,
+    pub parent_profile: &'a str,
+    pub parent_mode: WorkMode,
+    pub parent_perm: PermissionMode,
+    pub parent_read_only: bool,
+    pub parent_policy: &'a Policy,
+    pub limits: &'a SubagentLimits,
+    /// Host-only paths that must never enter the isolated child workspace.
+    pub extra_protected: &'a [PathBuf],
+    /// Delegation depth of the parent runtime; the child is stored one deeper.
+    pub parent_depth: usize,
+    pub args: &'a SpawnArgs,
+}
+
+/// Create and persist one queued persistent-subagent job. The caller remains
+/// responsible for driving it through `run_subagent_once`.
+pub async fn spawn_persistent_job(
+    persistence: &SubagentPersistence,
+    request: PersistentSpawnRequest<'_>,
+) -> Result<SubagentSnapshot, BoundaryError> {
+    let PersistentSpawnRequest {
+        parent_session_id,
+        parent_workspace,
+        parent_profile,
+        parent_mode,
+        parent_perm,
+        parent_read_only,
+        parent_policy,
+        limits,
+        extra_protected,
+        parent_depth,
+        args,
+    } = request;
+    let (child_mode, isolation) = validate_non_escalation(
+        parent_mode,
+        parent_read_only,
+        args.mode,
+        args.isolation,
+        args.allow_exec,
+    )?;
+    if args.timeout > limits.max_timeout {
+        return Err(failure(
+            error_codes::SUBAGENT_LIMIT,
+            "requested subagent timeout exceeds configured limit",
+        ));
+    }
+
+    let mut protected = parent_policy.protected_paths()?;
+    for path in extra_protected {
+        protected.push(crate::execution::normalize_path(path)?);
+    }
+    protected.sort();
+    protected.dedup();
+    let write_roots = parent_policy.roots().to_vec();
+    let task_id = TaskId::new();
+    let job_dir = persistence.allocate_job_dir(task_id)?;
+
+    let workspace = match isolation {
+        SubagentIsolation::ReadOnly => IsolatedWorkspace::read_only(parent_workspace),
+        SubagentIsolation::Isolated => {
+            IsolatedWorkspace::create_isolated(parent_workspace, &protected, &write_roots, limits)
+        }
+    };
+    let workspace = match workspace {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&job_dir);
+            return Err(error);
+        }
+    };
+    let baseline = if isolation == SubagentIsolation::Isolated {
+        match persistence.write_baseline(&job_dir, &workspace) {
+            Ok(path) => Some(path),
+            Err(error) => {
+                let _ = workspace.cleanup();
+                let _ = persistence.remove_job_dir(task_id);
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+
+    let allowed_paths = args
+        .allowed_paths
+        .iter()
+        .filter_map(|path| path.to_str().map(ToOwned::to_owned))
+        .collect::<Vec<_>>();
+    let job = PersistentSubagentJob {
+        parent_session_id,
+        parent_workspace: workspace.parent_workspace.clone(),
+        label: args.label.clone(),
+        isolation,
+        isolation_kind: workspace.kind,
+        allow_exec: args.allow_exec,
+        allowed_paths: allowed_paths.clone(),
+        timeout_seconds: args.timeout.as_secs(),
+        depth: parent_depth.saturating_add(1),
+        workspace_root: workspace.child_dir.clone(),
+        scratch_root: workspace.outer_dir.clone(),
+        git_common_dir: workspace.git_common_dir.clone(),
+        baseline_path: baseline,
+        summary: None,
+        changed_files: Vec::new(),
+        conflicts: Vec::new(),
+        merge_receipts: Vec::new(),
+        step_traces: Vec::new(),
+        usage: None,
+        execution_requests: 0,
+        tool_calls: 0,
+        merged: false,
+        discarded: false,
+    };
+    let record = TaskRecord::new_subagent_with_id(
+        TaskSeed {
+            session_id: parent_session_id,
+            workspace: workspace.parent_workspace.clone(),
+            profile: parent_profile.to_owned(),
+            mode: child_mode,
+            permissions: parent_perm,
+            input: args.task.clone(),
+            now: timestamp()?,
+        },
+        task_id,
+        job,
+    )?;
+    let record = match persistence.store().create(record).await {
+        Ok(record) => record,
+        Err(error) => {
+            let _ = workspace.cleanup();
+            let _ = persistence.remove_job_dir(task_id);
+            return Err(error);
+        }
+    };
+    // Cleanup of a completed-but-unmerged persistent workspace is an explicit
+    // operator action (`soyo subagent cancel --discard` or a merge with
+    // `discard_after`), so nothing is registered in this run's in-memory child
+    // table or run-scoped counters.
+    Ok(SubagentSnapshot {
+        id: record.id.0.to_string(),
+        label: args.label.clone(),
+        state: SubagentState::Running,
+        work_mode: child_mode,
+        isolation,
+        isolation_kind: workspace.kind,
+        allow_exec: args.allow_exec,
+        allowed_paths,
+        summary: None,
+        error: None,
+        usage: None,
+        execution_requests: 0,
+        tool_calls: 0,
+        step_traces: Vec::new(),
+        changed_files: Vec::new(),
+        merge_receipts: Vec::new(),
+        persistent: true,
+    })
 }
 
 /// Parent configuration snapshot shared lazily with the subagent supervisor so
@@ -1141,128 +1305,23 @@ impl SubagentSupervisor {
                 "persistent subagents require the task queue; set [tasks] enabled = true",
             )
         })?;
-        let (child_mode, isolation) = validate_non_escalation(
-            parent_mode,
-            parent_read_only,
-            args.mode,
-            args.isolation,
-            args.allow_exec,
-        )?;
-        if args.timeout > self.config.limits.max_timeout {
-            return Err(failure(
-                error_codes::SUBAGENT_LIMIT,
-                "requested subagent timeout exceeds configured limit",
-            ));
-        }
-
-        let protected = self.template.policy.protected_paths()?;
-        let write_roots = self.template.policy.roots().to_vec();
-        let task_id = TaskId::new();
-        let job_dir = persistence.allocate_job_dir(task_id)?;
-
-        let workspace = match isolation {
-            SubagentIsolation::ReadOnly => IsolatedWorkspace::read_only(&parent_session.workspace),
-            SubagentIsolation::Isolated => IsolatedWorkspace::create_isolated(
-                &parent_session.workspace,
-                &protected,
-                &write_roots,
-                &self.config.limits,
-            ),
-        };
-        let workspace = match workspace {
-            Ok(workspace) => workspace,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&job_dir);
-                return Err(error);
-            }
-        };
-        let baseline = if isolation == SubagentIsolation::Isolated {
-            match persistence.write_baseline(&job_dir, &workspace) {
-                Ok(path) => Some(path),
-                Err(error) => {
-                    let _ = workspace.cleanup();
-                    let _ = persistence.remove_job_dir(task_id);
-                    return Err(error);
-                }
-            }
-        } else {
-            None
-        };
-
-        let allowed_paths = args
-            .allowed_paths
-            .iter()
-            .filter_map(|path| path.to_str().map(ToOwned::to_owned))
-            .collect::<Vec<_>>();
-        let job = PersistentSubagentJob {
-            parent_session_id: parent_session.id,
-            parent_workspace: workspace.parent_workspace.clone(),
-            label: args.label.clone(),
-            isolation,
-            isolation_kind: workspace.kind,
-            allow_exec: args.allow_exec,
-            allowed_paths: allowed_paths.clone(),
-            timeout_seconds: args.timeout.as_secs(),
-            depth: self.config.depth().saturating_add(1),
-            workspace_root: workspace.child_dir.clone(),
-            scratch_root: workspace.outer_dir.clone(),
-            git_common_dir: workspace.git_common_dir.clone(),
-            baseline_path: baseline,
-            summary: None,
-            changed_files: Vec::new(),
-            conflicts: Vec::new(),
-            merge_receipts: Vec::new(),
-            step_traces: Vec::new(),
-            usage: None,
-            execution_requests: 0,
-            tool_calls: 0,
-            merged: false,
-            discarded: false,
-        };
-        let record = TaskRecord::new_subagent_with_id(
-            TaskSeed {
-                session_id: parent_session.id,
-                workspace: workspace.parent_workspace.clone(),
-                profile: parent_session.profile.clone(),
-                mode: child_mode,
-                permissions: parent_perm,
-                input: args.task.clone(),
-                now: timestamp()?,
+        spawn_persistent_job(
+            &persistence,
+            PersistentSpawnRequest {
+                parent_session_id: parent_session.id,
+                parent_workspace: &parent_session.workspace,
+                parent_profile: &parent_session.profile,
+                parent_mode,
+                parent_perm,
+                parent_read_only,
+                parent_policy: &self.template.policy,
+                limits: &self.config.limits,
+                extra_protected: &[],
+                parent_depth: self.config.depth(),
+                args,
             },
-            task_id,
-            job,
-        )?;
-        let record = match persistence.store().create(record).await {
-            Ok(record) => record,
-            Err(error) => {
-                let _ = workspace.cleanup();
-                let _ = persistence.remove_job_dir(task_id);
-                return Err(error);
-            }
-        };
-        // Cleanup of a completed-but-unmerged persistent workspace is an
-        // explicit operator action (`soyo subagent cancel --discard` or a merge
-        // with `discard_after`), so nothing is registered in this run's
-        // in-memory child table or run-scoped counters.
-        Ok(SubagentSnapshot {
-            id: record.id.0.to_string(),
-            label: args.label.clone(),
-            state: SubagentState::Running,
-            work_mode: child_mode,
-            isolation,
-            isolation_kind: workspace.kind,
-            allow_exec: args.allow_exec,
-            allowed_paths,
-            summary: None,
-            error: None,
-            usage: None,
-            execution_requests: 0,
-            tool_calls: 0,
-            step_traces: Vec::new(),
-            changed_files: Vec::new(),
-            merge_receipts: Vec::new(),
-            persistent: true,
-        })
+        )
+        .await
     }
 
     /// Return current status and step traces for one subagent (or all when `subagent_id` is absent).

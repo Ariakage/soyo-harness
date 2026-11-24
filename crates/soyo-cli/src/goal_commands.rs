@@ -294,6 +294,14 @@ fn goal_text(goal: &GoalRecord) {
                     .unwrap_or_default()
             );
         }
+        if let Some(state) = step.delegation_state(goal.wait_reason.as_ref()) {
+            match step.subagent_id {
+                Some(task_id) => {
+                    println!("   Delegated subagent: {} · {}", task_id.0, state.as_str())
+                }
+                None => println!("   Delegated subagent: — · {}", state.as_str()),
+            }
+        }
         if let Some(verification) = &step.last_verification {
             println!(
                 "   Last host verification: {:?} · exit {} · {}ms",
