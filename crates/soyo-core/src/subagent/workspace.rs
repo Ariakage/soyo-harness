@@ -19,7 +19,7 @@ use std::{
 };
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BaseFileEntry {
     pub sha256: String,
     pub bytes: u64,
@@ -469,6 +469,85 @@ fn copy_directory_workspace(
     Ok(manifest)
 }
 
+fn create_isolated_at(
+    parent_canon: &Path,
+    outer_dir: &Path,
+    protected_paths: &[PathBuf],
+    limits: &SubagentLimits,
+) -> Result<IsolatedWorkspace, BoundaryError> {
+    let child_dir = outer_dir.join("ws");
+    let mut created_worktree = false;
+    let setup = (|| -> Result<IsolatedWorkspace, BoundaryError> {
+        if let Some(git_common_dir) = detect_git_repo(parent_canon) {
+            let child_str = child_dir.to_str().ok_or_else(|| {
+                failure(
+                    error_codes::INVALID_PATH,
+                    "subagent worktree path is not UTF-8",
+                )
+            })?;
+            let add = run_git(
+                parent_canon,
+                &["worktree", "add", "--detach", child_str, "HEAD"],
+            )?;
+            if add.status.success() {
+                created_worktree = true;
+                let child_canon = fs::canonicalize(&child_dir).map_err(|err| {
+                    failure(
+                        error_codes::SUBAGENT_WORKSPACE_ERROR,
+                        format!("cannot canonicalize worktree: {err}"),
+                    )
+                })?;
+                overlay_uncommitted_git_changes(
+                    parent_canon,
+                    &child_canon,
+                    protected_paths,
+                    limits,
+                )?;
+                let base_manifest =
+                    scan_workspace_manifest(&child_canon, protected_paths, true, limits)?;
+                return Ok(IsolatedWorkspace {
+                    kind: WorkspaceIsolationKind::GitWorktree,
+                    outer_dir: Some(outer_dir.to_path_buf()),
+                    child_dir: child_canon,
+                    parent_workspace: parent_canon.to_path_buf(),
+                    git_common_dir: Some(git_common_dir),
+                    base_manifest,
+                });
+            }
+        }
+        let base_manifest =
+            copy_directory_workspace(parent_canon, &child_dir, protected_paths, limits)?;
+        let child_canon = fs::canonicalize(&child_dir).map_err(|err| {
+            failure(
+                error_codes::SUBAGENT_WORKSPACE_ERROR,
+                format!("cannot canonicalize workspace copy: {err}"),
+            )
+        })?;
+        Ok(IsolatedWorkspace {
+            kind: WorkspaceIsolationKind::DirectoryCopy,
+            outer_dir: Some(outer_dir.to_path_buf()),
+            child_dir: child_canon,
+            parent_workspace: parent_canon.to_path_buf(),
+            git_common_dir: None,
+            base_manifest,
+        })
+    })();
+
+    if setup.is_err() {
+        let _ = cleanup_paths(
+            if created_worktree {
+                WorkspaceIsolationKind::GitWorktree
+            } else {
+                WorkspaceIsolationKind::DirectoryCopy
+            },
+            parent_canon,
+            Some(outer_dir),
+            &child_dir,
+        );
+    }
+    setup
+}
+
 impl IsolatedWorkspace {
     pub fn read_only(parent_workspace: &Path) -> Result<Self, BoundaryError> {
         let canonical = fs::canonicalize(parent_workspace).map_err(|err| {
@@ -500,78 +579,7 @@ impl IsolatedWorkspace {
             )
         })?;
         let outer_dir = select_scratch_outer_dir(&parent_canon, protected_paths, write_roots)?;
-        let child_dir = outer_dir.join("ws");
-
-        let mut created_worktree = false;
-        let setup = (|| -> Result<Self, BoundaryError> {
-            if let Some(git_common_dir) = detect_git_repo(&parent_canon) {
-                let child_str = child_dir.to_str().ok_or_else(|| {
-                    failure(
-                        error_codes::INVALID_PATH,
-                        "subagent worktree path is not UTF-8",
-                    )
-                })?;
-                let add = run_git(
-                    &parent_canon,
-                    &["worktree", "add", "--detach", child_str, "HEAD"],
-                )?;
-                if add.status.success() {
-                    created_worktree = true;
-                    let child_canon = fs::canonicalize(&child_dir).map_err(|err| {
-                        failure(
-                            error_codes::SUBAGENT_WORKSPACE_ERROR,
-                            format!("cannot canonicalize worktree: {err}"),
-                        )
-                    })?;
-                    overlay_uncommitted_git_changes(
-                        &parent_canon,
-                        &child_canon,
-                        protected_paths,
-                        limits,
-                    )?;
-                    let base_manifest =
-                        scan_workspace_manifest(&child_canon, protected_paths, true, limits)?;
-                    return Ok(Self {
-                        kind: WorkspaceIsolationKind::GitWorktree,
-                        outer_dir: Some(outer_dir.clone()),
-                        child_dir: child_canon,
-                        parent_workspace: parent_canon.clone(),
-                        git_common_dir: Some(git_common_dir),
-                        base_manifest,
-                    });
-                }
-            }
-            let base_manifest =
-                copy_directory_workspace(&parent_canon, &child_dir, protected_paths, limits)?;
-            let child_canon = fs::canonicalize(&child_dir).map_err(|err| {
-                failure(
-                    error_codes::SUBAGENT_WORKSPACE_ERROR,
-                    format!("cannot canonicalize workspace copy: {err}"),
-                )
-            })?;
-            Ok(Self {
-                kind: WorkspaceIsolationKind::DirectoryCopy,
-                outer_dir: Some(outer_dir.clone()),
-                child_dir: child_canon,
-                parent_workspace: parent_canon.clone(),
-                git_common_dir: None,
-                base_manifest,
-            })
-        })();
-
-        if setup.is_err() {
-            let _ = cleanup_paths(
-                if created_worktree {
-                    WorkspaceIsolationKind::GitWorktree
-                } else {
-                    WorkspaceIsolationKind::DirectoryCopy
-                },
-                &parent_canon,
-                Some(&outer_dir),
-                &child_dir,
-            );
-        }
-        setup
+        create_isolated_at(&parent_canon, &outer_dir, protected_paths, limits)
     }
 
     pub fn compute_diff(

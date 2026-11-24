@@ -5,11 +5,15 @@
 //! lease expires before the outcome is recorded is marked `unknown` and the
 //! task waits for an explicit resolution instead of being replayed.
 
-use super::{DispatchState, TaskDispatch, TaskId, TaskRecord, TaskRunSummary, TaskStatus, failure};
+use super::{
+    DispatchState, TaskDispatch, TaskId, TaskRecord, TaskRunKind, TaskRunSummary, TaskStatus,
+    failure,
+};
 use crate::{
     contract::{BoundaryError, ErrorInfo, RunId, RunStatus},
     metrics::RunMetrics,
     redaction,
+    subagent::PersistentSubagentJob,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use std::{
@@ -631,7 +635,39 @@ impl TaskStore {
         metrics: &RunMetrics,
         now: String,
     ) -> Result<TaskRecord, BoundaryError> {
+        self.finish_attempt_inner(lease, dispatch, summary, metrics, None, now)
+            .await
+    }
+
+    /// Finish one persistent subagent attempt, storing the child's updated job
+    /// payload (summary, changed files, conflicts) in the same transaction as
+    /// the terminal status.
+    pub async fn finish_subagent_attempt(
+        &self,
+        lease: &TaskLease,
+        dispatch: &TaskDispatch,
+        summary: TaskRunSummary,
+        metrics: &RunMetrics,
+        job: PersistentSubagentJob,
+        now: String,
+    ) -> Result<TaskRecord, BoundaryError> {
+        self.finish_attempt_inner(lease, dispatch, summary, metrics, Some(job), now)
+            .await
+    }
+
+    async fn finish_attempt_inner(
+        &self,
+        lease: &TaskLease,
+        dispatch: &TaskDispatch,
+        summary: TaskRunSummary,
+        metrics: &RunMetrics,
+        job: Option<PersistentSubagentJob>,
+        now: String,
+    ) -> Result<TaskRecord, BoundaryError> {
         summary.validate()?;
+        if let Some(job) = &job {
+            job.validate()?;
+        }
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         let metrics = metrics.clone();
@@ -666,6 +702,15 @@ impl TaskStore {
                     "task_dispatch_conflict",
                     "Task is not waiting for this Run result",
                 ));
+            }
+            if let Some(job) = job {
+                if record.run_kind != TaskRunKind::Subagent {
+                    return Err(storage(
+                        "invalid_task_state",
+                        "Task is not a persistent subagent job",
+                    ));
+                }
+                record.subagent = Some(job);
             }
             let run_completed = summary.status == RunStatus::Completed && summary.persistence_saved;
             let requested_status = record.status;

@@ -19,7 +19,8 @@ use soyo_core::{
     input::InputHandler,
     runtime::{ApprovalHandler, PersonalContext},
     task_queue::{
-        StoreSettings, TaskId, TaskRecord, TaskRunSummary, TaskSeed, TaskStatus, TaskStore,
+        StoreSettings, TaskId, TaskRecord, TaskRunKind, TaskRunSummary, TaskSeed, TaskStatus,
+        TaskStore,
     },
 };
 use std::{
@@ -117,9 +118,15 @@ pub fn open_task_store(config: &Config) -> Result<TaskStore, BoundaryError> {
     TaskStore::open_with_settings(&config.data_dir, task_secrets(config)?, settings)
 }
 
-/// List every persisted Task in stable store order.
+/// List every persisted ordinary Task in stable store order. Persistent
+/// subagent jobs share the database but are listed through `soyo subagent`.
 pub async fn list_tasks(config: &Config) -> Result<Vec<TaskRecord>, BoundaryError> {
-    open_task_store(config)?.list().await
+    Ok(open_task_store(config)?
+        .list()
+        .await?
+        .into_iter()
+        .filter(|task| task.run_kind == TaskRunKind::Task)
+        .collect())
 }
 
 /// Load one Task record by id.
@@ -215,6 +222,12 @@ pub async fn run_task_once(
         .await?;
     let result = async {
         let task = store.load(task_id).await?;
+        if task.run_kind != TaskRunKind::Task {
+            return Err(failure(
+                "invalid_task_state",
+                "the durable row is a persistent subagent job; use `soyo subagent continue`",
+            ));
+        }
         if task.status != TaskStatus::Queued {
             return Err(failure(
                 "invalid_task_state",

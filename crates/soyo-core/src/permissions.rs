@@ -799,10 +799,14 @@ impl Policy {
     pub fn workspace(&self) -> &Path {
         &self.workspace
     }
-    pub(crate) fn roots(&self) -> &[PathBuf] {
+    /// Path roots this policy authorizes, in the same order used for derived
+    /// child policies.
+    pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
-    pub(crate) fn protected_paths(&self) -> Result<Vec<PathBuf>, BoundaryError> {
+
+    /// Host paths every run under this policy must treat as protected.
+    pub fn protected_paths(&self) -> Result<Vec<PathBuf>, BoundaryError> {
         self.host_protected
             .read()
             .map(|guard| guard.clone())
@@ -955,7 +959,7 @@ impl Policy {
         })
     }
     /// Return a copy that explicitly denies `exec` in every permission mode.
-    pub(crate) fn with_exec_denied(mut self) -> Self {
+    pub fn with_exec_denied(mut self) -> Self {
         self.rules.push(Rule {
             config: RuleConfig {
                 effect: Effect::Deny,

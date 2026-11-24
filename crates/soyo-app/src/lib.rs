@@ -11,6 +11,7 @@ pub mod mcp;
 pub mod memory_admin;
 pub mod observe;
 pub mod session;
+pub mod subagent_jobs;
 pub mod task_queue;
 pub mod thinking;
 use soyo_core::{
@@ -142,7 +143,7 @@ pub fn routing_coordinator(
         health.unwrap_or_default(),
     ))
 }
-fn model(
+pub(crate) fn model(
     config: &Config,
     name: &str,
     p: &Profile,
@@ -424,6 +425,7 @@ pub fn build_runtime_with_health(
         .iter()
         .map(|name| config.secret(name).map(str::to_owned))
         .collect::<Result<Vec<_>, _>>()?;
+    let subagent_secrets = known_secrets.clone();
     let registry = launch.secret_registry.unwrap_or_default();
     registry.register(&known_secrets)?;
     let plugin_store = extensions::selected_store(config, session, registry.clone())?;
@@ -523,7 +525,25 @@ pub fn build_runtime_with_health(
     let js_repl = config.js_repl.resolve()?;
     runtime = runtime.with_js_repl(js_repl.clone())?;
     let subagents = config.subagents.resolve()?;
+    // Persistent subagents (`D-110`) need the durable task store. Without
+    // `[tasks] enabled = true`, `persistent = true` spawns fail closed while
+    // run-scoped subagents keep their zero-drift behaviour.
+    let subagent_persistence = if subagents.is_some() && config.tasks.enabled {
+        session::check_roots(config, &session.workspace, session.work_mode).map_err(|_| {
+            BoundaryError::new(
+                "plan_write_denied",
+                "PLAN subagent storage must be outside the current workspace",
+            )
+        })?;
+        Some(soyo_core::subagent::SubagentPersistence::open(
+            &config.data_dir,
+            subagent_secrets,
+        )?)
+    } else {
+        None
+    };
     runtime = runtime.with_subagents(subagents)?;
+    runtime = runtime.with_subagent_persistence(subagent_persistence);
     let (mut sandbox, broker) = config
         .sandbox
         .resolve_with_environment(&session.workspace, config.environment())?;

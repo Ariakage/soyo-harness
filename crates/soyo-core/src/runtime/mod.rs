@@ -355,6 +355,7 @@ pub struct AgentRuntime {
         >,
     >,
     subagents: Option<Arc<crate::subagent::supervisor::SubagentSupervisor>>,
+    subagent_persistence: Option<crate::subagent::SubagentPersistence>,
     code_intel: Option<Arc<crate::code_intel::CodeIntelState>>,
     routing: Option<Arc<crate::provider::routing::RoutingCoordinator>>,
     last_history_profile: Mutex<Option<String>>,
@@ -742,6 +743,7 @@ impl AgentRuntime {
             setup_known_secrets,
             context_settings_slot: Arc::new(std::sync::RwLock::new(None)),
             subagents: None,
+            subagent_persistence: None,
             code_intel: None,
             routing: None,
             last_history_profile: Mutex::new(None),
@@ -890,10 +892,26 @@ impl AgentRuntime {
                 config, template,
             )),
         };
+        if let Some(persistence) = &self.subagent_persistence {
+            supervisor.set_persistence(Some(persistence.clone()));
+        }
         self.dispatcher.set_subagents(supervisor.clone())?;
         self.services.configure_subagents(supervisor.clone())?;
         self.subagents = Some(supervisor);
         Ok(self)
+    }
+
+    /// Attach durable storage for `persistent = true` subagent spawns and for
+    /// reading or merging persistent jobs from earlier runs (`D-110`).
+    pub fn with_subagent_persistence(
+        mut self,
+        persistence: Option<crate::subagent::SubagentPersistence>,
+    ) -> Self {
+        if let Some(supervisor) = &self.subagents {
+            supervisor.set_persistence(persistence.clone());
+        }
+        self.subagent_persistence = persistence;
+        self
     }
     pub(crate) fn with_shared_budget(mut self, budget: SharedBudget) -> Self {
         self.budget = budget;
@@ -907,11 +925,15 @@ impl AgentRuntime {
         self.services.with_parent_tool_budget(parent, limit)?;
         Ok(self)
     }
-    pub(crate) fn with_exec_disabled(self) -> Self {
+    /// Deny `exec` in every permission mode and remove it from the model-facing
+    /// tool list. Used by non-escalating child runtimes, including persistent
+    /// subagents resumed by a separate worker.
+    pub fn with_exec_disabled(self) -> Self {
         self.dispatcher.disable_exec();
         self
     }
-    pub(crate) fn metrics_snapshot(
+    /// Snapshot executed metrics, usage, and artifacts for this run.
+    pub fn metrics_snapshot(
         &self,
     ) -> Option<(
         crate::metrics::RunMetrics,
@@ -2967,7 +2989,7 @@ impl AgentRuntime {
                         .await;
                 }
             };
-            let prepared = match supervisor.prepare_merge(&args) {
+            let prepared = match supervisor.prepare_merge(&args).await {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     return self
@@ -3763,6 +3785,9 @@ impl AgentRuntime {
             return Err(BoundaryError::new("invalid_run", "runtime is single-use"));
         }
         tracing::info!(target: "soyo::runtime", event = "run.started");
+        if let Some(supervisor) = &self.subagents {
+            supervisor.set_owner_session(session.id);
+        }
         self.budget.start_run()?;
         self.metrics.start();
         self.used = true;

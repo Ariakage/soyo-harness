@@ -352,6 +352,149 @@ async fn unpersisted_or_cancelled_runs_wait_for_resolution_without_replay() {
     }
 }
 
+fn subagent_job(parent: SessionId, workspace: PathBuf) -> crate::subagent::PersistentSubagentJob {
+    crate::subagent::PersistentSubagentJob {
+        parent_session_id: parent,
+        parent_workspace: workspace.clone(),
+        label: "worker".into(),
+        isolation: crate::subagent::SubagentIsolation::Isolated,
+        isolation_kind: crate::subagent::WorkspaceIsolationKind::DirectoryCopy,
+        allow_exec: false,
+        allowed_paths: Vec::new(),
+        timeout_seconds: 60,
+        depth: 1,
+        workspace_root: workspace.join("child"),
+        scratch_root: Some(workspace.join("scratch")),
+        git_common_dir: None,
+        baseline_path: Some(workspace.join("baseline.json")),
+        summary: None,
+        changed_files: Vec::new(),
+        conflicts: Vec::new(),
+        merge_receipts: Vec::new(),
+        step_traces: Vec::new(),
+        usage: None,
+        execution_requests: 0,
+        tool_calls: 0,
+        merged: false,
+        discarded: false,
+    }
+}
+
+fn subagent_record(workspace: PathBuf) -> TaskRecord {
+    let parent = SessionId::new();
+    TaskRecord::new_subagent(
+        TaskSeed {
+            session_id: parent,
+            workspace: workspace.clone(),
+            profile: "fixture".into(),
+            mode: WorkMode::Code,
+            permissions: PermissionMode::Auto,
+            input: "persistent child".into(),
+            now: "2026-11-24T00:00:00Z".into(),
+        },
+        subagent_job(parent, workspace),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn subagent_records_keep_their_job_and_recover_as_unknown() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let task = store
+        .create(subagent_record(workspace.clone()))
+        .await
+        .unwrap();
+    assert_eq!(task.run_kind, TaskRunKind::Subagent);
+    let loaded = store.load(task.id).await.unwrap();
+    assert_eq!(loaded.subagent, task.subagent);
+
+    let lease = store
+        .acquire_lease(task.id, "worker".into(), 1_000, Some(5_000))
+        .await
+        .unwrap();
+    let dispatch = store
+        .begin_attempt(&lease, RunId::new(), 1_500, "2026-11-24T02:00:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 1_600).await.unwrap();
+    let recovered = store
+        .recover_unknown(u64::MAX, "2026-11-24T02:05:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].status, TaskStatus::WaitingUnknown);
+    assert_eq!(recovered[0].run_kind, TaskRunKind::Subagent);
+    assert!(recovered[0].subagent.is_some());
+    // No automatic replay: the record is no longer queued.
+    assert!(
+        store
+            .begin_attempt(
+                &lease,
+                RunId::new(),
+                u64::MAX,
+                "2026-11-24T02:06:00Z".into()
+            )
+            .await
+            .is_err()
+    );
+    let blocked = store
+        .resolve_unknown(task.id, false, "2026-11-24T02:07:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(blocked.status, TaskStatus::Blocked);
+    assert_eq!(blocked.subagent, task.subagent);
+}
+
+#[tokio::test]
+async fn finish_subagent_attempt_stores_summary_and_changed_files() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let task = store
+        .create(subagent_record(workspace.clone()))
+        .await
+        .unwrap();
+    let lease = store
+        .acquire_lease(task.id, "worker".into(), 1_000, Some(60_000))
+        .await
+        .unwrap();
+    let run_id = RunId::new();
+    let dispatch = store
+        .begin_attempt(&lease, run_id, 1_500, "2026-11-24T03:00:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 1_600).await.unwrap();
+    let mut job = task.subagent.clone().unwrap();
+    job.summary = Some("child completed".into());
+    job.changed_files = vec![crate::subagent::SubagentFileChange {
+        path: "src/lib.rs".into(),
+        kind: crate::subagent::ChangeKind::Modified,
+        base_sha256: Some("a".repeat(64)),
+        new_sha256: Some("b".repeat(64)),
+        bytes: 12,
+        has_conflict: false,
+    }];
+    let task = store
+        .finish_subagent_attempt(
+            &lease,
+            &dispatch,
+            summary(run_id, "2026-11-24T03:01:00Z"),
+            &metrics(),
+            job,
+            "2026-11-24T03:01:00Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::Completed);
+    let stored = task.subagent.as_ref().unwrap();
+    assert_eq!(stored.summary.as_deref(), Some("child completed"));
+    assert_eq!(stored.changed_files.len(), 1);
+}
+
 #[tokio::test]
 async fn recover_unknown_marks_expired_dispatches_without_replaying() {
     let root = tempfile::tempdir().unwrap();

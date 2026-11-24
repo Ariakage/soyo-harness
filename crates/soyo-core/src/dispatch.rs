@@ -1096,7 +1096,7 @@ impl ToolDispatcher {
                             serde_json::json!({}),
                         )?
                     } else {
-                        let prepared = supervisor.prepare_merge(&args)?;
+                        let prepared = supervisor.prepare_merge(&args).await?;
                         Operation::subagent_merge(
                             prepared.targets,
                             prepared.binding,

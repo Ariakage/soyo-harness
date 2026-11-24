@@ -6,8 +6,11 @@
 //! worktree or bounded directory copy outside the parent workspace and can
 //! only enter the parent through conflict-checked `subagent_merge`.
 
+pub mod persist;
 pub mod supervisor;
 pub mod workspace;
+
+pub use persist::{PersistentSubagentJob, SubagentPersistence};
 
 #[cfg(test)]
 mod tests;
@@ -198,10 +201,21 @@ impl SubagentConfig {
         })
     }
 
+    /// Supervisor configuration for a runtime at an explicit delegation depth.
+    /// Used when a persistent child is resumed by a separate worker process and
+    /// its depth comes from the stored job rather than a live supervisor chain.
+    pub fn at_depth(limits: SubagentLimits, depth: usize) -> Self {
+        Self { limits, depth }
+    }
+
     /// Delegation depth (hops from the top-level run) of the runtime that owns
     /// this supervisor.
     pub fn depth(&self) -> usize {
         self.depth
+    }
+
+    pub fn max_depth(&self) -> usize {
+        self.limits.max_depth
     }
 }
 
@@ -385,6 +399,10 @@ pub struct SubagentSnapshot {
     pub changed_files: Vec<SubagentFileChange>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merge_receipts: Vec<SubagentMergeReceipt>,
+    /// True when the child is stored durably and outlives the parent run
+    /// (`D-110`). Always false for run-scoped children.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub persistent: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -396,6 +414,8 @@ pub struct SpawnArgs {
     pub allow_exec: bool,
     pub allowed_paths: Vec<PathBuf>,
     pub background: bool,
+    /// Persist the job in the F-08 task store instead of tying it to this run.
+    pub persistent: bool,
     pub timeout: Duration,
 }
 
@@ -594,6 +614,7 @@ pub fn parse_spawn(raw: &str, limits: &SubagentLimits) -> Result<SpawnArgs, Boun
             "allow_exec",
             "allowed_paths",
             "background",
+            "persistent",
             "timeout_seconds",
         ],
     )?;
@@ -680,6 +701,12 @@ pub fn parse_spawn(raw: &str, limits: &SubagentLimits) -> Result<SpawnArgs, Boun
             .as_bool()
             .ok_or_else(|| failure(error_codes::INVALID_ARGS, "background must be a boolean"))?,
     };
+    let persistent = match map.get("persistent") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| failure(error_codes::INVALID_ARGS, "persistent must be a boolean"))?,
+    };
     let timeout = parse_timeout(&map, limits)?;
     Ok(SpawnArgs {
         label,
@@ -689,6 +716,7 @@ pub fn parse_spawn(raw: &str, limits: &SubagentLimits) -> Result<SpawnArgs, Boun
         allow_exec,
         allowed_paths,
         background,
+        persistent,
         timeout,
     })
 }
@@ -926,6 +954,10 @@ pub fn definitions(mode: WorkMode, read_only: bool) -> Vec<ToolDefinition> {
                     "background": {
                         "type": "boolean",
                         "description": "Return immediately with a running subagent_id for parallel execution; wait later with subagent_wait."
+                    },
+                    "persistent": {
+                        "type": "boolean",
+                        "description": "Persist the child as a durable job in the task store so it survives this run and can be resumed by a background worker. Requires [tasks] enabled = true. Persistent children are never replayed automatically after an unknown outcome."
                     },
                     "timeout_seconds": {
                         "type": "integer",

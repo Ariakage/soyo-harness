@@ -21,6 +21,33 @@ pub const TASK_SCHEMA_VERSION: u32 = 1;
 pub const MAX_TASK_INPUT_BYTES: usize = 64 * 1024;
 pub const MAX_TASK_RESULT_BYTES: usize = 64 * 1024;
 
+/// UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) used by durable task records.
+pub fn timestamp() -> Result<String, BoundaryError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| failure("clock_error", "system clock is before epoch"))?
+        .as_secs();
+    let seconds = libc::time_t::try_from(seconds)
+        .map_err(|_| failure("clock_error", "system clock is out of range"))?;
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // SAFETY: gmtime_r writes a valid tm to the provided pointer on success.
+    let ptr = unsafe { libc::gmtime_r(&seconds, tm.as_mut_ptr()) };
+    if ptr.is_null() {
+        return Err(failure("clock_error", "cannot read UTC clock"));
+    }
+    let tm = unsafe { tm.assume_init() };
+    Ok(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    ))
+}
+
 fn failure(code: &str, message: &str) -> BoundaryError {
     BoundaryError(
         ErrorInfo {
@@ -97,6 +124,22 @@ pub enum TaskStatus {
 impl TaskStatus {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+}
+
+/// What a durable task row represents. Ordinary tasks drive one top-level Run;
+/// `subagent` rows drive one persistent child subagent (`D-110`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRunKind {
+    #[default]
+    Task,
+    Subagent,
+}
+
+impl TaskRunKind {
+    pub fn is_task(&self) -> bool {
+        *self == Self::Task
     }
 }
 
@@ -189,6 +232,14 @@ pub struct TaskRecord {
     pub mode: WorkMode,
     pub permissions: PermissionMode,
     pub input: String,
+    /// Task rows are ordinary durable tasks unless explicitly persisted as a
+    /// child subagent (`D-110`). The field is omitted for ordinary tasks so
+    /// existing records keep their exact encoding.
+    #[serde(default, skip_serializing_if = "TaskRunKind::is_task")]
+    pub run_kind: TaskRunKind,
+    /// Bound child configuration and last outcome for `run_kind = subagent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<crate::subagent::PersistentSubagentJob>,
     pub status: TaskStatus,
     pub revision: u64,
     pub failure: Option<ErrorInfo>,
@@ -226,6 +277,8 @@ impl TaskRecord {
             mode: seed.mode,
             permissions: seed.permissions,
             input: seed.input,
+            run_kind: TaskRunKind::Task,
+            subagent: None,
             status: TaskStatus::Queued,
             revision: 0,
             failure: None,
@@ -235,6 +288,30 @@ impl TaskRecord {
             last_result: None,
         };
         record.validate()?;
+        Ok(record)
+    }
+
+    /// Create a durable child subagent job (`D-110`).
+    pub fn new_subagent(
+        seed: TaskSeed,
+        job: crate::subagent::PersistentSubagentJob,
+    ) -> Result<Self, BoundaryError> {
+        let mut record = Self::new(seed)?;
+        record.run_kind = TaskRunKind::Subagent;
+        record.subagent = Some(job);
+        record.validate()?;
+        Ok(record)
+    }
+
+    /// Create a persistent subagent record with a pre-allocated identifier so
+    /// its scratch directory can be addressed before the record exists.
+    pub fn new_subagent_with_id(
+        seed: TaskSeed,
+        id: TaskId,
+        job: crate::subagent::PersistentSubagentJob,
+    ) -> Result<Self, BoundaryError> {
+        let mut record = Self::new_subagent(seed, job)?;
+        record.id = id;
         Ok(record)
     }
 
@@ -252,6 +329,22 @@ impl TaskRecord {
                 "invalid_task",
                 "Task schema, input, workspace, profile or timestamps are invalid",
             ));
+        }
+        match (self.run_kind, &self.subagent) {
+            (TaskRunKind::Task, None) => {}
+            (TaskRunKind::Subagent, Some(job)) => job.validate()?,
+            (TaskRunKind::Task, Some(_)) => {
+                return Err(failure(
+                    "invalid_task",
+                    "an ordinary Task cannot carry a persistent subagent job",
+                ));
+            }
+            (TaskRunKind::Subagent, None) => {
+                return Err(failure(
+                    "invalid_task",
+                    "a persistent subagent Task requires its job payload",
+                ));
+            }
         }
         if let Some(result) = &self.last_result {
             result.validate()?;

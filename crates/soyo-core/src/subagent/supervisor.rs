@@ -1,9 +1,10 @@
 //! Parent-supervised child subagent orchestration (`F-09`).
 
 use super::{
-    CancelArgs, DiffArgs, MergeArgs, MessageArgs, SpawnArgs, StatusArgs, SubagentConfig,
-    SubagentDiffReport, SubagentFileChange, SubagentIsolation, SubagentLimits,
-    SubagentMergeReceipt, SubagentSnapshot, SubagentState, SubagentStepTrace, WaitArgs,
+    CancelArgs, DiffArgs, MergeArgs, MessageArgs, PersistentSubagentJob, SpawnArgs, StatusArgs,
+    SubagentConfig, SubagentDiffReport, SubagentFileChange, SubagentIsolation, SubagentLimits,
+    SubagentMergeReceipt, SubagentPersistence, SubagentSnapshot, SubagentState, SubagentStepTrace,
+    WaitArgs,
     workspace::{IsolatedWorkspace, MergeOutcome},
 };
 use crate::{
@@ -22,6 +23,7 @@ use crate::{
     runtime::{
         AgentRuntime, ApprovalHandler, RuntimeLimits, RuntimeSetup, services::RuntimeServices,
     },
+    task_queue::{TaskId, TaskRecord, TaskSeed, TaskStatus, timestamp},
     tools::{
         exec::ExecConfig,
         read::{ReadLimits, ReadTools},
@@ -200,20 +202,23 @@ pub(crate) struct ParentRuntimeTemplate {
     pub parent_cancel: Arc<dyn Cancellation>,
 }
 
-struct SubagentStore {
+/// In-memory session and step-trace store for one child run. Also used by the
+/// persistent-subagent worker, which has no parent runtime to inherit a store
+/// from.
+pub struct SubagentStore {
     session: Mutex<Option<Session>>,
     traces: Mutex<Vec<SubagentStepTrace>>,
 }
 
 impl SubagentStore {
-    fn new(session: Session, prior_traces: Vec<SubagentStepTrace>) -> Self {
+    pub fn new(session: Session, prior_traces: Vec<SubagentStepTrace>) -> Self {
         Self {
             session: Mutex::new(Some(session)),
             traces: Mutex::new(prior_traces),
         }
     }
 
-    fn take_traces(&self) -> Vec<SubagentStepTrace> {
+    pub fn take_traces(&self) -> Vec<SubagentStepTrace> {
         self.traces
             .lock()
             .map(|guard| guard.clone())
@@ -436,6 +441,7 @@ impl ChildEntry {
             step_traces,
             changed_files,
             merge_receipts: self.merge_receipts.clone(),
+            persistent: false,
         }
     }
 }
@@ -475,6 +481,8 @@ pub struct SubagentSupervisor {
     spawn_order: Mutex<Vec<String>>,
     next_id: AtomicUsize,
     any_done: Notify,
+    persistence: RwLock<Option<SubagentPersistence>>,
+    owner_session: RwLock<Option<SessionId>>,
 }
 
 impl SubagentSupervisor {
@@ -498,6 +506,53 @@ impl SubagentSupervisor {
             spawn_order: Mutex::new(Vec::new()),
             next_id: AtomicUsize::new(1),
             any_done: Notify::new(),
+            persistence: RwLock::new(None),
+            owner_session: RwLock::new(None),
+        }
+    }
+
+    /// Attach durable storage for `persistent = true` spawns and for reading or
+    /// merging jobs from earlier runs.
+    pub fn set_persistence(&self, persistence: Option<SubagentPersistence>) {
+        if let Ok(mut slot) = self.persistence.write() {
+            *slot = persistence;
+        }
+    }
+
+    pub fn persistence(&self) -> Option<SubagentPersistence> {
+        self.persistence.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Bind this supervisor to the session that owns the current run. Persistent
+    /// jobs from other sessions are reported as not found.
+    pub fn set_owner_session(&self, session_id: SessionId) {
+        if let Ok(mut slot) = self.owner_session.write() {
+            *slot = Some(session_id);
+        }
+    }
+
+    fn owner_session(&self) -> Option<SessionId> {
+        self.owner_session.read().ok().and_then(|guard| *guard)
+    }
+
+    fn persistent_task_id(&self, id: &str) -> Option<TaskId> {
+        id.parse::<uuid::Uuid>().ok().map(TaskId)
+    }
+
+    async fn persistent_entry(
+        &self,
+        id: &str,
+    ) -> Result<Option<(TaskRecord, PersistentSubagentJob)>, BoundaryError> {
+        let Some(persistence) = self.persistence() else {
+            return Ok(None);
+        };
+        let Some(task_id) = self.persistent_task_id(id) else {
+            return Ok(None);
+        };
+        match persistence.load_job(task_id, self.owner_session()).await {
+            Ok(entry) => Ok(Some(entry)),
+            Err(error) if error.is_code(error_codes::SUBAGENT_NOT_FOUND) => Ok(None),
+            Err(error) => Err(error),
         }
     }
 
@@ -900,6 +955,17 @@ impl SubagentSupervisor {
         parent_read_only: bool,
         args: &SpawnArgs,
     ) -> Result<SubagentSnapshot, BoundaryError> {
+        if args.persistent {
+            return self
+                .spawn_persistent(
+                    parent_session,
+                    parent_mode,
+                    parent_perm,
+                    parent_read_only,
+                    args,
+                )
+                .await;
+        }
         let (child_mode, isolation) = validate_non_escalation(
             parent_mode,
             parent_read_only,
@@ -1058,21 +1124,176 @@ impl SubagentSupervisor {
         Ok(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)))
     }
 
+    /// Persist the child job in the task store and return immediately. The
+    /// parent run does not own or wait for this child; a background worker
+    /// resumes it through the F-08 lease/dispatch machinery.
+    async fn spawn_persistent(
+        self: &Arc<Self>,
+        parent_session: &Session,
+        parent_mode: WorkMode,
+        parent_perm: PermissionMode,
+        parent_read_only: bool,
+        args: &SpawnArgs,
+    ) -> Result<SubagentSnapshot, BoundaryError> {
+        let persistence = self.persistence().ok_or_else(|| {
+            failure(
+                "task_queue_disabled",
+                "persistent subagents require the task queue; set [tasks] enabled = true",
+            )
+        })?;
+        let (child_mode, isolation) = validate_non_escalation(
+            parent_mode,
+            parent_read_only,
+            args.mode,
+            args.isolation,
+            args.allow_exec,
+        )?;
+        if args.timeout > self.config.limits.max_timeout {
+            return Err(failure(
+                error_codes::SUBAGENT_LIMIT,
+                "requested subagent timeout exceeds configured limit",
+            ));
+        }
+
+        let protected = self.template.policy.protected_paths()?;
+        let write_roots = self.template.policy.roots().to_vec();
+        let task_id = TaskId::new();
+        let job_dir = persistence.allocate_job_dir(task_id)?;
+
+        let workspace = match isolation {
+            SubagentIsolation::ReadOnly => IsolatedWorkspace::read_only(&parent_session.workspace),
+            SubagentIsolation::Isolated => IsolatedWorkspace::create_isolated(
+                &parent_session.workspace,
+                &protected,
+                &write_roots,
+                &self.config.limits,
+            ),
+        };
+        let workspace = match workspace {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&job_dir);
+                return Err(error);
+            }
+        };
+        let baseline = if isolation == SubagentIsolation::Isolated {
+            match persistence.write_baseline(&job_dir, &workspace) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    let _ = workspace.cleanup();
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+
+        let allowed_paths = args
+            .allowed_paths
+            .iter()
+            .filter_map(|path| path.to_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        let job = PersistentSubagentJob {
+            parent_session_id: parent_session.id,
+            parent_workspace: workspace.parent_workspace.clone(),
+            label: args.label.clone(),
+            isolation,
+            isolation_kind: workspace.kind,
+            allow_exec: args.allow_exec,
+            allowed_paths: allowed_paths.clone(),
+            timeout_seconds: args.timeout.as_secs(),
+            depth: self.config.depth().saturating_add(1),
+            workspace_root: workspace.child_dir.clone(),
+            scratch_root: workspace.outer_dir.clone(),
+            git_common_dir: workspace.git_common_dir.clone(),
+            baseline_path: baseline,
+            summary: None,
+            changed_files: Vec::new(),
+            conflicts: Vec::new(),
+            merge_receipts: Vec::new(),
+            step_traces: Vec::new(),
+            usage: None,
+            execution_requests: 0,
+            tool_calls: 0,
+            merged: false,
+            discarded: false,
+        };
+        let record = TaskRecord::new_subagent_with_id(
+            TaskSeed {
+                session_id: parent_session.id,
+                workspace: workspace.parent_workspace.clone(),
+                profile: parent_session.profile.clone(),
+                mode: child_mode,
+                permissions: parent_perm,
+                input: args.task.clone(),
+                now: timestamp()?,
+            },
+            task_id,
+            job,
+        )?;
+        let record = match persistence.store().create(record).await {
+            Ok(record) => record,
+            Err(error) => {
+                let _ = workspace.cleanup();
+                let _ = persistence.remove_job_dir(task_id);
+                return Err(error);
+            }
+        };
+        // Cleanup of a completed-but-unmerged persistent workspace is an
+        // explicit operator action (`soyo subagent cancel --discard` or a merge
+        // with `discard_after`), so nothing is registered in this run's
+        // in-memory child table or run-scoped counters.
+        Ok(SubagentSnapshot {
+            id: record.id.0.to_string(),
+            label: args.label.clone(),
+            state: SubagentState::Running,
+            work_mode: child_mode,
+            isolation,
+            isolation_kind: workspace.kind,
+            allow_exec: args.allow_exec,
+            allowed_paths,
+            summary: None,
+            error: None,
+            usage: None,
+            execution_requests: 0,
+            tool_calls: 0,
+            step_traces: Vec::new(),
+            changed_files: Vec::new(),
+            merge_receipts: Vec::new(),
+            persistent: true,
+        })
+    }
+
     /// Return current status and step traces for one subagent (or all when `subagent_id` is absent).
     pub async fn status(&self, args: &StatusArgs) -> Result<Value, BoundaryError> {
         let protected = self.template.policy.protected_paths()?;
         if !args.subagent_id.is_empty() {
-            let entry = self.get_child_mutex(&args.subagent_id)?;
-            let guard = entry.lock().await;
-            let snap = self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits));
-            return serde_json::to_value(snap)
-                .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
+            if let Ok(entry) = self.get_child_mutex(&args.subagent_id) {
+                let guard = entry.lock().await;
+                let snap = self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits));
+                return serde_json::to_value(snap)
+                    .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
+            }
+            if let Some((task, job)) = self.persistent_entry(&args.subagent_id).await? {
+                let snap = self.sanitize_snapshot(job.snapshot(&task));
+                return serde_json::to_value(snap)
+                    .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
+            }
+            return Err(failure(
+                error_codes::SUBAGENT_NOT_FOUND,
+                format!("unknown subagent `{}`", args.subagent_id),
+            ));
         }
         let entries = self.list_children()?;
         let mut list = Vec::with_capacity(entries.len());
         for entry in entries {
             let guard = entry.lock().await;
             list.push(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)));
+        }
+        if let Some(persistence) = self.persistence() {
+            for (task, job) in persistence.list_jobs(self.owner_session()).await? {
+                list.push(self.sanitize_snapshot(job.snapshot(&task)));
+            }
         }
         serde_json::to_value(json!({ "subagents": list }))
             .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()))
@@ -1124,6 +1345,7 @@ impl SubagentSupervisor {
         cancel: &dyn Cancellation,
     ) -> Result<Value, BoundaryError> {
         let protected = self.template.policy.protected_paths()?;
+        let mut persistent_snapshots = Vec::new();
         let entries: Vec<Arc<tokio::sync::Mutex<ChildEntry>>> = if args.subagent_ids.is_empty() {
             let mut running = Vec::new();
             for entry in self.list_children()? {
@@ -1132,23 +1354,49 @@ impl SubagentSupervisor {
                     running.push(entry.clone());
                 }
             }
+            if let Some(persistence) = self.persistence() {
+                for (task, job) in persistence.list_jobs(self.owner_session()).await? {
+                    persistent_snapshots.push(self.sanitize_snapshot(job.snapshot(&task)));
+                }
+            }
             if running.is_empty() {
                 self.list_children()?
             } else {
                 running
             }
         } else {
-            args.subagent_ids
-                .iter()
-                .map(|id| self.get_child_mutex(id))
-                .collect::<Result<Vec<_>, _>>()?
+            let mut out = Vec::new();
+            for id in &args.subagent_ids {
+                match self.get_child_mutex(id) {
+                    Ok(entry) => out.push(entry),
+                    Err(_) => match self.persistent_entry(id).await? {
+                        Some((task, job)) => {
+                            persistent_snapshots.push(self.sanitize_snapshot(job.snapshot(&task)));
+                        }
+                        None => {
+                            return Err(failure(
+                                error_codes::SUBAGENT_NOT_FOUND,
+                                format!("unknown subagent `{id}`"),
+                            ));
+                        }
+                    },
+                }
+            }
+            out
         };
 
         let deadline = args.timeout.map(|d| tokio::time::Instant::now() + d);
         loop {
-            let mut snapshots = Vec::with_capacity(entries.len());
+            let mut snapshots = persistent_snapshots.clone();
             let mut any_done = false;
             let mut all_done = true;
+            for snapshot in &snapshots {
+                if snapshot.state.is_terminal() {
+                    any_done = true;
+                } else {
+                    all_done = false;
+                }
+            }
             for entry in &entries {
                 let guard = entry.lock().await;
                 if guard.state.is_terminal() {
@@ -1159,7 +1407,7 @@ impl SubagentSupervisor {
                 snapshots
                     .push(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)));
             }
-            let condition_met = if entries.is_empty() {
+            let condition_met = if entries.is_empty() && persistent_snapshots.is_empty() {
                 true
             } else if args.wait_all {
                 all_done
@@ -1173,6 +1421,13 @@ impl SubagentSupervisor {
             if let Some(dl) = deadline
                 && tokio::time::Instant::now() >= dl
             {
+                return serde_json::to_value(json!({ "completed": false, "subagents": snapshots }))
+                    .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
+            }
+            // Persistent jobs are driven by an external worker; there is no
+            // in-process notifier to await, so report their current state
+            // instead of blocking this run indefinitely.
+            if entries.is_empty() {
                 return serde_json::to_value(json!({ "completed": false, "subagents": snapshots }))
                     .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
             }
@@ -1310,57 +1565,131 @@ impl SubagentSupervisor {
 
     /// Cancel a running subagent and optionally discard its isolated workspace.
     pub async fn cancel(&self, args: &CancelArgs) -> Result<SubagentSnapshot, BoundaryError> {
-        let entry_arc = self.get_child_mutex(&args.subagent_id)?;
         let protected = self.template.policy.protected_paths()?;
-        let join = {
-            let mut guard = entry_arc.lock().await;
-            if let Some(cancel) = &guard.cancel {
-                cancel.trigger_local();
+        if let Ok(entry_arc) = self.get_child_mutex(&args.subagent_id) {
+            let join = {
+                let mut guard = entry_arc.lock().await;
+                if let Some(cancel) = &guard.cancel {
+                    cancel.trigger_local();
+                }
+                guard.handle.take()
+            };
+            if let Some(mut handle) = join {
+                let _ = tokio::time::timeout(SHUTDOWN_WAIT_TIMEOUT, &mut handle).await;
             }
-            guard.handle.take()
+            let mut guard = entry_arc.lock().await;
+            if guard.state == SubagentState::Running {
+                guard.state = SubagentState::Cancelled;
+                guard.done_notify.notify_waiters();
+                self.any_done.notify_waiters();
+            }
+            if args.discard && !guard.cleaned_up {
+                guard.workspace.cleanup()?;
+                guard.cleaned_up = true;
+                guard.state = SubagentState::Discarded;
+            }
+            return Ok(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)));
+        }
+
+        let Some((task, job)) = self.persistent_entry(&args.subagent_id).await? else {
+            return Err(failure(
+                error_codes::SUBAGENT_NOT_FOUND,
+                format!("unknown subagent `{}`", args.subagent_id),
+            ));
         };
-        if let Some(mut handle) = join {
-            let _ = tokio::time::timeout(SHUTDOWN_WAIT_TIMEOUT, &mut handle).await;
+        let persistence = self.persistence().ok_or_else(|| {
+            failure(
+                error_codes::SUBAGENT_ERROR,
+                "persistent subagent storage is unavailable",
+            )
+        })?;
+        if !task.status.is_terminal() {
+            persistence
+                .store()
+                .transition(task.id, TaskStatus::Cancelled, timestamp()?)
+                .await?;
         }
-        let mut guard = entry_arc.lock().await;
-        if guard.state == SubagentState::Running {
-            guard.state = SubagentState::Cancelled;
-            guard.done_notify.notify_waiters();
-            self.any_done.notify_waiters();
+        if args.discard && !job.discarded {
+            if let Ok(workspace) = persistence.reopen(task.id, &job) {
+                workspace.cleanup()?;
+            } else if let Some(scratch) = &job.scratch_root {
+                let _ = std::fs::remove_dir_all(scratch);
+            }
+            let _ = persistence.remove_job_dir(task.id);
+            let (task, job) = persistence
+                .update_job(task.id, |job| {
+                    job.discarded = true;
+                })
+                .await?;
+            return Ok(self.sanitize_snapshot(job.snapshot(&task)));
         }
-        if args.discard && !guard.cleaned_up {
-            guard.workspace.cleanup()?;
-            guard.cleaned_up = true;
-            guard.state = SubagentState::Discarded;
-        }
-        Ok(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)))
+        let (task, job) = persistence.load_job(task.id, self.owner_session()).await?;
+        Ok(self.sanitize_snapshot(job.snapshot(&task)))
     }
 
     /// Inspect uncommitted isolated workspace diff for a finished child.
     pub async fn diff(&self, args: &DiffArgs) -> Result<SubagentDiffReport, BoundaryError> {
-        let entry_arc = self.get_child_mutex(&args.subagent_id)?;
         let protected = self.template.policy.protected_paths()?;
-        let guard = entry_arc.lock().await;
-        if guard.state == SubagentState::Running {
+        if let Ok(entry_arc) = self.get_child_mutex(&args.subagent_id) {
+            let guard = entry_arc.lock().await;
+            if guard.state == SubagentState::Running {
+                return Err(failure(
+                    error_codes::SUBAGENT_CONFLICT,
+                    "cannot inspect diff while subagent is still running",
+                ));
+            }
+            if guard.state == SubagentState::Discarded || guard.cleaned_up {
+                return Err(failure(
+                    error_codes::SUBAGENT_CONFLICT,
+                    "subagent workspace was discarded",
+                ));
+            }
+            if guard.isolation == SubagentIsolation::ReadOnly {
+                return Err(failure(
+                    error_codes::INVALID_ARGS,
+                    "read_only subagents have no isolated workspace diff",
+                ));
+            }
+            return guard.workspace.compute_diff(
+                &guard.id,
+                &protected,
+                args.include_patch,
+                &self.config.limits,
+            );
+        }
+        let Some((task, job)) = self.persistent_entry(&args.subagent_id).await? else {
+            return Err(failure(
+                error_codes::SUBAGENT_NOT_FOUND,
+                format!("unknown subagent `{}`", args.subagent_id),
+            ));
+        };
+        if job.state(&task) == SubagentState::Running {
             return Err(failure(
                 error_codes::SUBAGENT_CONFLICT,
-                "cannot inspect diff while subagent is still running",
+                "cannot inspect diff while the persistent subagent job is queued or running",
             ));
         }
-        if guard.state == SubagentState::Discarded || guard.cleaned_up {
+        if job.discarded {
             return Err(failure(
                 error_codes::SUBAGENT_CONFLICT,
                 "subagent workspace was discarded",
             ));
         }
-        if guard.isolation == SubagentIsolation::ReadOnly {
+        if job.isolation == SubagentIsolation::ReadOnly {
             return Err(failure(
                 error_codes::INVALID_ARGS,
                 "read_only subagents have no isolated workspace diff",
             ));
         }
-        guard.workspace.compute_diff(
-            &guard.id,
+        let persistence = self.persistence().ok_or_else(|| {
+            failure(
+                error_codes::SUBAGENT_ERROR,
+                "persistent subagent storage is unavailable",
+            )
+        })?;
+        let workspace = persistence.reopen(task.id, &job)?;
+        workspace.compute_diff(
+            &args.subagent_id,
             &protected,
             args.include_patch,
             &self.config.limits,
@@ -1368,13 +1697,37 @@ impl SubagentSupervisor {
     }
 
     /// Compute canonical targets and approval binding digest for `subagent_merge`.
-    pub fn prepare_merge(&self, args: &MergeArgs) -> Result<PreparedSubagentMerge, BoundaryError> {
-        let entry_arc = self.get_child_mutex(&args.subagent_id)?;
+    pub async fn prepare_merge(
+        &self,
+        args: &MergeArgs,
+    ) -> Result<PreparedSubagentMerge, BoundaryError> {
         let protected = self.template.policy.protected_paths()?;
-        let guard = entry_arc
-            .try_lock()
-            .map_err(|_| failure(error_codes::SUBAGENT_CONFLICT, "subagent is currently busy"))?;
-        prepare_merge_locked(&guard, args, &protected, &self.config.limits)
+        if let Ok(entry_arc) = self.get_child_mutex(&args.subagent_id) {
+            let guard = entry_arc.try_lock().map_err(|_| {
+                failure(error_codes::SUBAGENT_CONFLICT, "subagent is currently busy")
+            })?;
+            return prepare_merge_locked(&guard, args, &protected, &self.config.limits);
+        }
+        let Some((task, job)) = self.persistent_entry(&args.subagent_id).await? else {
+            return Err(failure(
+                error_codes::SUBAGENT_NOT_FOUND,
+                format!("unknown subagent `{}`", args.subagent_id),
+            ));
+        };
+        let persistence = self.persistence().ok_or_else(|| {
+            failure(
+                error_codes::SUBAGENT_ERROR,
+                "persistent subagent storage is unavailable",
+            )
+        })?;
+        prepare_persistent_merge(
+            &persistence,
+            &task,
+            &job,
+            args,
+            &protected,
+            &self.config.limits,
+        )
     }
 
     /// Re-verify approval binding, run 3-way conflict check, and atomically merge
@@ -1386,24 +1739,112 @@ impl SubagentSupervisor {
         allowed_write_roots: &[PathBuf],
         protected_paths: &[PathBuf],
     ) -> Result<ToolResult, BoundaryError> {
-        let entry_arc = self.get_child_mutex(&args.subagent_id)?;
-        let mut guard = entry_arc.lock().await;
-        let current = prepare_merge_locked(&guard, args, protected_paths, &self.config.limits)?;
+        if let Ok(entry_arc) = self.get_child_mutex(&args.subagent_id) {
+            let mut guard = entry_arc.lock().await;
+            let current = prepare_merge_locked(&guard, args, protected_paths, &self.config.limits)?;
+            if current.binding != expected_binding {
+                return Err(failure(
+                    error_codes::CONFLICT,
+                    "subagent changes drifted after merge authorization",
+                ));
+            }
+            return match guard.workspace.merge_into_parent(
+                args.paths.as_deref(),
+                allowed_write_roots,
+                protected_paths,
+                &self.config.limits,
+            )? {
+                MergeOutcome::Conflict(conflicts) => {
+                    let data = serde_json::json!({
+                        "subagent_id": guard.id,
+                        "conflicts": conflicts,
+                    });
+                    Ok(ToolResult {
+                        ok: false,
+                        data: Some(data),
+                        error: Some(ErrorInfo {
+                            code: error_codes::SUBAGENT_CONFLICT.into(),
+                            message: "parent workspace modified since subagent fork; merge aborted with zero writes"
+                                .into(),
+                        }),
+                        truncated: false,
+                        media_refs: Vec::new(),
+                    })
+                }
+                MergeOutcome::Applied(receipts) => {
+                    let artifacts = merge_artifacts(&receipts);
+                    if !artifacts.is_empty() {
+                        self.template
+                            .parent_metrics
+                            .merge_child(&RunMetrics::default(), &artifacts);
+                    }
+                    guard.merge_receipts.extend(receipts);
+                    if args.discard_after {
+                        guard.workspace.cleanup()?;
+                        guard.cleaned_up = true;
+                        guard.state = SubagentState::Merged;
+                    } else {
+                        let remaining = guard
+                            .workspace
+                            .compute_diff(&guard.id, protected_paths, false, &self.config.limits)?
+                            .changed_files
+                            .into_iter()
+                            .any(|c| c.new_sha256 != inspect_matching_parent(&guard.workspace, &c));
+                        if !remaining {
+                            guard.state = SubagentState::Merged;
+                        }
+                    }
+                    let snap = self
+                        .sanitize_snapshot(guard.snapshot(protected_paths, &self.config.limits));
+                    let data = serde_json::to_value(snap)
+                        .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()))?;
+                    Ok(ToolResult::success(Some(data)))
+                }
+            };
+        }
+
+        let Some((task, job)) = self.persistent_entry(&args.subagent_id).await? else {
+            return Err(failure(
+                error_codes::SUBAGENT_NOT_FOUND,
+                format!("unknown subagent `{}`", args.subagent_id),
+            ));
+        };
+        let persistence = self.persistence().ok_or_else(|| {
+            failure(
+                error_codes::SUBAGENT_ERROR,
+                "persistent subagent storage is unavailable",
+            )
+        })?;
+        let current = prepare_persistent_merge(
+            &persistence,
+            &task,
+            &job,
+            args,
+            protected_paths,
+            &self.config.limits,
+        )?;
         if current.binding != expected_binding {
             return Err(failure(
                 error_codes::CONFLICT,
-                "subagent changes drifted after merge authorization",
+                "persistent subagent changes drifted after merge authorization",
             ));
         }
-        match guard.workspace.merge_into_parent(
+        let workspace = persistence.reopen(task.id, &job)?;
+        match workspace.merge_into_parent(
             args.paths.as_deref(),
             allowed_write_roots,
             protected_paths,
             &self.config.limits,
         )? {
             MergeOutcome::Conflict(conflicts) => {
+                let stored = conflicts.clone();
+                persistence
+                    .update_job(task.id, |job| {
+                        job.conflicts = stored.clone();
+                    })
+                    .await?;
                 let data = serde_json::json!({
-                    "subagent_id": guard.id,
+                    "subagent_id": args.subagent_id,
                     "conflicts": conflicts,
                 });
                 Ok(ToolResult {
@@ -1411,7 +1852,7 @@ impl SubagentSupervisor {
                     data: Some(data),
                     error: Some(ErrorInfo {
                         code: error_codes::SUBAGENT_CONFLICT.into(),
-                        message: "parent workspace modified since subagent fork; merge aborted with zero writes"
+                        message: "parent workspace modified since persistent subagent fork; merge aborted with zero writes"
                             .into(),
                     }),
                     truncated: false,
@@ -1419,37 +1860,29 @@ impl SubagentSupervisor {
                 })
             }
             MergeOutcome::Applied(receipts) => {
-                let artifacts: Vec<Artifact> = receipts
-                    .iter()
-                    .filter(|r| r.operation != "unchanged")
-                    .map(|r| Artifact {
-                        path: PathBuf::from(&r.path),
-                        operation: r.operation.clone(),
-                    })
-                    .collect();
+                let artifacts = merge_artifacts(&receipts);
                 if !artifacts.is_empty() {
                     self.template
                         .parent_metrics
                         .merge_child(&RunMetrics::default(), &artifacts);
                 }
-                guard.merge_receipts.extend(receipts);
                 if args.discard_after {
-                    guard.workspace.cleanup()?;
-                    guard.cleaned_up = true;
-                    guard.state = SubagentState::Merged;
-                } else {
-                    let remaining = guard
-                        .workspace
-                        .compute_diff(&guard.id, protected_paths, false, &self.config.limits)?
-                        .changed_files
-                        .into_iter()
-                        .any(|c| c.new_sha256 != inspect_matching_parent(&guard.workspace, &c));
-                    if !remaining {
-                        guard.state = SubagentState::Merged;
-                    }
+                    workspace.cleanup()?;
+                    let _ = persistence.remove_job_dir(task.id);
                 }
-                let snap =
-                    self.sanitize_snapshot(guard.snapshot(protected_paths, &self.config.limits));
+                let stored = receipts.clone();
+                let discarded = args.discard_after;
+                let (task, job) = persistence
+                    .update_job(task.id, |job| {
+                        job.merge_receipts.extend(stored.clone());
+                        job.conflicts.clear();
+                        job.merged = true;
+                        if discarded {
+                            job.discarded = true;
+                        }
+                    })
+                    .await?;
+                let snap = self.sanitize_snapshot(job.snapshot(&task));
                 let data = serde_json::to_value(snap)
                     .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()))?;
                 Ok(ToolResult::success(Some(data)))
@@ -1494,6 +1927,35 @@ impl SubagentSupervisor {
             if guard.state == SubagentState::Running {
                 guard.state = SubagentState::Cancelled;
                 guard.done_notify.notify_waiters();
+            }
+        }
+        // Persistent mutating children run under a separate worker. Mark their
+        // durable jobs cancelled in the same transition so the worker's control
+        // poll stops them; their isolated workspaces are kept for inspection.
+        if let Some(persistence) = self.persistence() {
+            let now = timestamp()?;
+            if let Ok(jobs) = persistence.list_jobs(self.owner_session()).await {
+                for (task, job) in jobs {
+                    if matches!(
+                        task.status,
+                        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Paused
+                    ) && (job.isolation == SubagentIsolation::Isolated || job.allow_exec)
+                    {
+                        match persistence
+                            .store()
+                            .transition(task.id, TaskStatus::Cancelled, now.clone())
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(error)
+                                if error.is_code("invalid_task_state")
+                                    || error.is_code(error_codes::SUBAGENT_NOT_FOUND) => {}
+                            Err(error) => {
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                    }
+                }
             }
         }
         self.any_done.notify_waiters();
@@ -1612,6 +2074,68 @@ fn prepare_merge_locked(
     let diff = entry
         .workspace
         .compute_diff(&entry.id, protected_paths, false, limits)?;
+    Ok(build_prepared_merge(
+        &entry.id,
+        &entry.label,
+        entry.workspace.kind,
+        targets,
+        &diff,
+        args,
+    ))
+}
+
+fn prepare_persistent_merge(
+    persistence: &SubagentPersistence,
+    task: &TaskRecord,
+    job: &PersistentSubagentJob,
+    args: &MergeArgs,
+    protected_paths: &[PathBuf],
+    limits: &SubagentLimits,
+) -> Result<PreparedSubagentMerge, BoundaryError> {
+    if !matches!(
+        task.status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    ) {
+        return Err(failure(
+            error_codes::SUBAGENT_CONFLICT,
+            "cannot merge a persistent subagent that is not in a terminal state",
+        ));
+    }
+    if job.discarded {
+        return Err(failure(
+            error_codes::SUBAGENT_CONFLICT,
+            "persistent subagent workspace was discarded",
+        ));
+    }
+    if job.isolation == SubagentIsolation::ReadOnly {
+        return Err(failure(
+            error_codes::INVALID_ARGS,
+            "read_only subagents have no isolated changes to merge",
+        ));
+    }
+    let id = task.id.0.to_string();
+    let workspace = persistence.reopen(task.id, job)?;
+    let targets =
+        workspace.resolve_merge_targets(args.paths.as_deref(), protected_paths, limits)?;
+    let diff = workspace.compute_diff(&id, protected_paths, false, limits)?;
+    Ok(build_prepared_merge(
+        &id,
+        &job.label,
+        job.isolation_kind,
+        targets,
+        &diff,
+        args,
+    ))
+}
+
+fn build_prepared_merge(
+    id: &str,
+    label: &str,
+    isolation_kind: super::WorkspaceIsolationKind,
+    targets: Vec<PathBuf>,
+    diff: &SubagentDiffReport,
+    args: &MergeArgs,
+) -> PreparedSubagentMerge {
     let selected_set: Option<BTreeSet<&str>> = args
         .paths
         .as_ref()
@@ -1619,7 +2143,7 @@ fn prepare_merge_locked(
 
     let mut hash = Sha256::new();
     hash.update(b"saya-subagent-merge-v1\0");
-    hash.update(entry.id.as_bytes());
+    hash.update(id.as_bytes());
     hash.update([u8::from(args.discard_after)]);
     let mut file_reviews = Vec::new();
 
@@ -1650,17 +2174,28 @@ fn prepare_merge_locked(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
 
-    Ok(PreparedSubagentMerge {
+    PreparedSubagentMerge {
         targets,
         binding,
         review: json!({
-            "subagent_id": entry.id,
-            "label": entry.label,
-            "isolation": entry.workspace.kind,
+            "subagent_id": id,
+            "label": label,
+            "isolation": isolation_kind,
             "discard_after": args.discard_after,
             "files": file_reviews,
         }),
-    })
+    }
+}
+
+fn merge_artifacts(receipts: &[SubagentMergeReceipt]) -> Vec<Artifact> {
+    receipts
+        .iter()
+        .filter(|receipt| receipt.operation != "unchanged")
+        .map(|receipt| Artifact {
+            path: PathBuf::from(&receipt.path),
+            operation: receipt.operation.clone(),
+        })
+        .collect()
 }
 
 fn merge_usage(a: &Usage, b: &Usage) -> Usage {
