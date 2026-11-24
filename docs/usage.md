@@ -264,6 +264,7 @@ soyo --config /path/to/worker.toml --data-dir /var/lib/soyo-worker \
 语义与边界：
 
 - `remote assign` 只接受 `queued` 任务，且拒绝 `Manual Approval`（远端没有交互式审批人）；worker 以自己的模式与权限执行任务，token 只证明可以连接，不改变权限或 sandbox。
+- 同步的是任务工作区内的普通文件（`.git`／符号链接／gitignore 排除项除外）；属主凭据不下发，但工作区里的机密文件会随任务到达 worker 机器，请先用 `.gitignore` 排除。
 - worker 每 10 秒心跳续租。未确认启动的派发在租约过期后回到 `queued`（无副作用，可安全重派）；已确认启动的尝试过期后进入 `waiting_unknown`，只由 `soyo task resolve TASK_ID --retry` 显式重排，绝不自动重放。
 - 同步上限：10000 文件／64 MiB 总量／单文件 16 MiB、改动 256 文件；遵循 `.gitignore`，不传输 `.git`、符号链接与特殊文件。超限明确失败。
 - 结果只入库：`remote apply` 做三方检查，本地文件在派发后被改动即整体拒绝（退出码 2）并列出冲突；重复 apply 幂等。

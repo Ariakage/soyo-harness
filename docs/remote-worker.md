@@ -8,6 +8,7 @@ F-13 的第三条远程增量（D-113 (c)，实现决策见 D-117）：`soyo rem
 - **同一认证路径**：worker 使用 `run_kinds = ["remote"]` 的 bearer token，不引入第二套身份或密钥分发。token 撤销后 worker 的下一次请求即 401。
 - **独立信任域**：worker 机器是另一个信任域。属主 helper 只下发任务输入与工作区文件的相对路径／内容，绝不下发模型密钥、凭据或其他宿主机密；worker 上报的摘要、改动清单与结果一律按外部输入处理——base 摘要对照持久化快照、blob 摘要重新计算、文本在入库前脱敏。
 - **执行边界不迁移**：worker 用自己的配置、模型 profile、限额与原生 sandbox（macOS Seatbelt／Linux Bubblewrap+Seccomp）执行 Run；任务的工作模式与权限模式沿用任务记录。`Manual Approval` 任务不允许分配给远程 worker（`task_authorization`），因为远端没有交互式审批人。
+- **工作区内容按原样同步**：清单包含任务工作区内的普通文件（`.git`、符号链接与 gitignore 排除项除外）。属主侧的模型密钥与凭据库不会下发，但工作区自身可能含机密文件（如 `.env`）；若这些文件不应出现在 worker 机器上，请先用 `.gitignore` 排除或不要派发该任务。
 
 ## 快速开始
 
