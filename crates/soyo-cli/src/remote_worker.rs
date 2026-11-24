@@ -369,7 +369,11 @@ async fn execute_dispatch(
     dispatch: &RemoteDispatch,
     current: &Arc<StdMutex<Option<Arc<RunCancellation>>>>,
 ) -> Result<(), BoundaryError> {
-    let limits = RemoteSyncLimits::default();
+    let limits = RemoteSyncLimits {
+        max_file_bytes: dispatch.max_file_bytes,
+        max_changed_files: dispatch.max_changed_files,
+        ..RemoteSyncLimits::default()
+    };
     report_progress(
         client,
         worker_id,

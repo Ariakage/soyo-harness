@@ -740,7 +740,7 @@ impl HostService {
                     MAX_TASK_RESULT_BYTES,
                 )
             }),
-            error_code: finish.error_code,
+            error_code: finish.error_code.map(|code| truncate(code, 128)),
             persistence_saved: finish.persistence_saved,
             finished_at: now.clone(),
         };
