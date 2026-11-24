@@ -1181,6 +1181,7 @@ impl SubagentSupervisor {
                 Ok(path) => Some(path),
                 Err(error) => {
                     let _ = workspace.cleanup();
+                    let _ = persistence.remove_job_dir(task_id);
                     return Err(error);
                 }
             }
@@ -1397,12 +1398,14 @@ impl SubagentSupervisor {
                     all_done = false;
                 }
             }
+            let mut all_entries_done = true;
             for entry in &entries {
                 let guard = entry.lock().await;
                 if guard.state.is_terminal() {
                     any_done = true;
                 } else {
                     all_done = false;
+                    all_entries_done = false;
                 }
                 snapshots
                     .push(self.sanitize_snapshot(guard.snapshot(&protected, &self.config.limits)));
@@ -1427,7 +1430,7 @@ impl SubagentSupervisor {
             // Persistent jobs are driven by an external worker; there is no
             // in-process notifier to await, so report their current state
             // instead of blocking this run indefinitely.
-            if entries.is_empty() {
+            if entries.is_empty() || all_entries_done {
                 return serde_json::to_value(json!({ "completed": false, "subagents": snapshots }))
                     .map_err(|err| failure(error_codes::SUBAGENT_ERROR, err.to_string()));
             }
