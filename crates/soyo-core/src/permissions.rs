@@ -836,9 +836,32 @@ impl Policy {
         protected.sort();
         protected.dedup();
 
+        // Remap the parent's roots into the child workspace. A child can never
+        // receive a wider root set than its parent had, so multi-level
+        // delegation narrows monotonically down the chain.
+        let mut parent_mapped_roots: Vec<PathBuf> = Vec::new();
+        for root in &self.roots {
+            let mapped = if *root == self.workspace {
+                child_ws.clone()
+            } else if let Ok(rel) = root.strip_prefix(&self.workspace) {
+                crate::config::canonicalize_deepest(&child_ws.join(rel))
+            } else {
+                // Roots outside the parent workspace (e.g. explicit additional
+                // read roots) are inherited unchanged; the parent already had
+                // them, so this is not an escalation.
+                root.clone()
+            };
+            if !parent_mapped_roots.contains(&mapped) {
+                parent_mapped_roots.push(mapped);
+            }
+        }
+
         let mut roots = Vec::new();
         if allowed_rel_paths.is_empty() {
-            roots.push(child_ws.clone());
+            roots = parent_mapped_roots.clone();
+            if roots.is_empty() {
+                roots.push(child_ws.clone());
+            }
         } else {
             for rel in allowed_rel_paths {
                 if rel.as_os_str().is_empty()
@@ -863,10 +886,14 @@ impl Policy {
                 if !resolved.starts_with(&child_ws)
                     || is_repository_control_path(&resolved)
                     || protected.iter().any(|p| resolved.starts_with(p))
+                    || (!parent_mapped_roots.is_empty()
+                        && !parent_mapped_roots
+                            .iter()
+                            .any(|root| resolved.starts_with(root)))
                 {
                     return Err(failure(
                         "path_denied",
-                        "allowed_paths target escapes child workspace or hits protected storage",
+                        "allowed_paths target escapes child workspace, parent roots, or hits protected storage",
                     ));
                 }
                 if !roots.contains(&resolved) {
@@ -920,7 +947,11 @@ impl Policy {
             roots,
             rules,
             host_protected: std::sync::RwLock::new(protected),
-            enforce_roots_in_bypass: isolated || !allowed_rel_paths.is_empty(),
+            // Root containment, once enforced anywhere up the chain, stays
+            // enforced for every descendant so a deeper level cannot relax it.
+            enforce_roots_in_bypass: self.enforce_roots_in_bypass
+                || isolated
+                || !allowed_rel_paths.is_empty(),
         })
     }
     /// Return a copy that explicitly denies `exec` in every permission mode.

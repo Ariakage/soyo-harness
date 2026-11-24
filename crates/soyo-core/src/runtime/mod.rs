@@ -839,8 +839,25 @@ impl AgentRuntime {
     /// all `subagent_*` tools unregistered so disabled sessions see zero prompt or
     /// schema changes.
     pub fn with_subagents(
+        self,
+        settings: Option<crate::subagent::SubagentConfig>,
+    ) -> Result<Self, BoundaryError> {
+        self.with_subagents_inner(settings, None)
+    }
+    /// Variant used when a spawned child runtime builds its own deeper-level
+    /// supervisor: the shared counters keep `max_concurrent`/`max_total`
+    /// aggregated across the whole delegation chain.
+    pub(crate) fn with_subagents_with_counters(
+        self,
+        settings: Option<crate::subagent::SubagentConfig>,
+        counters: Arc<crate::subagent::supervisor::SubtreeCounters>,
+    ) -> Result<Self, BoundaryError> {
+        self.with_subagents_inner(settings, Some(counters))
+    }
+    fn with_subagents_inner(
         mut self,
         settings: Option<crate::subagent::SubagentConfig>,
+        counters: Option<Arc<crate::subagent::supervisor::SubtreeCounters>>,
     ) -> Result<Self, BoundaryError> {
         let Some(config) = settings else {
             return Ok(self);
@@ -863,9 +880,16 @@ impl AgentRuntime {
             parent_services: self.services.clone(),
             parent_cancel: self.cancel.clone(),
         };
-        let supervisor = Arc::new(crate::subagent::supervisor::SubagentSupervisor::new(
-            config, template,
-        ));
+        let supervisor = match counters {
+            Some(counters) => Arc::new(
+                crate::subagent::supervisor::SubagentSupervisor::with_counters(
+                    config, template, counters,
+                ),
+            ),
+            None => Arc::new(crate::subagent::supervisor::SubagentSupervisor::new(
+                config, template,
+            )),
+        };
         self.dispatcher.set_subagents(supervisor.clone())?;
         self.services.configure_subagents(supervisor.clone())?;
         self.subagents = Some(supervisor);

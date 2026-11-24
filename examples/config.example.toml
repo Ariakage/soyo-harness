@@ -132,10 +132,12 @@ enabled = true
 # enabled = false
 
 # Controlled parent-child subagents (`F-09`) default to disabled.
-# When enabled, child subagents run at max_depth = 1 with non-escalating mode,
-# permission, sandbox, secret, and shared budget bounds.
+# When enabled, delegation depth is bounded by max_depth (1 = single level,
+# allowed 1..=3); each level tightens mode/permission/sandbox/secret bounds and
+# shares budgets plus spawn counters with the top-level run.
 # [subagents]
 # enabled = false
+# max_depth = 1
 # max_concurrent = 4
 # max_total = 16
 # max_model_requests = 32

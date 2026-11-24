@@ -42,7 +42,7 @@ schema编译入口供外部注册和MCP目录验证复用。MCP传输、结果�
 
 ## 受控子 Agent 工具（F-09，D-085）
 
-当 `[subagents].enabled = true` 时，顶层父运行时在工具目录中注入 7 个内置子 Agent 工具（`subagent_spawn`、`subagent_status`、`subagent_wait`、`subagent_message`、`subagent_cancel`、`subagent_diff` 分类为 `ToolEffect::Control`，`subagent_merge` 分类为 `ToolEffect::FileWrite`）；`[subagents]` 默认关闭时不注册任何工具、零前缀漂移。子运行时深度限制为 `max_depth = 1`，绝不注入 `subagent_*`，并在派发层拒绝递归委派。
+当 `[subagents].enabled = true` 时，顶层父运行时在工具目录中注入 7 个内置子 Agent 工具（`subagent_spawn`、`subagent_status`、`subagent_wait`、`subagent_message`、`subagent_cancel`、`subagent_diff` 分类为 `ToolEffect::Control`，`subagent_merge` 分类为 `ToolEffect::FileWrite`）；`[subagents]` 默认关闭时不注册任何工具、零前缀漂移。委派深度受 `[subagents] max_depth` 约束（默认 `1`，允许 `1..=3`）：当 `max_depth > 1` 且未达上限时，子运行时以自己的 supervisor 注入 `subagent_*`；到达上限的运行时绝不注入，并在派发层拒绝递归委派。
 
 `PLAN` 模式与只读运行时从模型侧工具列表隐藏 `subagent_merge`，并在策略与运行时派发双重路径拒绝 `subagent_merge` 及一切非 `read_only` 或 `allow_exec = true` 的委派。`subagent_merge` 在授权阶段经 `SubagentSupervisor::prepare_merge` 解析待合并目标路径、`SubagentMergeReceipt` 前置摘要与审核信息并绑定 `Operation::subagent_merge`，审批通过后执行基于 Fork 基线／父工作区／子工作区的三方 SHA-256 冲突检测与原子写入。`js_repl` 明确禁止桥接任何 `subagent_*` 工具；详情见[受控子 Agent](subagents.md)。
 

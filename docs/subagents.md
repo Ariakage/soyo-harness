@@ -1,13 +1,13 @@
-# 受控子 Agent 协作（F-09，D-085）
+# 受控子 Agent 协作（F-09，D-085／D-109）
 
-**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。本文记录当前已落地的单层受控父子委派边界；多层递归委派与跨进程分布式子 Agent 仍属后续范围。**
+**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。深度由 `[subagents] max_depth` 控制（默认 `1`，允许 `1..=3`）；跨进程分布式子 Agent 与持久子 Agent（D-110）仍属后续范围。**
 
 ## 定位与开关边界
 
-`F-09` 允许单个父 `AgentRuntime` 将独立子任务委派给有界子运行时执行，同时维持宿主在模式、权限、沙箱、凭据、预算与取消上的最终裁决权：
+`F-09` 允许父 `AgentRuntime` 将独立子任务委派给有界子运行时执行，同时维持宿主在模式、权限、沙箱、凭据、预算与取消上的最终裁决权：
 
 - **默认零漂移（opt-in）**：`[subagents] enabled = false` 为默认值。关闭时，`ModelRequest.tools` 不注册 `subagent_*` 工具、`prompt.rs` 不注入 [subagents 提示段](../crates/soyo-core/prompts/v1/subagents.md)、`ToolDispatcher` 拒绝任何模型伪造的 `subagent_*` 调用并返回 `unknown_tool`，且既有配置指纹、系统提示词前缀与行为保持零变化。
-- **深度固定为 `max_depth = 1`**：只有顶层父会话在启用 `[subagents]` 时构建 `SubagentSupervisor`；子 `AgentRuntime` 绝不调用 `with_subagents(...)`，模型侧看不到 `subagent_*` 工具定义，并在派发期 fail-closed 拒绝递归生成孙子任务。
+- **可配置委派深度（D-109）**：`max_depth` 默认 `1`（仅单层父子委派，子运行时看不到 `subagent_*`），允许 `1..=3`。深度按委派跳数计，顶层会话为 `0`、直接子代为 `1`、孙代为 `2`；跳数 `< max_depth` 的运行时以自己的 `SubagentSupervisor` 注册 `subagent_*`，因而子孙代在未达上限时可继续委派。位于 `depth == max_depth` 的运行时不再注册 `subagent_*`（即使模型伪造调用也按 `unknown_tool` fail-closed 拒绝），因此 `max_depth = 3` 允许三跳链条。`depth` 由 supervisor 持有，`subagent_spawn` 不暴露该参数。
 - **非托管外部进程**：子 Agent 在进程内受监督任务中复用 `AgentRuntime` 与宿主统一工具／沙箱管道，不启动独立绕过权限的外部编码 Agent。
 
 ## `[subagents]` 配置与限额
@@ -17,8 +17,9 @@
 | 字段 | 默认值 | 允许上限 | 说明 |
 | --- | --- | --- | --- |
 | `enabled` | `false` | — | 总开关；仅 `true` 时注入工具与提示段 |
-| `max_concurrent` | `4` | `16` | 同时处于 `running` 状态的子 Agent 上限（`1..=max_total`） |
-| `max_total` | `16` | `64` | 单个父 Run 累计生成的子 Agent 总数上限 |
+| `max_depth` | `1` | `3` | 委派链最大深度；`1` 表示仅单层父子委派，`>1` 时子孙代可继续委派（`1..=3`） |
+| `max_concurrent` | `4` | `16` | 整条委派链同时处于 `running` 状态的子 Agent 上限（`1..=max_total`） |
+| `max_total` | `16` | `64` | 整条委派链（含子孙代）累计生成的子 Agent 总数上限，统一计入顶层父 Run |
 | `max_model_requests` | `32` | `256` | 单个子 Agent 累计模型请求上限 |
 | `max_tool_calls` | `128` | `1024` | 单个子 Agent 累计工具调用上限 |
 | `default_timeout_seconds` | `300` | `max_timeout_seconds` | 未传 `timeout_seconds` 时的默认执行超时 |
@@ -53,8 +54,10 @@
    - 父模式为 `WorkMode::Plan` 或运行时为 `read_only` 时，只允许 `mode = "plan"`、`workspace_isolation = "read_only"` 且 `allow_exec = false`；试图委派非 `PLAN`、`isolated` 或可 `exec` 的子 Agent 一律返回 `mode_denied`。
    - `PLAN` 模式下模型侧工具列表隐藏 `subagent_merge`，且 `Policy::evaluate` 与 `Runtime` 派发双层拒绝该调用。
    - 运行期间父级通过 `request_mode(WorkMode::Plan)` 切换到 `PLAN` 时，[RuntimeServices::cleanup_for_plan](../crates/soyo-core/src/runtime_services.rs) 在进入 `PLAN` 屏障前调用 `SubagentSupervisor::cancel_mutating()`，取消并等待全部正在运行的 `isolated` 或 `allow_exec` 子 Agent 收敛。
+   - 多层委派（D-109）下，子级的 `SubagentCancel` 始终包裹 `ParentRuntimeTemplate.parent_cancel`，因此顶层父级触发取消后整棵子树（含孙代）同时观察到取消信号；`PLAN` 切态取消与父 Run 取消均沿整条委派链生效，不只作用于直接子代。
 2. **规则重映射与 `Bypass` 隔离约束（`Policy::derive_for_subagent`）**：
    - 继承父策略全部显式 `deny`/`ask`/`allow` 规则；对指向父工作区绝对路径或其前缀的 `path_glob`，额外复制映射一份针对隔离工作区真实路径的规则，确保父级对敏感路径（如 `secrets/**`）的 `deny`/`ask` 规则不会因进入独立 worktree 而失效。
+   - 多层委派时每一层都调用同一 `derive_for_subagent` 从**直接父级**策略派生：子代只能在父代已有的路径根、`allowed_paths`、`exec` 许可与预算之内进一步收紧，任何一层都无法把被收紧的边界重新放宽回祖父级。
    - 当隔离模式为 `isolated` 或指定了 `allowed_paths` 时，子策略启用 `enforce_roots_in_bypass = true`：即使在 `PermissionMode::Bypass` 下，子 Agent 的文件读写与可执行工作目录也严格受限于子工作区根目录或指定的相对 `allowed_paths` 子树（`path_denied` / `permission_denied`）。
    - 子 Agent 不继承父级的一次性缓存或 `Preauthorizations`（永远从空授权集启动）。在 `Manual Approval` 或 `ask` 规则下，审批提示经 `[subagent:<id>:<label>]` 前缀清晰标识来源子任务。CLI 审批渲染（[crates/soyo-cli/src/approval.rs](../crates/soyo-cli/src/approval.rs)）隐去原始 `task`/`message` 文本，仅展示长度与元信息；`subagent_merge` 的操作指纹绑定候选目标文件集合、SHA-256 评审摘要与 `discard_after` 参数。
 3. **命令执行与原生沙箱收缩**：
@@ -78,9 +81,10 @@
 
 ## 共享预算、Metrics 与 Goal 集成
 
-- **共享时间与调用上限**：子 Agent 接收从父 `SharedBudget` 派生的受限预算（同时受子级 `timeout_seconds`、父级剩余活跃时间与共享父 `model_requests` 计数约束），并共享原子父工具调用计数器，防止通过并行扇出突破父级 Run 预算。
+- **共享时间与调用上限**：子 Agent 接收从父 `SharedBudget` 派生的受限预算（同时受子级 `timeout_seconds`、父级剩余活跃时间与共享父 `model_requests` 计数约束），并共享原子父工具调用计数器，防止通过并行扇出突破父级 Run 预算。多层委派下每层都以同一方式串联：孙代请求同样逐级扣减至顶层父 Run 的 `SharedBudget` 与工具计数器，任一层都不会获得新的独立额度。
+- **子代生成计数沿链汇总（D-109）**：`max_concurrent` 与 `max_total` 由整条委派链共享的计数器统计（`SubagentSupervisor` 的内部 `SubtreeCounters`），子级 supervisor 与祖父级使用同一份计数，因此深层扇出不能突破顶层 Run 的并发与总数上限。
 - **单源 Metrics 汇总**：`SubagentStore` 在每次子工具完成与模型请求后直接向子 `MeasuredModel` 与记录表累积明细；子任务返回时仅通过 `Metrics::merge_child` 增量回滚进父 `Metrics` 一次（支持多轮 `subagent_message` 续跑而不重复计算）。
-- **取消链路**：通过 `SubagentCancel` 串联父 `Cancellation` 与局部取消信号，父 Run 取消、Ctrl-C、超时或 helper 断线会立即终止运行中的子 Agent 并清理临时工作区。
+- **取消链路**：通过 `SubagentCancel` 串联父 `Cancellation` 与局部取消信号，父 Run 取消、Ctrl-C、超时或 helper 断线会立即终止运行中的子 Agent 并清理临时工作区；多层委派下串联关系逐级成立，顶层取消会传播到整棵子树。
 - **Goal 指纹集成**：[goal_profile_fingerprint](../crates/soyo-app/src/goal.rs) 纳入 `&config.subagents`；`goal start --auto` 在执行期发现 `[subagents]` 开关或限额漂移时明确拒绝继续，步骤产物经 `subagent_merge` 落入父工作区后由宿主 `StepVerifier` 独立核验。
 
 ## CLI、TUI 与桌面端呈现

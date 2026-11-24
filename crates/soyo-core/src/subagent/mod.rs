@@ -24,6 +24,8 @@ use std::{
     time::Duration,
 };
 
+pub const DEFAULT_MAX_DEPTH: usize = 1;
+pub const MAX_ALLOWED_DEPTH: usize = 3;
 pub const DEFAULT_MAX_CONCURRENT: usize = 4;
 pub const MAX_ALLOWED_CONCURRENT: usize = 16;
 pub const DEFAULT_MAX_TOTAL: usize = 16;
@@ -77,6 +79,7 @@ fn failure(code: &str, message: impl Into<String>) -> BoundaryError {
 #[serde(default, deny_unknown_fields)]
 pub struct SubagentSettings {
     pub enabled: bool,
+    pub max_depth: Option<usize>,
     pub max_concurrent: Option<usize>,
     pub max_total: Option<usize>,
     pub max_model_requests: Option<usize>,
@@ -93,6 +96,8 @@ pub struct SubagentSettings {
 /// Validated runtime limits for one enabled subagent supervisor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentLimits {
+    /// Maximum delegation-chain depth (`1` disables grandchildren entirely).
+    pub max_depth: usize,
     pub max_concurrent: usize,
     pub max_total: usize,
     pub max_model_requests: usize,
@@ -109,6 +114,7 @@ pub struct SubagentLimits {
 impl Default for SubagentLimits {
     fn default() -> Self {
         Self {
+            max_depth: DEFAULT_MAX_DEPTH,
             max_concurrent: DEFAULT_MAX_CONCURRENT,
             max_total: DEFAULT_MAX_TOTAL,
             max_model_requests: DEFAULT_MAX_MODEL_REQUESTS,
@@ -127,7 +133,9 @@ impl Default for SubagentLimits {
 impl SubagentLimits {
     /// Reject zero, inverted, or over-range limits.
     pub fn validate(&self) -> Result<(), BoundaryError> {
-        if self.max_concurrent == 0
+        if self.max_depth == 0
+            || self.max_depth > MAX_ALLOWED_DEPTH
+            || self.max_concurrent == 0
             || self.max_concurrent > MAX_ALLOWED_CONCURRENT
             || self.max_total == 0
             || self.max_total > MAX_ALLOWED_TOTAL
@@ -161,9 +169,40 @@ impl SubagentLimits {
 }
 
 /// Resolved configuration passed to `AgentRuntime::with_subagents`.
+///
+/// `depth` counts delegation hops from the top-level run (`0` for the session
+/// runtime, `1` for its direct children, ...). A runtime whose depth is below
+/// `limits.max_depth` builds a supervisor so its children can delegate
+/// further; a runtime at `depth == max_depth` gets none, so it sees no
+/// `subagent_*` tools and any fabricated spawn fails closed as `unknown_tool`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentConfig {
     pub limits: SubagentLimits,
+    depth: usize,
+}
+
+impl SubagentConfig {
+    /// Top-level resolved configuration (the session runtime sits at depth 0).
+    pub fn new(limits: SubagentLimits) -> Self {
+        Self { limits, depth: 0 }
+    }
+
+    /// Configuration for the supervisor of a runtime one hop deeper. Returns
+    /// `None` when the child would sit at `max_depth` and therefore must not
+    /// delegate further.
+    pub fn for_child(&self) -> Option<Self> {
+        let child_depth = self.depth + 1;
+        (child_depth < self.limits.max_depth).then(|| Self {
+            limits: self.limits.clone(),
+            depth: child_depth,
+        })
+    }
+
+    /// Delegation depth (hops from the top-level run) of the runtime that owns
+    /// this supervisor.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
 }
 
 impl SubagentSettings {
@@ -179,12 +218,13 @@ impl SubagentSettings {
         if !self.enabled {
             return Ok(None);
         }
-        Ok(Some(SubagentConfig { limits }))
+        Ok(Some(SubagentConfig::new(limits)))
     }
 
     fn build_limits(&self) -> Result<SubagentLimits, BoundaryError> {
         let defaults = SubagentLimits::default();
         Ok(SubagentLimits {
+            max_depth: self.max_depth.unwrap_or(defaults.max_depth),
             max_concurrent: self.max_concurrent.unwrap_or(defaults.max_concurrent),
             max_total: self.max_total.unwrap_or(defaults.max_total),
             max_model_requests: self

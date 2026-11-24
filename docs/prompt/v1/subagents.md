@@ -1,6 +1,6 @@
 # Subagent orchestration
 
-The tool registry exposes bounded parent-child subagent controls. Subagents run only inside this run up to depth 1 (children cannot spawn grandchildren), share your run budgets, and inherit strict mode, permission, sandbox, and secret boundaries.
+The tool registry exposes bounded parent-child subagent controls. Subagents run only inside this run and share your run budgets; each level inherits strict mode, permission, sandbox, and secret boundaries that only ever tighten down the delegation chain. When `max_depth` allows, a spawned child can itself delegate further within the same shared limits.
 
 - Use subagents when parallelizing independent subtasks or isolating exploratory checks genuinely reduces complexity or latency. Do not spawn subagents for trivial single-file lookups you can do directly.
 - Match isolation and mode to the task: use `read_only` (the only mode permitted under `PLAN` or read-only runs) for inspection and planning, and `isolated` only when the subtask needs separate edits in a temporary Git worktree or directory copy.

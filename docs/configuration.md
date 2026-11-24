@@ -425,11 +425,12 @@ enabled = false
 # roots = []
 ```
 
-`[subagents]`（`F-09`，`D-085`）是默认关闭的受控单层（`max_depth = 1`）父子协作开关。关闭时保持提示词、工具列表与配置指纹零漂移；开启后注册 `subagent_spawn`/`status`/`wait`/`message`/`cancel`/`diff`/`merge` 并强制执行非提权模式／`PLAN` 清理、工作区 `path_glob` 重映射、`Bypass` 子路径约束、`exec` 开关与沙箱 `write_roots` 收缩、共享父预算／工具上限、三方 SHA-256 冲突检测原子合并与退出清理；`default_timeout_seconds ≤ max_timeout_seconds ≤ 1800`、`max_concurrent ≤ max_total`。桌面端可通过 `Settings › Experimental` 的 `subagents_enabled` 无损更新 `enabled` 开关；详情见[受控子 Agent](subagents.md)。
+`[subagents]`（`F-09`，`D-085`／`D-109`）是默认关闭的受控父子协作开关；委派深度由 `max_depth` 控制（默认 `1`，即单层委派；允许 `1..=3`，`>1` 时子代可在收紧边界内继续委派，预算与并发沿链汇总到顶层父 Run）。关闭时保持提示词、工具列表与配置指纹零漂移；开启后注册 `subagent_spawn`/`status`/`wait`/`message`/`cancel`/`diff`/`merge` 并强制执行非提权模式／`PLAN` 子树清理、工作区 `path_glob` 重映射、`Bypass` 子路径约束、`exec` 开关与沙箱 `write_roots` 收缩、共享父预算／工具上限、三方 SHA-256 冲突检测原子合并与退出清理；`default_timeout_seconds ≤ max_timeout_seconds ≤ 1800`、`max_concurrent ≤ max_total`。桌面端可通过 `Settings › Experimental` 的 `subagents_enabled` 无损更新 `enabled` 开关；详情见[受控子 Agent](subagents.md)。
 
 ```toml
 [subagents]
 enabled = false
+max_depth = 1
 max_concurrent = 4
 max_total = 16
 max_model_requests = 32

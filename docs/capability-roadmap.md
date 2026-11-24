@@ -205,14 +205,14 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 
 **价值**：将大任务分成可独立执行和核验的子任务。
 
-> **实现状态（D-085）**：单层受控父子委派（`max_depth = 1`）已按默认关闭（`[subagents] enabled = false`）实现，涵盖 7 个 `subagent_*` 工具、非提权规则与 `PLAN` 切态取消、Git Worktree / 有界目录拷贝隔离、三方 SHA-256 冲突检测合并、共享预算与单源 Metrics 汇总、取消清理、Goal 配置指纹及 CLI／TUI／桌面端呈现（`Settings › Experimental`）。多层递归委派、跨运行持久子 Agent 与远程协同仍属后续扩展。详见[受控子 Agent](subagents.md)与[F-09 说明](releases/release-notes-f09.md)。
+> **实现状态（D-085、D-109）**：受控父子委派已按默认关闭（`[subagents] enabled = false`）实现，涵盖 7 个 `subagent_*` 工具、非提权规则与 `PLAN` 整棵子树取消、Git Worktree / 有界目录拷贝隔离、三方 SHA-256 冲突检测合并、共享预算与单源 Metrics 汇总、取消清理、Goal 配置指纹及 CLI／TUI／桌面端呈现（`Settings › Experimental`）。委派深度由 `[subagents] max_depth` 控制（默认 `1` 即单层，允许 `1..=3`）：超过 `1` 时子代在同一套收紧规则与共享预算／并发计数下继续委派。跨运行持久子 Agent（D-110）与远程协同仍属后续扩展。详见[受控子 Agent](subagents.md)与[F-09 说明](releases/release-notes-f09.md)。
 
 - 父子任务、分工、消息、结果汇总、独立上下文与预算；对子任务数量和并发设上限。
 - 子 Agent 的权限、网络、凭据与可访问文件不能自动高于父任务的授权范围。
 - 独立 worktree／sandbox 与合并流程，避免多个 Agent 同时覆盖同一文件。
 - 取消、失败、超时和资源预算向子任务传递，汇总结果仍需实际验证。
 
-**已确认增量（D-109、D-110，方向定案）**：(1) **多层委派**——`[subagents] max_depth` 可配置（默认 1，上限 3），子孙代经 `derive_for_subagent` 逐级收紧、预算沿链向顶层汇总、`PLAN` 切态沿整棵子树取消；(2) **持久子 Agent**（依赖多层先行）——`subagent_spawn persistent: true` 落库 `TaskStore`（`run_kind = "subagent"`），父 run detach 后由后台 worker 续跑，`subagent_merge` 按既有冲突检测合回，绝不自动重放未确认副作用。
+**增量状态**：(1) **多层委派（D-109，已实现）**——`[subagents] max_depth` 可配置（默认 1，上限 3），子孙代经 `derive_for_subagent` 逐级收紧、预算与并发／总数计数沿链向顶层汇总、`PLAN` 切态沿整棵子树取消；(2) **持久子 Agent（D-110，方向定案，依赖多层先行）**——`subagent_spawn persistent: true` 落库 `TaskStore`（`run_kind = "subagent"`），父 run detach 后由后台 worker 续跑，`subagent_merge` 按既有冲突检测合回，绝不自动重放未确认副作用。
 
 先做受控父子任务，再考虑多层委派与更复杂协作。验收包含两个独立改动的隔离、冲突处理、总预算与取消；子任务需要有可核验的产物与合并结果。
 

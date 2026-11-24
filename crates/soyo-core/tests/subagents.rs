@@ -1564,3 +1564,642 @@ async fn switching_parent_to_plan_cancels_running_mutating_subagent() {
     assert!(status_res.ok, "{status_res:?}");
     assert_eq!(status_res.data.as_ref().unwrap()["state"], "cancelled");
 }
+
+// ------------------------- D-109 multi-level delegation -------------------------
+
+#[test]
+fn max_depth_setting_defaults_to_one_and_rejects_out_of_range() {
+    let settings = SubagentSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    let resolved = settings.resolve().unwrap().unwrap();
+    assert_eq!(resolved.limits.max_depth, 1);
+    assert_eq!(resolved.depth(), 0);
+    // `max_depth = 1` means exactly one hop: children get no supervisor.
+    assert!(resolved.for_child().is_none());
+
+    for bad in [0usize, 4, usize::MAX] {
+        let mut invalid = SubagentSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        invalid.max_depth = Some(bad);
+        assert!(invalid.validate().is_err(), "max_depth {bad} must fail");
+    }
+    let deep = SubagentSettings {
+        enabled: true,
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    let resolved = deep.resolve().unwrap().unwrap();
+    let child = resolved.for_child().expect("hop 1 supervisor allowed");
+    assert_eq!(child.depth(), 1);
+    let grandchild = child.for_child().expect("hop 2 supervisor allowed");
+    assert_eq!(grandchild.depth(), 2);
+    assert!(
+        grandchild.for_child().is_none(),
+        "a runtime at max_depth must not delegate further"
+    );
+}
+
+/// `max_depth = 3` allows a three-hop chain (parent → child → grandchild →
+/// great-grandchild). Runtimes at hops 1 and 2 see `subagent_*` tools; the
+/// runtime at hop 3 (`== max_depth`) gets none, and a fabricated
+/// `subagent_spawn` there fails closed as `unknown_tool`.
+#[tokio::test]
+async fn three_hop_chain_allowed_and_max_depth_runtime_fails_closed() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("note.txt"), "leaf\n").unwrap();
+
+    let child_saw_tools = Arc::new(AtomicBool::new(false));
+    let grand_saw_tools = Arc::new(AtomicBool::new(false));
+    let great_saw_tools = Arc::new(AtomicBool::new(false));
+    let ghost_error = Arc::new(Mutex::new(None::<String>));
+    let child_saw = child_saw_tools.clone();
+    let grand_saw = grand_saw_tools.clone();
+    let great_saw = great_saw_tools.clone();
+    let ghost = ghost_error.clone();
+
+    let model = Arc::new(RouterModel::new(move |req, turn| {
+        let first = first_user_task(&req.history);
+        let sees_tools = req.tools.iter().any(|t| t.name.starts_with("subagent_"));
+        match first {
+            "GREAT_TASK" => {
+                // Hop 3 == max_depth: no supervisor, so no subagent tools.
+                great_saw.store(sees_tools, Ordering::Release);
+                match turn {
+                    0 => Ok(finish_tool_calls(
+                        vec![(
+                            "ghost",
+                            "subagent_spawn",
+                            json!({"label": "ghost", "task": "GHOST_TASK"}),
+                        )],
+                        10,
+                        5,
+                    )),
+                    1 => {
+                        // Fabricated spawn must fail closed at dispatch.
+                        let code = req.history.iter().find_map(|item| match item {
+                            HistoryItem::ToolResult { call_id, result } if call_id == "ghost" => {
+                                result.error.as_ref().map(|err| err.code.clone())
+                            }
+                            _ => None,
+                        });
+                        *ghost.lock().unwrap() = code;
+                        Ok(finish_text("great-grandchild done", 10, 5))
+                    }
+                    _ => Ok(finish_text("great-grandchild done", 10, 5)),
+                }
+            }
+            "GRAND_TASK" => {
+                grand_saw.store(sees_tools, Ordering::Release);
+                match turn {
+                    0 => Ok(finish_tool_calls(
+                        vec![(
+                            "gg1",
+                            "subagent_spawn",
+                            json!({
+                                "label": "great-grandchild",
+                                "task": "GREAT_TASK",
+                                "mode": "plan",
+                                "workspace_isolation": "read_only",
+                                "background": false
+                            }),
+                        )],
+                        10,
+                        5,
+                    )),
+                    _ => Ok(finish_text("grandchild done", 10, 5)),
+                }
+            }
+            "CHILD_TASK" => {
+                child_saw.store(sees_tools, Ordering::Release);
+                match turn {
+                    0 => Ok(finish_tool_calls(
+                        vec![(
+                            "gc1",
+                            "subagent_spawn",
+                            json!({
+                                "label": "grandchild",
+                                "task": "GRAND_TASK",
+                                "mode": "plan",
+                                "workspace_isolation": "read_only",
+                                "background": false
+                            }),
+                        )],
+                        10,
+                        5,
+                    )),
+                    _ => Ok(finish_text("child done", 10, 5)),
+                }
+            }
+            _ => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![(
+                        "p1",
+                        "subagent_spawn",
+                        json!({
+                            "label": "child",
+                            "task": "CHILD_TASK",
+                            "mode": "plan",
+                            "workspace_isolation": "read_only",
+                            "background": false
+                        }),
+                    )],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("parent done", 10, 5)),
+            },
+        }
+    }));
+
+    let store = Arc::new(RecordingStore::new());
+    let settings = SubagentSettings {
+        enabled: true,
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    let (mut runtime, mut session) = run_with_session(TestRunSpec {
+        workspace: dir.path(),
+        mode: WorkMode::Code,
+        permissions: PermissionMode::Bypass,
+        perm_cfg: PermissionConfig::default(),
+        model,
+        store,
+        cancel: Arc::new(NeverCancel),
+        confirmation: None,
+        settings,
+        limits: RuntimeLimits::default(),
+        known_secrets: Vec::new(),
+        task: "PARENT_DEPTH",
+    });
+
+    let result = runtime.run(&mut session).await.unwrap();
+    assert_eq!(result.status, RunStatus::Completed);
+    assert!(child_saw_tools.load(Ordering::Acquire), "hop 1 lacks tools");
+    assert!(grand_saw_tools.load(Ordering::Acquire), "hop 2 lacks tools");
+    assert!(
+        !great_saw_tools.load(Ordering::Acquire),
+        "runtime at max_depth still exposed subagent tools"
+    );
+    assert_eq!(
+        ghost_error.lock().unwrap().as_deref(),
+        Some(error_codes::UNKNOWN_TOOL)
+    );
+    let spawn = find_tool_result(&session, "p1");
+    assert!(spawn.ok, "{spawn:?}");
+    assert_eq!(spawn.data.as_ref().unwrap()["state"], "completed");
+}
+
+/// Depth-2 child narrows `allowed_paths` to `src/`; a grandchild spawned under
+/// it must be contained inside the *child's* allowed subtree — the child's own
+/// `deny` remapping and root enforcement cannot be widened back out.
+#[tokio::test]
+async fn allowed_paths_tighten_down_the_chain() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("other")).unwrap();
+    fs::write(dir.path().join("src/ok.rs"), "src\n").unwrap();
+    fs::write(dir.path().join("other/sibling.txt"), "sibling\n").unwrap();
+
+    let probe_error = Arc::new(Mutex::new(None::<String>));
+    let probe = probe_error.clone();
+    let model = Arc::new(RouterModel::new(move |req, turn| {
+        let first = first_user_task(&req.history);
+        match first {
+            "GRAND_PROBE" => match turn {
+                // Grandchild (read_only): it must be denied reading the
+                // sibling tree that sits outside its parent's allowed_paths.
+                0 => Ok(finish_tool_calls(
+                    vec![("g_probe", "read_file", json!({"path": "other/sibling.txt"}))],
+                    10,
+                    5,
+                )),
+                1 => {
+                    let code = req.history.iter().find_map(|item| match item {
+                        HistoryItem::ToolResult { call_id, result } if call_id == "g_probe" => {
+                            result.error.as_ref().map(|err| err.code.clone())
+                        }
+                        _ => None,
+                    });
+                    *probe.lock().unwrap() = code;
+                    Ok(finish_text("grandchild probed", 10, 5))
+                }
+                _ => Ok(finish_text("grandchild probed", 10, 5)),
+            },
+            "CHILD_NARROW" => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![(
+                        "c_spawn",
+                        "subagent_spawn",
+                        json!({
+                            "label": "gc",
+                            "task": "GRAND_PROBE",
+                            "mode": "plan",
+                            "workspace_isolation": "read_only",
+                            "background": false
+                        }),
+                    )],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("child narrowed", 10, 5)),
+            },
+            _ => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![(
+                        "p1",
+                        "subagent_spawn",
+                        json!({
+                            "label": "child",
+                            "task": "CHILD_NARROW",
+                            "mode": "code",
+                            "workspace_isolation": "isolated",
+                            "allowed_paths": ["src"],
+                            "background": false
+                        }),
+                    )],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("parent done", 10, 5)),
+            },
+        }
+    }));
+
+    let store = Arc::new(RecordingStore::new());
+    let settings = SubagentSettings {
+        enabled: true,
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    let (mut runtime, mut session) = run_with_session(TestRunSpec {
+        workspace: dir.path(),
+        mode: WorkMode::Code,
+        permissions: PermissionMode::Bypass,
+        perm_cfg: PermissionConfig::default(),
+        model,
+        store,
+        cancel: Arc::new(NeverCancel),
+        confirmation: None,
+        settings,
+        limits: RuntimeLimits::default(),
+        known_secrets: Vec::new(),
+        task: "PARENT_TIGHTEN",
+    });
+
+    let result = runtime.run(&mut session).await.unwrap();
+    assert_eq!(result.status, RunStatus::Completed);
+    let spawn = find_tool_result(&session, "p1");
+    assert!(spawn.ok, "{spawn:?}");
+    // The child's step trace shows the grandchild spawn succeeded; the
+    // grandchild's own `read_file` outside the child's `allowed_paths` was
+    // still denied, so narrowing survives one more level down.
+    let traces = spawn.data.as_ref().unwrap()["step_traces"]
+        .as_array()
+        .unwrap();
+    let gc_spawn = traces
+        .iter()
+        .find(|t| t["call_id"] == "c_spawn")
+        .expect("missing grandchild spawn trace");
+    assert_eq!(gc_spawn["status"], "ok", "{gc_spawn:?}");
+    assert_eq!(
+        probe_error.lock().unwrap().as_deref(),
+        Some(error_codes::PERMISSION_DENIED),
+        "grandchild escaped its parent's allowed_paths"
+    );
+}
+
+/// `max_total` and `max_concurrent` aggregate to the top-level run: a depth-2
+/// supervisor cannot fan out past the same `max_total` allowance.
+#[tokio::test]
+async fn max_total_and_concurrent_share_one_budget_across_depths() {
+    let dir = tempdir().unwrap();
+
+    let model = Arc::new(RouterModel::new(|req, turn| {
+        let first = first_user_task(&req.history);
+        match first {
+            "GRAND" => Ok(finish_text("grandchild ok", 10, 5)),
+            "CHILD_FANOUT" => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![
+                        (
+                            "c1",
+                            "subagent_spawn",
+                            json!({"label": "g1", "task": "GRAND", "mode": "plan", "workspace_isolation": "read_only"}),
+                        ),
+                        (
+                            "c2",
+                            "subagent_spawn",
+                            json!({"label": "g2", "task": "GRAND", "mode": "plan", "workspace_isolation": "read_only"}),
+                        ),
+                    ],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("child done", 10, 5)),
+            },
+            _ => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![(
+                        "p1",
+                        "subagent_spawn",
+                        json!({"label": "child", "task": "CHILD_FANOUT", "mode": "code", "workspace_isolation": "read_only"}),
+                    )],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("parent done", 10, 5)),
+            },
+        }
+    }));
+
+    let store = Arc::new(RecordingStore::new());
+    let settings = SubagentSettings {
+        enabled: true,
+        max_depth: Some(2),
+        // Only 2 spawns allowed across the WHOLE chain: the parent uses one
+        // for the child and the child one for `g1`, so `g2` must be rejected.
+        max_concurrent: Some(2),
+        max_total: Some(2),
+        ..Default::default()
+    };
+    let (mut runtime, mut session) = run_with_session(TestRunSpec {
+        workspace: dir.path(),
+        mode: WorkMode::Code,
+        permissions: PermissionMode::Bypass,
+        perm_cfg: PermissionConfig::default(),
+        model,
+        store,
+        cancel: Arc::new(NeverCancel),
+        confirmation: None,
+        settings,
+        limits: RuntimeLimits::default(),
+        known_secrets: Vec::new(),
+        task: "PARENT_BUDGET_TOTAL",
+    });
+
+    let result = runtime.run(&mut session).await.unwrap();
+    assert_eq!(result.status, RunStatus::Completed);
+    let spawn = find_tool_result(&session, "p1");
+    assert!(spawn.ok, "{spawn:?}");
+    let traces = spawn.data.as_ref().unwrap()["step_traces"]
+        .as_array()
+        .unwrap();
+    let trace_status = |id: &str| {
+        traces
+            .iter()
+            .find(|t| t["call_id"] == id)
+            .map(|t| t["status"].as_str().unwrap().to_owned())
+    };
+    // The first grandchild spawn consumes the remaining chain slot; the
+    // second is rejected with the shared `subagent_limit` even though this
+    // supervisor has never spawned anything itself.
+    assert_eq!(trace_status("c1").as_deref(), Some("ok"), "{traces:?}");
+    assert_eq!(
+        trace_status("c2").as_deref(),
+        Some(error_codes::SUBAGENT_LIMIT),
+        "{traces:?}"
+    );
+}
+
+/// A grandchild's model requests charge against the same top-level
+/// `SharedBudget` the parent uses — spawning a deeper level must not hand out
+/// a fresh allowance.
+#[tokio::test]
+async fn grandchild_model_requests_count_against_top_level_budget() {
+    let dir = tempdir().unwrap();
+
+    let model = Arc::new(RouterModel::new(|req, turn| {
+        let first = first_user_task(&req.history);
+        match first {
+            "GRAND_HUNGRY" => match turn {
+                // Depth-3 child needs two model turns (tool call then text).
+                0 => Ok(finish_tool_calls(
+                    vec![("g1", "list_dir", json!({"path": "."}))],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("grandchild would overspend", 10, 5)),
+            },
+            "CHILD_HUNGRY" => match turn {
+                0 => Ok(finish_tool_calls(
+                    vec![(
+                        "c1",
+                        "subagent_spawn",
+                        json!({"label": "gc", "task": "GRAND_HUNGRY", "mode": "plan", "workspace_isolation": "read_only"}),
+                    )],
+                    10,
+                    5,
+                )),
+                _ => Ok(finish_text("child done", 10, 5)),
+            },
+            _ => Ok(finish_tool_calls(
+                vec![(
+                    "p1",
+                    "subagent_spawn",
+                    json!({"label": "child", "task": "CHILD_HUNGRY", "mode": "plan", "workspace_isolation": "read_only"}),
+                )],
+                10,
+                5,
+            )),
+        }
+    }));
+
+    let store = Arc::new(RecordingStore::new());
+    let settings = SubagentSettings {
+        enabled: true,
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    // Budget = 3 model requests across the WHOLE chain: parent spawn (1),
+    // child's grandchild spawn (1), grandchild's first turn (1) — the
+    // grandchild's second request must trip `limit_reached`.
+    let limits = RuntimeLimits {
+        model_requests: 3,
+        ..RuntimeLimits::default()
+    };
+    let (mut runtime, mut session) = run_with_session(TestRunSpec {
+        workspace: dir.path(),
+        mode: WorkMode::Code,
+        permissions: PermissionMode::Bypass,
+        perm_cfg: PermissionConfig::default(),
+        model,
+        store,
+        cancel: Arc::new(NeverCancel),
+        confirmation: None,
+        settings,
+        limits,
+        known_secrets: Vec::new(),
+        task: "PARENT_SHARED_BUDGET",
+    });
+
+    let result = runtime.run(&mut session).await.unwrap();
+    // The chain overspends the shared budget; the parent sees `limit_reached`.
+    assert_eq!(result.status, RunStatus::LimitReached);
+}
+
+/// Switching the top-level parent to `PLAN` must cancel the WHOLE subtree —
+/// including a running grandchild two levels down — not only direct children.
+#[tokio::test]
+async fn plan_transition_cancels_full_subtree() {
+    let dir = tempdir().unwrap();
+    let grandchild_started = Arc::new(Notify::new());
+    let grandchild_cancelled = Arc::new(AtomicBool::new(false));
+    let child_cancelled = Arc::new(AtomicBool::new(false));
+    let plan_requested = Arc::new(Notify::new());
+    let grandchild_started_m = grandchild_started.clone();
+    let grandchild_cancelled_m = grandchild_cancelled.clone();
+    let child_cancelled_m = child_cancelled.clone();
+    let plan_requested_m = plan_requested.clone();
+
+    struct CancelDropGuard<'a> {
+        cancel: &'a dyn Cancellation,
+        flag: &'a AtomicBool,
+    }
+    impl Drop for CancelDropGuard<'_> {
+        fn drop(&mut self) {
+            if self.cancel.is_cancelled() {
+                self.flag.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    struct TreeModel {
+        grandchild_started: Arc<Notify>,
+        grandchild_cancelled: Arc<AtomicBool>,
+        child_cancelled: Arc<AtomicBool>,
+        plan_requested: Arc<Notify>,
+    }
+    impl Model for TreeModel {
+        fn start<'a>(
+            &'a self,
+            request: &'a ModelRequest,
+            cancel: &'a dyn Cancellation,
+        ) -> Operation<'a, Box<dyn ModelStream>> {
+            Box::pin(async move {
+                let first = first_user_task(&request.history);
+                if first == "GRAND_MUTATING" {
+                    // Hop 2 (grandchild): block until the chain cancels us.
+                    let _guard = CancelDropGuard {
+                        cancel,
+                        flag: &self.grandchild_cancelled,
+                    };
+                    self.grandchild_started.notify_one();
+                    cancel.cancelled().await;
+                    return Err(BoundaryError::new(error_codes::CANCELLED, "plan cancelled"));
+                }
+                if first == "CHILD_SPAWNER" {
+                    // Hop 1 (child): spawn the grandchild in the background,
+                    // then block until the chain cancels us.
+                    let _guard = CancelDropGuard {
+                        cancel,
+                        flag: &self.child_cancelled,
+                    };
+                    let spawned = request.history.iter().any(|item| {
+                        matches!(item, HistoryItem::ToolResult { call_id, .. } if call_id == "c1")
+                    });
+                    if !spawned {
+                        return Ok(Box::new(VecStream(
+                            finish_tool_calls(
+                                vec![(
+                                    "c1",
+                                    "subagent_spawn",
+                                    json!({
+                                        "label": "grandchild",
+                                        "task": "GRAND_MUTATING",
+                                        "workspace_isolation": "isolated",
+                                        "background": true
+                                    }),
+                                )],
+                                10,
+                                5,
+                            )
+                            .into(),
+                        )) as Box<dyn ModelStream>);
+                    }
+                    cancel.cancelled().await;
+                    return Err(BoundaryError::new(error_codes::CANCELLED, "plan cancelled"));
+                }
+                // Top-level parent: spawn the chain root in the background,
+                // then wait for the external PLAN request, then finish.
+                let spawned = request.history.iter().any(|item| {
+                    matches!(item, HistoryItem::ToolResult { call_id, .. } if call_id == "p1")
+                });
+                if !spawned {
+                    return Ok(Box::new(VecStream(
+                        finish_tool_calls(
+                            vec![(
+                                "p1",
+                                "subagent_spawn",
+                                json!({
+                                    "label": "top-child",
+                                    "task": "CHILD_SPAWNER",
+                                    "workspace_isolation": "isolated",
+                                    "background": true
+                                }),
+                            )],
+                            10,
+                            5,
+                        )
+                        .into(),
+                    )) as Box<dyn ModelStream>);
+                }
+                self.plan_requested.notified().await;
+                Ok(Box::new(VecStream(
+                    finish_text("verified subtree cancelled", 10, 5).into(),
+                )) as Box<dyn ModelStream>)
+            })
+        }
+    }
+
+    let model = Arc::new(TreeModel {
+        grandchild_started: grandchild_started_m,
+        grandchild_cancelled: grandchild_cancelled_m,
+        child_cancelled: child_cancelled_m,
+        plan_requested: plan_requested_m,
+    });
+
+    let store = Arc::new(RecordingStore::new());
+    let settings = SubagentSettings {
+        enabled: true,
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    let (mut runtime, mut session) = run_with_session(TestRunSpec {
+        workspace: dir.path(),
+        mode: WorkMode::Code,
+        permissions: PermissionMode::Bypass,
+        perm_cfg: PermissionConfig::default(),
+        model,
+        store,
+        cancel: Arc::new(NeverCancel),
+        confirmation: None,
+        settings,
+        limits: RuntimeLimits::default(),
+        known_secrets: Vec::new(),
+        task: "PARENT_PLAN_TREE",
+    });
+
+    let handle = runtime.handle();
+    let mode_check = handle.clone();
+    tokio::spawn(async move {
+        grandchild_started.notified().await;
+        let _ = handle.request_mode(WorkMode::Plan);
+        plan_requested.notify_waiters();
+    });
+
+    let result = runtime.run(&mut session).await.unwrap();
+    assert_eq!(result.status, RunStatus::Completed);
+    assert!(
+        child_cancelled.load(Ordering::Acquire),
+        "child was not cancelled"
+    );
+    assert!(
+        grandchild_cancelled.load(Ordering::Acquire),
+        "grandchild two levels down was not cancelled by the PLAN transition"
+    );
+    assert_eq!(mode_check.mode().unwrap().current, WorkMode::Plan);
+}

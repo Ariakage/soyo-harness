@@ -61,6 +61,7 @@ struct ChildRuntimeSpec<'a> {
     cancel: Arc<SubagentCancel>,
     store: Arc<SubagentStore>,
     session_id: SessionId,
+    subagent_config: Option<SubagentConfig>,
 }
 
 fn failure(code: &str, message: impl Into<String>) -> BoundaryError {
@@ -446,38 +447,118 @@ pub struct PreparedSubagentMerge {
     pub review: Value,
 }
 
+/// Spawn accounting shared by every supervisor on one delegation chain so
+/// `max_concurrent`/`max_total` aggregate to the top-level parent run rather
+/// than giving each level its own fresh allowance.
+#[derive(Debug, Default)]
+pub(crate) struct SubtreeCounters {
+    total_spawned: AtomicUsize,
+    running: AtomicUsize,
+}
+
+/// One chain-shared running slot. Releasing on drop means cancelled, aborted,
+/// or panicking child tasks cannot leak concurrency budget.
+struct RunningSlot(Arc<SubtreeCounters>);
+
+impl Drop for RunningSlot {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Parent-run coordinator for bounded child subagent execution.
 pub struct SubagentSupervisor {
     config: SubagentConfig,
     template: ParentRuntimeTemplate,
+    counters: Arc<SubtreeCounters>,
     children: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<ChildEntry>>>>,
     spawn_order: Mutex<Vec<String>>,
-    total_spawned: Mutex<usize>,
     next_id: AtomicUsize,
     any_done: Notify,
 }
 
 impl SubagentSupervisor {
     pub(crate) fn new(config: SubagentConfig, template: ParentRuntimeTemplate) -> Self {
+        Self::with_counters(config, template, Arc::new(SubtreeCounters::default()))
+    }
+
+    /// Attach this supervisor to shared subtree counters (used for deeper
+    /// levels of the delegation chain so `max_concurrent`/`max_total` stay
+    /// aggregated at the top-level run).
+    pub(crate) fn with_counters(
+        config: SubagentConfig,
+        template: ParentRuntimeTemplate,
+        counters: Arc<SubtreeCounters>,
+    ) -> Self {
         Self {
             config,
             template,
+            counters,
             children: Mutex::new(BTreeMap::new()),
             spawn_order: Mutex::new(Vec::new()),
-            total_spawned: Mutex::new(0),
             next_id: AtomicUsize::new(1),
             any_done: Notify::new(),
         }
     }
 
-    fn release_spawn_quota(&self) {
-        if let Ok(mut total) = self.total_spawned.lock() {
-            *total = total.saturating_sub(1);
+    /// Release a `max_total` spawn reservation whose child never started.
+    fn release_spawn_total(&self) {
+        self.counters.total_spawned.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// Reserve one chain-shared running slot.
+    fn reserve_running(&self) -> Result<RunningSlot, BoundaryError> {
+        self.counters
+            .running
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                (used < self.config.limits.max_concurrent).then_some(used + 1)
+            })
+            .map(|_| RunningSlot(self.counters.clone()))
+            .map_err(|_| {
+                failure(
+                    error_codes::SUBAGENT_LIMIT,
+                    "maximum concurrent subagents reached",
+                )
+            })
+    }
+
+    /// Reserve one running slot and one `max_total` spawn on the shared
+    /// delegation-chain counters. The returned slot must be carried by the
+    /// child's run task so it is released exactly when the child stops.
+    fn reserve_spawn(&self) -> Result<RunningSlot, BoundaryError> {
+        let slot = self.reserve_running()?;
+        if self
+            .counters
+            .total_spawned
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+                (total < self.config.limits.max_total).then_some(total + 1)
+            })
+            .is_err()
+        {
+            // Dropping `slot` returns the running reservation.
+            return Err(failure(
+                error_codes::SUBAGENT_LIMIT,
+                "maximum total subagents for this run reached",
+            ));
         }
+        Ok(slot)
+    }
+
+    /// Shared running/total counters passed to a child's own supervisor so
+    /// concurrency and total-spawn limits account the whole delegation chain.
+    fn child_counters(&self) -> Arc<SubtreeCounters> {
+        self.counters.clone()
     }
 
     pub fn config(&self) -> &SubagentConfig {
         &self.config
+    }
+
+    /// Delegation depth (hops from the top-level run) of the runtime that owns
+    /// this supervisor: `0` at the top-level run, `1` for its children, and so
+    /// on up to `max_depth - 1`.
+    pub fn depth(&self) -> usize {
+        self.config.depth()
     }
 
     fn current_secret_registry(&self) -> Option<Arc<SecretRegistry>> {
@@ -552,18 +633,6 @@ impl SubagentSupervisor {
             .collect())
     }
 
-    async fn count_running(&self) -> Result<usize, BoundaryError> {
-        let entries = self.list_children()?;
-        let mut running = 0;
-        for entry in entries {
-            let guard = entry.lock().await;
-            if guard.state == SubagentState::Running {
-                running += 1;
-            }
-        }
-        Ok(running)
-    }
-
     fn build_child_runtime(
         &self,
         spec: ChildRuntimeSpec<'_>,
@@ -583,6 +652,7 @@ impl SubagentSupervisor {
             cancel,
             store,
             session_id,
+            subagent_config,
         } = spec;
         let mut extra_protected = self.template.policy.protected_paths()?;
         if let Some(outer) = &workspace.outer_dir {
@@ -696,6 +766,13 @@ impl SubagentSupervisor {
             self.template.parent_services.tool_budget_handle(),
             self.template.limits.tool_calls,
         )?;
+        // `max_depth` permitting, let the child coordinate its own bounded
+        // descendants. Limits, budgets, and cancellation keep aggregating to
+        // the top-level parent via the same template handles.
+        if let Some(child_config) = subagent_config {
+            runtime =
+                runtime.with_subagents_with_counters(Some(child_config), self.child_counters())?;
+        }
         if let Some(registry) = self.current_secret_registry() {
             runtime = runtime.with_secret_registry(registry)?;
         }
@@ -724,8 +801,12 @@ impl SubagentSupervisor {
         mut runtime: AgentRuntime,
         cancel: Arc<SubagentCancel>,
         store: Arc<SubagentStore>,
+        slot: RunningSlot,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
+            // Carried for the whole turn so the chain-shared running slot is
+            // released on completion, cancellation, abort, or panic.
+            let _slot = slot;
             let mut child_session = {
                 let guard = entry_arc.lock().await;
                 guard.session.clone()
@@ -803,8 +884,10 @@ impl SubagentSupervisor {
             }
             let notify = guard.done_notify.clone();
             drop(guard);
-            notify.notify_waiters();
+            // `_slot` frees this child's chain-shared running reservation as
+            // the task ends; `message()` re-acquires one for reruns.
             self.any_done.notify_waiters();
+            notify.notify_waiters();
         })
     }
 
@@ -830,25 +913,10 @@ impl SubagentSupervisor {
                 "requested subagent timeout exceeds configured limit",
             ));
         }
-        if self.count_running().await? >= self.config.limits.max_concurrent {
-            return Err(failure(
-                error_codes::SUBAGENT_LIMIT,
-                "maximum concurrent subagents reached",
-            ));
-        }
-        {
-            let mut total = self
-                .total_spawned
-                .lock()
-                .map_err(|_| failure(error_codes::SUBAGENT_ERROR, "spawn counter lock poisoned"))?;
-            if *total >= self.config.limits.max_total {
-                return Err(failure(
-                    error_codes::SUBAGENT_LIMIT,
-                    "maximum total subagents for this run reached",
-                ));
-            }
-            *total += 1;
-        }
+        // `max_total` and `max_concurrent` account every descendant on the
+        // delegation chain, not only this supervisor's direct children. The
+        // returned slot is handed to the child's run task.
+        let running_slot = self.reserve_spawn()?;
         let spawn_index = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         let short = Uuid::now_v7().simple().to_string();
@@ -856,7 +924,7 @@ impl SubagentSupervisor {
         let protected = match self.template.policy.protected_paths() {
             Ok(paths) => paths,
             Err(err) => {
-                self.release_spawn_quota();
+                self.release_spawn_total();
                 return Err(err);
             }
         };
@@ -874,7 +942,7 @@ impl SubagentSupervisor {
         let workspace = match workspace_res {
             Ok(ws) => ws,
             Err(err) => {
-                self.release_spawn_quota();
+                self.release_spawn_total();
                 return Err(err);
             }
         };
@@ -909,10 +977,11 @@ impl SubagentSupervisor {
             cancel: cancel.clone(),
             store: store.clone(),
             session_id: child_session.id,
+            subagent_config: self.config.for_child(),
         }) {
             Ok(runtime) => runtime,
             Err(err) => {
-                self.release_spawn_quota();
+                self.release_spawn_total();
                 let _ = workspace.cleanup();
                 return Err(err);
             }
@@ -963,7 +1032,13 @@ impl SubagentSupervisor {
 
         let supervisor = Arc::clone(self);
         let task_entry = entry_arc.clone();
-        let join = tokio::spawn(supervisor.run_child_turn(task_entry, runtime, cancel, store));
+        let join = tokio::spawn(supervisor.run_child_turn(
+            task_entry,
+            runtime,
+            cancel,
+            store,
+            running_slot,
+        ));
 
         {
             let mut guard = entry_arc.lock().await;
@@ -1136,7 +1211,7 @@ impl SubagentSupervisor {
             ));
         }
 
-        let (runtime, cancel, store) = {
+        let (runtime, cancel, store, running_slot) = {
             let mut guard = entry_arc.lock().await;
             if guard.state == SubagentState::Running {
                 return Err(failure(
@@ -1169,6 +1244,10 @@ impl SubagentSupervisor {
                     "subagent per-child request or tool call budget is exhausted",
                 ));
             }
+            // Reserve a chain-shared running slot before the child re-enters
+            // `Running`; the slot travels with the child's run task and is
+            // released when it stops.
+            let running_slot = self.reserve_running()?;
             guard
                 .session
                 .history
@@ -1181,7 +1260,7 @@ impl SubagentSupervisor {
                 guard.session.clone(),
                 guard.step_traces.clone(),
             ));
-            let runtime = self.build_child_runtime(ChildRuntimeSpec {
+            let runtime = match self.build_child_runtime(ChildRuntimeSpec {
                 id: &guard.id,
                 label: &guard.label,
                 child_mode,
@@ -1196,17 +1275,27 @@ impl SubagentSupervisor {
                 cancel: cancel.clone(),
                 store: store.clone(),
                 session_id: guard.session.id,
-            })?;
+                subagent_config: self.config.for_child(),
+            }) {
+                Ok(runtime) => runtime,
+                Err(err) => return Err(err),
+            };
             guard.state = SubagentState::Running;
             guard.error = None;
             guard.live_store = Some(store.clone());
             guard.cancel = Some(cancel.clone());
-            (runtime, cancel, store)
+            (runtime, cancel, store, running_slot)
         };
 
         let supervisor = Arc::clone(self);
         let task_entry = entry_arc.clone();
-        let join = tokio::spawn(supervisor.run_child_turn(task_entry, runtime, cancel, store));
+        let join = tokio::spawn(supervisor.run_child_turn(
+            task_entry,
+            runtime,
+            cancel,
+            store,
+            running_slot,
+        ));
         {
             let mut guard = entry_arc.lock().await;
             if guard.state == SubagentState::Running {
