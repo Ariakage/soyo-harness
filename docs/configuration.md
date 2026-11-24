@@ -431,6 +431,25 @@ read_roots = []
 # root_markers = ["Cargo.toml"]
 ```
 
+`[file_text]`（`F-11`）是默认关闭的 File artifact 文本提取开关。`enabled = true` 时，宿主在装载模型请求媒体投影时，把 `ToolResult.media_refs` 引用的 File artifact（浏览器下载等产生的 PDF 与其他文档）在宿主侧提取为有界 TEXT 内容，附带 `name`／`ref`／`mime`／`sha256`／`pages` 的引用信封，随工具结果邻接的 user 文本块一并发送；File artifact 本身仍不进入模型媒体内容。转换优先使用 `PATH` 上解析（或 `markitdown_path` 固定）的外部 `markitdown`，在专用原生沙箱（Seatbelt／Bubblewrap）内运行——网络拒绝、只读安装前缀、仅缓存目录可写、环境清零并注入最小 `PATH`/`TMPDIR`；外部转换不可用时回退到纯 Rust 的有界 PDF 文本提取（仅 PDF，图片型或非 PDF 文档返回 `file_text_unavailable` 并静默省略）。提取结果按内容摘要缓存在 `cache_dir/file_text/` 的私有 0700 目录中；sandbox 准备失败不会回退到未隔离执行（D-050）。
+
+```toml
+[file_text]
+enabled = false
+# 转换器选择："auto"（默认，markitdown 优先、内置回退）/"markitdown"（仅外部）/"builtin"（仅内置）。
+# converter = "auto"
+# 可选 markitdown 绝对路径；缺省在捕获 PATH 上解析 markitdown。
+# markitdown_path = "/opt/homebrew/bin/markitdown"
+# 单文件提取文本上限（字节，≤ 2MiB）。
+# max_text_bytes = 262144
+# 单次模型请求最多展开的 File artifact 数（≤ 8）。
+# max_files_per_message = 4
+# 外部转换墙钟超时（秒，≤ 120）。
+# timeout_seconds = 30
+# 提取缓存总字节上限。
+# cache_max_bytes = 536870912
+```
+
 ## 输出捕获与上下文预算
 
 N3开发线默认开启私有OutputStore，位置为所选 `data_dir` 下的 `outputs/`。新增配置独立控制捕获存储，原有 `limits.command_stdout_max_bytes`／`command_stderr_max_bytes`继续限制各流的有效捕获量，默认各64KiB。显式扩大这些值时仍受OutputStore对象及Run剩余额度约束。用户媒体快照与工具捕获共用该私有根及总库／对象数配额；`output_capture.enabled = false`只关闭工具输出捕获，不禁用Session媒体快照。

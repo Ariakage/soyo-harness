@@ -80,6 +80,7 @@ multimodal.image = true
         Some(&media_store),
         id,
         resumed.media_capabilities,
+        None,
     )
     .unwrap();
     let soyo_core::contract::HistoryItem::UserText(text) = &resumed.session.history[0] else {

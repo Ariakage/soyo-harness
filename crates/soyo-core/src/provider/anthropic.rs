@@ -591,6 +591,9 @@ fn history(
     // A reference may be attached to more than one host tool result. Emit each
     // loaded image once so the wire total stays within the loader's budget.
     let mut emitted_images = HashSet::new();
+    // Extracted File text shares the same dedup rule: a File artifact attached
+    // to several results emits its citation envelope exactly once.
+    let mut emitted_files = HashSet::new();
     let mut index = 0;
     while index < items.len() {
         match &items[index] {
@@ -690,11 +693,24 @@ fn history(
                             None => true,
                         })
                         .collect::<Vec<_>>();
-                    if images.is_empty() {
+                    let file_texts = snapshots
+                        .tool_result_file_texts(result)
+                        .into_iter()
+                        .filter(|text| emitted_files.insert(text.reference.clone()))
+                        .collect::<Vec<_>>();
+                    if images.is_empty() && file_texts.is_empty() {
                         Value::String(content)
                     } else {
-                        let mut blocks = Vec::with_capacity(images.len().saturating_add(1));
+                        let mut blocks = Vec::with_capacity(
+                            images
+                                .len()
+                                .saturating_add(1)
+                                .saturating_add(file_texts.len()),
+                        );
                         blocks.push(json!({"type":"text","text":content}));
+                        for text in file_texts {
+                            blocks.push(json!({"type":"text","text":text.text}));
+                        }
                         for image in images {
                             blocks.push(json!({
                                 "type":"image",

@@ -173,6 +173,9 @@ fn chat_history(
     // A reference may be attached to more than one host tool result. Emit each
     // loaded image once so the wire total stays within the loader's budget.
     let mut emitted_images = HashSet::new();
+    // Extracted File text shares the same dedup rule: a File artifact attached
+    // to several results emits its citation envelope exactly once.
+    let mut emitted_files = HashSet::new();
     // Tool-produced images use a separate user content message adjacent to the
     // tool result. They are never folded into tool text or the tool result
     // payload, so the protocol keeps its native image block.
@@ -269,6 +272,12 @@ fn chat_history(
                     .map_err(|_| failure("invalid_history", "tool result cannot be serialized"))?;
                 messages.push(json!({"role":"tool","tool_call_id":call_id,"content":content}));
                 if expand {
+                    for text in snapshots.tool_result_file_texts(result) {
+                        if !emitted_files.insert(text.reference.clone()) {
+                            continue;
+                        }
+                        images.push(json!({"type":"text","text":text.text}));
+                    }
                     for image in snapshots.tool_result_images(result)? {
                         if let Some(reference) = &image.reference
                             && !emitted_images.insert(reference.clone())
@@ -927,5 +936,101 @@ mod reasoning_tests {
         )
         .unwrap();
         assert_eq!(content, json!("[Image 1]"));
+    }
+
+    #[test]
+    fn file_text_emits_one_text_block_per_shared_reference() {
+        let root = tempfile::tempdir().unwrap();
+        let store = crate::output_store::OutputStore::open(
+            root.path().join("outputs"),
+            Default::default(),
+            std::sync::Arc::new(crate::credentials::SecretRegistry::default()),
+        )
+        .unwrap();
+        let session = crate::contract::SessionId::new();
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.4\n1 0 obj\n<< /Type /Page /Contents 2 0 R >>\nendobj\n");
+        pdf.extend_from_slice(
+            b"2 0 obj\n<< /Length 26 >>\nstream\nBT (invoice total) Tj ET\nendstream\nendobj\n",
+        );
+        let artifact = store
+            .put_file(session, "application/pdf", "invoice.pdf", &pdf)
+            .unwrap();
+        let reference = artifact.reference.clone();
+        let make_result = || crate::contract::ToolResult {
+            ok: true,
+            data: None,
+            error: None,
+            truncated: false,
+            media_refs: vec![reference.clone()],
+        };
+        let history = vec![
+            HistoryItem::ToolCall(ToolCall {
+                call_id: "a".into(),
+                name: "download".into(),
+                arguments: "{}".into(),
+            }),
+            HistoryItem::ToolResult {
+                call_id: "a".into(),
+                result: make_result(),
+            },
+            HistoryItem::ToolCall(ToolCall {
+                call_id: "b".into(),
+                name: "download".into(),
+                arguments: "{}".into(),
+            }),
+            HistoryItem::ToolResult {
+                call_id: "b".into(),
+                result: make_result(),
+            },
+        ];
+        let context = crate::file_text::FileTextContext {
+            settings: crate::config::FileTextSettings {
+                enabled: true,
+                converter: crate::config::FileTextConverter::Builtin,
+                ..Default::default()
+            },
+            environment: crate::config::Environment::from_pairs([]),
+            cache_dir: root.path().join("cache"),
+        };
+        let attachments = crate::media::load_history(
+            &history,
+            Some(&std::sync::Arc::new(store)),
+            session,
+            crate::config::MediaCapabilities::default(),
+            Some(&context),
+        )
+        .unwrap();
+        let messages = chat_history(
+            "instructions",
+            &history,
+            crate::config::MediaCapabilities::default(),
+            &attachments,
+            true,
+        )
+        .unwrap();
+        let text_parts =
+            |message: &Value| message["content"].as_array().cloned().unwrap_or_default();
+        let text_blocks = messages
+            .iter()
+            .flat_map(text_parts)
+            .filter(|part| {
+                part["type"] == "text"
+                    && part["text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("invoice.pdf"))
+            })
+            .count();
+        assert_eq!(text_blocks, 1, "shared File reference emits once");
+        let emitted = messages
+            .iter()
+            .flat_map(text_parts)
+            .find(|part| {
+                part["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("invoice.pdf"))
+            })
+            .unwrap();
+        assert!(emitted["text"].as_str().unwrap().contains("invoice total"));
     }
 }

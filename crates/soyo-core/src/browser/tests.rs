@@ -2409,9 +2409,14 @@ async fn screenshot_artifact_survives_reopen_and_is_pinned_by_tool_history() {
         audio: false,
         video: false,
     };
-    let attachments =
-        crate::media::load_history(&history, Some(&reopened), run.session_id, capabilities)
-            .unwrap();
+    let attachments = crate::media::load_history(
+        &history,
+        Some(&reopened),
+        run.session_id,
+        capabilities,
+        None,
+    )
+    .unwrap();
     assert_eq!(attachments.tool_result_images(&result).unwrap().len(), 1);
 }
 

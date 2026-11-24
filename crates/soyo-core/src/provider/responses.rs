@@ -424,6 +424,8 @@ fn history(
     // A reference may be attached to more than one host tool result. Emit each
     // loaded image once so the wire total stays within the loader's budget.
     let mut emitted_images = HashSet::new();
+    // Extracted File text shares the same dedup rule.
+    let mut emitted_files = HashSet::new();
     let mut images: Vec<Value> = Vec::new();
     let mut index = 0;
     // Tool images follow their function_call_output as a native user image
@@ -475,6 +477,12 @@ fn history(
                     json!({"type":"function_call_output","call_id":call_id,"output":content}),
                 );
                 if expand {
+                    for text in snapshots.tool_result_file_texts(result) {
+                        if !emitted_files.insert(text.reference.clone()) {
+                            continue;
+                        }
+                        images.push(json!({"type":"input_text","text":text.text}));
+                    }
                     for image in snapshots.tool_result_images(result)? {
                         if let Some(reference) = &image.reference
                             && !emitted_images.insert(reference.clone())

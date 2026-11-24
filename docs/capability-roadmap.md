@@ -71,7 +71,7 @@ flowchart TD
 | F-08 | 后台与持久任务 | 高（已实现跨运行持久队列 opt-in） | F-01、F-05、F-12 | 运行长任务、暂停、继续和管理任务队列 |
 | F-09 | 多 Agent 协作 | 中 | F-01、F-05、F-06、F-08、F-12 | 将任务交给有独立上下文与预算的子 Agent |
 | F-10 | 联网读取与浏览器 | 中 | F-01、F-02 | 获取网页资料，随后扩展到受控网页操作 |
-| F-11 | 多模态与附件 | 中 | F-01、F-06 | 使用图片、PDF 和其他附件完成任务 |
+| F-11 | 多模态与附件 | 中（已实现 File artifact 文本提取 opt-in） | F-01、F-06 | 使用图片、PDF 和其他附件完成任务 |
 | F-12 | 日志、追踪、回放与评估 | 近期及贯穿各批次 | MVP 事件与安全日志 | 五级诊断、关联追踪、失败定位与版本评估 |
 | F-13 | 稳定 SDK、服务与远程执行 | 后期 | F-01、F-02、F-08、F-12 | 将 Soyo 嵌入其他产品，管理远端任务 |
 | F-14 | 默认 TUI 与桌面端 GUI | TUI 已交付；GUI（`soyo-desktop`）已按 D-072 完成本机实现与检查（多平台发行包待 CI 验证） | 共享应用服务与事件；导出依赖 F-19 | TUI 提供全屏终端交互；`soyo-desktop` 提供独立安装的 Tauri 2 桌面端界面 |
@@ -235,6 +235,8 @@ BrowserProvider 首版候选为托管 Chromium／Playwright MCP worker，通过�
 - 文档解析过程进入受控环境，提取内容有来源、页码或时间位置，计入上下文预算。
 
 验收：至少一个图片任务和一个多页文档任务完整往返，引用定位正确，恢复后附件关联保持有效。
+
+> **实现状态（D-094）**：File artifact 文本提取已按默认关闭（`[file_text] enabled = false`）实现。宿主在装载模型请求媒体投影（`media::load_history`）时，把 `ToolResult.media_refs` 引用的 File artifact 提取为有界 TEXT 内容——附带 `name`/`ref`/`mime`/`sha256`/`pages` 的引用信封、计入上下文预算、按内容摘要缓存于 `cache_dir/file_text/`（0700 私有目录、0600 `O_NOFOLLOW`）。File artifact 本身仍不进入模型媒体内容（`ensure_supported(File)` 保持 false），提取文本经各 provider 适配器以邻接 user 文本块发送、按 reference 去重。转换优先用沙箱化的外部 `markitdown`（专用原生环境：网络拒绝、只读安装前缀、最小 `PATH`/`TMPDIR`，sandbox 准备失败按 D-050 明确失败、不回退未隔离执行），不可用时回退纯 Rust 有界 PDF 提取（`--- page N ---` 标记，图片型／非 PDF 返回 `file_text_unavailable` 静默省略）。`converter = auto|markitdown|builtin`、`max_text_bytes`/`max_files_per_message`/`timeout_seconds`/`cache_max_bytes` 均有界可配。[配置](configuration.md)。
 
 ## F-12 观测、回放与评估
 

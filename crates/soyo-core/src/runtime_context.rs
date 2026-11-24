@@ -118,13 +118,16 @@ fn project_tool_result(result: &ToolResult, outputs: &[OutputMetadata]) -> ToolR
     }
 }
 
-// Reuse one bounded media snapshot across counting and dispatch.
-type MediaKey = Vec<(bool, Vec<String>)>;
+// Reuse one bounded media snapshot across counting and dispatch. The first
+// element records whether File text extraction is active so toggling the
+// feature invalidates the cached projection.
+type MediaKey = (bool, Vec<(bool, Vec<String>)>);
 struct ProjectedMediaCounter<'a> {
     runtime: &'a AgentRuntime,
     session_id: crate::contract::SessionId,
     media_capabilities: crate::config::MediaCapabilities,
     inner: Option<&'a dyn context_builder::RequestCounter>,
+    file_text: Option<&'a crate::file_text::FileTextContext>,
     snapshot: Mutex<Option<(MediaKey, std::sync::Arc<crate::media::MediaAttachments>)>>,
 }
 impl ProjectedMediaCounter<'_> {
@@ -132,23 +135,28 @@ impl ProjectedMediaCounter<'_> {
         if request.purpose != crate::contract::ModelPurpose::Execution {
             return Ok(request);
         }
-        let key: MediaKey = request
-            .history
-            .iter()
-            .filter_map(|item| {
-                let (user, references) = match item {
-                    HistoryItem::UserText(text) => (
-                        true,
-                        crate::media::text_references(text)
-                            .into_iter()
-                            .collect::<Vec<_>>(),
-                    ),
-                    HistoryItem::ToolResult { result, .. } => (false, result.media_refs.clone()),
-                    _ => return None,
-                };
-                (!references.is_empty()).then_some((user, references))
-            })
-            .collect();
+        let key: MediaKey = (
+            self.file_text.is_some(),
+            request
+                .history
+                .iter()
+                .filter_map(|item| {
+                    let (user, references) = match item {
+                        HistoryItem::UserText(text) => (
+                            true,
+                            crate::media::text_references(text)
+                                .into_iter()
+                                .collect::<Vec<_>>(),
+                        ),
+                        HistoryItem::ToolResult { result, .. } => {
+                            (false, result.media_refs.clone())
+                        }
+                        _ => return None,
+                    };
+                    (!references.is_empty()).then_some((user, references))
+                })
+                .collect(),
+        );
         let mut slot = self
             .snapshot
             .lock()
@@ -161,6 +169,7 @@ impl ProjectedMediaCounter<'_> {
                 self.runtime.media_store.as_ref(),
                 self.session_id,
                 self.media_capabilities,
+                self.file_text,
             )?;
             *slot = Some((key, std::sync::Arc::new(media)));
         }
@@ -223,6 +232,7 @@ impl AgentRuntime {
             session_id: session.id,
             media_capabilities: effective_media_caps,
             inner: self.model.request_counter(),
+            file_text: self.file_text.as_ref(),
             snapshot: Mutex::new(None),
         };
         let counter = media_counter

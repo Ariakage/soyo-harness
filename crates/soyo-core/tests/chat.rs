@@ -240,6 +240,7 @@ async fn enabled_media_is_sent_as_chat_content_parts() -> Result<(), Box<dyn std
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     std::fs::remove_file(&image)?;
     std::fs::remove_file(&audio)?;
@@ -337,6 +338,7 @@ async fn tool_result_images_become_adjacent_user_content_only_when_enabled()
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
 
@@ -372,7 +374,7 @@ async fn tool_result_images_become_adjacent_user_content_only_when_enabled()
         audio: false,
         video: false,
     };
-    let media = soyo_core::media::load_history(&history, Some(&store), session_id, disabled)?;
+    let media = soyo_core::media::load_history(&history, Some(&store), session_id, disabled, None)?;
     let HistoryItem::ToolResult { result, .. } = &history[1] else {
         return Err("missing tool result".into());
     };
@@ -449,6 +451,7 @@ async fn duplicate_tool_image_references_are_emitted_once_across_results()
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
     let body = requests.recv_timeout(Duration::from_secs(1))?;
@@ -526,6 +529,7 @@ async fn disabled_image_profile_sends_no_tool_image_block() -> Result<(), Box<dy
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
     let body = requests.recv_timeout(Duration::from_secs(1))?;

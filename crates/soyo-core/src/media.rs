@@ -61,6 +61,9 @@ enum OmittedReason {
     /// This request already carries the maximum number or byte budget of tool
     /// images. The object stays a GC pin but is not offered to the model.
     LimitExceeded,
+    /// File text extraction is enabled but failed or was unavailable. The
+    /// artifact stays a GC pin; the model simply sees no extracted text.
+    FileTextFailed,
 }
 
 /// Verified snapshots indexed by their durable reference. The payload is never
@@ -72,12 +75,16 @@ pub struct MediaAttachments {
     /// content. Providers use this to distinguish a File or capability-gated
     /// reference from a genuinely missing object.
     omitted: BTreeMap<String, OmittedReason>,
+    /// Extracted text for File artifacts, keyed by durable reference. Only
+    /// populated when `[file_text]` is enabled; travels as TEXT content.
+    file_texts: BTreeMap<String, crate::file_text::FileText>,
 }
 impl std::fmt::Debug for MediaAttachments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MediaAttachments")
             .field("references", &self.items.keys().collect::<Vec<_>>())
             .field("omitted", &self.omitted.keys().collect::<Vec<_>>())
+            .field("file_texts", &self.file_texts.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -116,6 +123,7 @@ impl MediaAttachments {
     }
     fn omit(&mut self, reference: String, reason: OmittedReason) {
         self.items.remove(&reference);
+        self.file_texts.remove(&reference);
         self.omitted.insert(reference, reason);
     }
     fn get(&self, reference: &str) -> Option<&LoadedMedia> {
@@ -165,7 +173,8 @@ impl MediaAttachments {
                         OmittedReason::FileArtifact
                         | OmittedReason::NotAnImage
                         | OmittedReason::CapabilityDisabled
-                        | OmittedReason::LimitExceeded,
+                        | OmittedReason::LimitExceeded
+                        | OmittedReason::FileTextFailed,
                     ) => {}
                     None => {
                         return Err(failure(
@@ -177,6 +186,23 @@ impl MediaAttachments {
             }
         }
         Ok(images)
+    }
+    /// Extracted text for File artifacts referenced by this tool result.
+    /// Present only when `[file_text]` extraction succeeded; failed or
+    /// disabled extractions are omitted via `FileTextFailed`/`FileArtifact`
+    /// instead of erroring the request.
+    pub fn tool_result_file_texts(&self, result: &ToolResult) -> Vec<crate::file_text::FileText> {
+        let mut texts = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for reference in &result.media_refs {
+            if !seen.insert(reference) {
+                continue;
+            }
+            if let Some(text) = self.file_texts.get(reference) {
+                texts.push(text.clone());
+            }
+        }
+        texts
     }
 }
 
@@ -409,22 +435,27 @@ pub fn display(text: &str) -> String {
 /// User-authored `UserText` markers remain eligible for Image/Audio/Video.
 /// Host-written `ToolResult.media_refs` contribute only Image objects, and only
 /// when the selected profile enables images; File artifacts never become model
-/// media. Tool images are selected from the effective request history only:
-/// entries already removed by compaction or retirement are never passed here,
-/// and the loader caps one request at [`MAX_TOOL_IMAGES`] references whose raw
-/// bytes and base64 encoding both stay within [`MAX_MESSAGE_MEDIA_BYTES`]. The
-/// full session history still pins every reference through
-/// [`history_references`].
+/// media. When `file_text` is present and enabled, File artifacts additionally
+/// get bounded cited text via [`crate::file_text::extract`], capped at
+/// `max_files_per_message` per request; failures omit the reference with
+/// `FileTextFailed` instead of failing the load. Tool images are selected from
+/// the effective request history only: entries already removed by compaction
+/// or retirement are never passed here, and the loader caps one request at
+/// [`MAX_TOOL_IMAGES`] references whose raw bytes and base64 encoding both
+/// stay within [`MAX_MESSAGE_MEDIA_BYTES`]. The full session history still
+/// pins every reference through [`history_references`].
 pub fn load_history(
     history: &[HistoryItem],
     store: Option<&Arc<OutputStore>>,
     session_id: SessionId,
     capabilities: MediaCapabilities,
+    file_text: Option<&crate::file_text::FileTextContext>,
 ) -> Result<MediaAttachments, BoundaryError> {
     let mut snapshots = MediaAttachments::default();
     let mut tool_images = 0usize;
     let mut tool_raw_bytes = 0u64;
     let mut tool_base64_bytes = 0u64;
+    let mut file_texts = 0usize;
     for item in history {
         match item {
             HistoryItem::UserText(text) => {
@@ -453,26 +484,42 @@ pub fn load_history(
                             "durable media storage is not configured",
                         )
                     })?;
-                    if snapshots.items.contains_key(reference) {
+                    if snapshots.items.contains_key(reference)
+                        || snapshots.file_texts.contains_key(reference)
+                    {
                         // The same object may be attached to several results;
                         // count and load it once per request.
                         continue;
                     }
                     if !capabilities.image {
-                        // The profile cannot accept any tool image, so the
-                        // header is unnecessary; the reference stays a pin.
-                        snapshots.omit(reference.clone(), OmittedReason::CapabilityDisabled);
-                        continue;
-                    }
-                    if tool_images >= MAX_TOOL_IMAGES {
-                        // Do not open further objects: this request already has
-                        // the maximum number of usable tool images.
-                        snapshots.omit(reference.clone(), OmittedReason::LimitExceeded);
-                        continue;
+                        // The profile cannot accept any tool image. File text
+                        // extraction is text-only and does not depend on the
+                        // image modality, so File references still enter the
+                        // kind check below; non-File references stay pins.
+                        let kind = if file_text.is_some_and(|ctx| ctx.settings.enabled) {
+                            Some(store.media_kind(session_id, reference)?)
+                        } else {
+                            None
+                        };
+                        match kind {
+                            Some(MediaKind::File) => {}
+                            _ => {
+                                snapshots
+                                    .omit(reference.clone(), OmittedReason::CapabilityDisabled);
+                                continue;
+                            }
+                        }
                     }
                     let (kind, size) = store.media_info(session_id, reference)?;
                     match kind {
                         MediaKind::Image => {
+                            if tool_images >= MAX_TOOL_IMAGES {
+                                // Do not open further objects: this request
+                                // already has the maximum number of usable
+                                // tool images.
+                                snapshots.omit(reference.clone(), OmittedReason::LimitExceeded);
+                                continue;
+                            }
                             // Only the header was read. Skip objects that
                             // would exceed either aggregate budget, and never
                             // let one extra reference turn a valid request into
@@ -502,7 +549,38 @@ pub fn load_history(
                             snapshots.insert(media)?;
                         }
                         MediaKind::File => {
-                            snapshots.omit(reference.clone(), OmittedReason::FileArtifact);
+                            let extracted = match file_text {
+                                Some(ctx)
+                                    if ctx.settings.enabled
+                                        && file_texts < ctx.settings.max_files_per_message =>
+                                {
+                                    crate::file_text::extract(store, session_id, reference, ctx)
+                                        .ok()
+                                }
+                                _ => None,
+                            };
+                            match extracted {
+                                Some(text) => {
+                                    file_texts += 1;
+                                    snapshots.file_texts.insert(reference.clone(), text);
+                                    // The reference is resolved as text; record
+                                    // the tolerated omission so
+                                    // `tool_result_images` does not report it
+                                    // as a missing snapshot.
+                                    snapshots
+                                        .omitted
+                                        .insert(reference.clone(), OmittedReason::FileArtifact);
+                                }
+                                None => {
+                                    let reason = match file_text {
+                                        Some(ctx) if ctx.settings.enabled => {
+                                            OmittedReason::FileTextFailed
+                                        }
+                                        _ => OmittedReason::FileArtifact,
+                                    };
+                                    snapshots.omit(reference.clone(), reason);
+                                }
+                            }
                         }
                         MediaKind::Audio | MediaKind::Video => {
                             snapshots.omit(reference.clone(), OmittedReason::NotAnImage);
@@ -1197,6 +1275,7 @@ mod tests {
             Some(&Arc::new(reopened)),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         let parts =
@@ -1345,6 +1424,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         assert!(attachments.is_empty());
@@ -1429,6 +1509,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         let images = attachments.tool_result_images(&result).unwrap();
@@ -1451,6 +1532,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             disabled,
+            None,
         )
         .unwrap();
         assert!(attachments.tool_result_images(&result).unwrap().is_empty());
@@ -1475,6 +1557,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         assert!(
@@ -1538,6 +1621,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         let images = attachments.tool_result_images(&result).unwrap();
@@ -1618,6 +1702,7 @@ mod tests {
             Some(&Arc::new(store.clone())),
             session,
             capabilities(),
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -1674,11 +1759,135 @@ mod tests {
                 Some(&Arc::new(store)),
                 session,
                 capabilities(),
+                None,
             )
             .unwrap_err()
             .0
             .code,
             "media_unavailable"
         );
+    }
+
+    fn file_text_context(root: &std::path::Path) -> crate::file_text::FileTextContext {
+        crate::file_text::FileTextContext {
+            settings: crate::config::FileTextSettings {
+                enabled: true,
+                converter: crate::config::FileTextConverter::Builtin,
+                ..Default::default()
+            },
+            environment: crate::config::Environment::from_pairs([]),
+            cache_dir: root.join("cache"),
+        }
+    }
+
+    fn tiny_pdf(body: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"%PDF-1.4\n");
+        bytes.extend_from_slice(b"1 0 obj\n<< /Type /Page /Contents 2 0 R >>\nendobj\n");
+        bytes.extend_from_slice(
+            format!("2 0 obj\n<< /Length {} >>\nstream\n", body.len()).as_bytes(),
+        );
+        bytes.extend_from_slice(body.as_bytes());
+        bytes.extend_from_slice(b"\nendstream\nendobj\n");
+        bytes
+    }
+
+    #[test]
+    fn enabled_file_text_expands_file_refs_into_cited_text() {
+        let root = tempfile::tempdir().unwrap();
+        let store = OutputStore::open(
+            root.path().join("outputs"),
+            Default::default(),
+            Arc::new(SecretRegistry::default()),
+        )
+        .unwrap();
+        let session = SessionId::new();
+        let file = store
+            .put_file(
+                session,
+                "application/pdf",
+                "report.pdf",
+                &tiny_pdf("BT (quarterly report) Tj ET"),
+            )
+            .unwrap();
+        let reference = file.reference.clone();
+        let result = crate::contract::ToolResult {
+            ok: true,
+            data: None,
+            error: None,
+            truncated: false,
+            media_refs: vec![reference.clone()],
+        };
+        let pinned = HistoryItem::ToolResult {
+            call_id: "file-call".into(),
+            result: result.clone(),
+        };
+        let context = file_text_context(root.path());
+        let attachments = load_history(
+            std::slice::from_ref(&pinned),
+            Some(&Arc::new(store.clone())),
+            session,
+            capabilities(),
+            Some(&context),
+        )
+        .unwrap();
+        let texts = attachments.tool_result_file_texts(&result);
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].text.contains("quarterly report"));
+        assert!(texts[0].text.contains("name=\"report.pdf\""));
+        // File text never becomes an image payload.
+        assert!(attachments.tool_result_images(&result).unwrap().is_empty());
+        // Disabled or absent settings keep the artifact host-side only.
+        let attachments = load_history(
+            std::slice::from_ref(&pinned),
+            Some(&Arc::new(store)),
+            session,
+            capabilities(),
+            None,
+        )
+        .unwrap();
+        assert!(attachments.tool_result_file_texts(&result).is_empty());
+        assert!(attachments.tool_result_images(&result).unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_file_text_extraction_is_a_tolerated_omission() {
+        let root = tempfile::tempdir().unwrap();
+        let store = OutputStore::open(
+            root.path().join("outputs"),
+            Default::default(),
+            Arc::new(SecretRegistry::default()),
+        )
+        .unwrap();
+        let session = SessionId::new();
+        // A non-PDF artifact fails the builtin extractor without erroring the
+        // whole media projection.
+        let file = store
+            .put_file(session, "text/plain", "note.txt", b"plain bytes")
+            .unwrap();
+        let reference = file.reference.clone();
+        let result = crate::contract::ToolResult {
+            ok: true,
+            data: None,
+            error: None,
+            truncated: false,
+            media_refs: vec![reference.clone()],
+        };
+        let pinned = HistoryItem::ToolResult {
+            call_id: "file-call".into(),
+            result: result.clone(),
+        };
+        let context = file_text_context(root.path());
+        let attachments = load_history(
+            std::slice::from_ref(&pinned),
+            Some(&Arc::new(store)),
+            session,
+            capabilities(),
+            Some(&context),
+        )
+        .unwrap();
+        assert!(attachments.tool_result_file_texts(&result).is_empty());
+        // The tolerated omission must not report media_unavailable.
+        assert!(attachments.tool_result_images(&result).unwrap().is_empty());
     }
 }

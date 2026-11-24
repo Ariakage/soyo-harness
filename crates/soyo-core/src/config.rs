@@ -25,6 +25,8 @@ mod sandbox;
 pub use sandbox::{SandboxNetworkSettings, SandboxSettings, ToolchainPreset};
 mod plugins;
 pub use plugins::PluginSettings;
+mod file_text;
+pub use file_text::{FileTextConverter, FileTextSettings};
 mod hooks;
 pub use hooks::{HookSettings, HostHookRule};
 mod routing;
@@ -664,6 +666,8 @@ struct Document {
     code_intel: CodeIntelSettings,
     #[serde(default)]
     tasks: TaskQueueSettings,
+    #[serde(default)]
+    file_text: FileTextSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -702,6 +706,8 @@ pub struct Config {
     pub code_intel: CodeIntelSettings,
     /// Opt-in persistent cross-run task queue (`F-08`); `enabled` defaults to `false`.
     pub tasks: TaskQueueSettings,
+    /// Opt-in File-artifact text extraction (`F-11`); `enabled` defaults to `false`.
+    pub file_text: FileTextSettings,
     env: Environment,
 }
 impl Config {
@@ -1051,6 +1057,7 @@ pub fn load(
         .map_err(|_| invalid("browser settings are invalid"))?;
     doc.subagents.validate()?;
     doc.code_intel.validate(&env)?;
+    doc.file_text.validate()?;
     if doc
         .memory
         .default_fact_ttl_seconds
@@ -1164,6 +1171,7 @@ pub fn load(
         subagents: doc.subagents,
         routing: doc.routing,
         code_intel: doc.code_intel,
+        file_text: doc.file_text,
         env,
     })
 }

@@ -5034,6 +5034,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "lol_html",
+ "miniz_oxide 0.9.1",
  "nix",
  "png",
  "regex",

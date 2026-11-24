@@ -214,6 +214,7 @@ async fn enabled_media_is_sent_as_responses_content_parts() -> Result<(), Box<dy
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     std::fs::remove_file(&image)?;
     std::fs::remove_file(&audio)?;
@@ -308,6 +309,7 @@ async fn tool_result_images_follow_function_output_as_native_input_image()
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
 
@@ -401,6 +403,7 @@ async fn disabled_image_profile_sends_no_tool_image_block() -> Result<(), Box<dy
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
     let body = requests.recv_timeout(Duration::from_secs(1))?;

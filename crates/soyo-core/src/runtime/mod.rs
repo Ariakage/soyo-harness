@@ -339,6 +339,7 @@ pub struct AgentRuntime {
     services: Arc<services::RuntimeServices>,
     media_store: Option<Arc<crate::output_store::OutputStore>>,
     media_capabilities: crate::config::MediaCapabilities,
+    file_text: Option<crate::file_text::FileTextContext>,
     js_repl: Option<crate::js_repl::JsReplConfig>,
     raw_model: Arc<dyn Model>,
     setup_exec: ExecConfig,
@@ -733,6 +734,7 @@ impl AgentRuntime {
             services: Arc::new(services::RuntimeServices::default()),
             media_store: None,
             media_capabilities: crate::config::MediaCapabilities::default(),
+            file_text: None,
             js_repl: None,
             raw_model,
             setup_exec,
@@ -930,6 +932,13 @@ impl AgentRuntime {
     ) -> Self {
         self.media_store = Some(store);
         self.media_capabilities = capabilities;
+        self
+    }
+    /// Enable opt-in File-artifact text extraction (`F-11`) for this run.
+    /// `None` (or disabled settings upstream, which produce `None`) keeps File
+    /// artifacts as host-side evidence only.
+    pub fn with_file_text(mut self, context: Option<crate::file_text::FileTextContext>) -> Self {
+        self.file_text = context.filter(|ctx| ctx.settings.enabled);
         self
     }
     /// Attach private output storage before this single-use run starts.

@@ -24,6 +24,7 @@ globset = "0.4.21"
 ignore = "0.4.34"
 jsonschema = { version = "=0.61.0", default-features = false }
 libc = "0.2.191"
+miniz_oxide = "0.9"
 lol_html = "=3.0.3"
 nix = { version = "0.31.3", features = ["signal", "process"] }
 regex = "1.13.1"

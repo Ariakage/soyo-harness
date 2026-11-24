@@ -534,6 +534,15 @@ pub fn build_runtime_with_health(
             .push(outputs.protected_path().to_owned());
     }
     runtime = runtime.with_media_store(outputs.clone(), selected.multimodal);
+    let file_text = config
+        .file_text
+        .enabled
+        .then(|| soyo_core::file_text::FileTextContext {
+            settings: config.file_text.clone(),
+            environment: config.environment().clone(),
+            cache_dir: config.cache_dir.clone(),
+        });
+    runtime = runtime.with_file_text(file_text);
     if config.output_capture.enabled {
         runtime = runtime.with_output_store(outputs)?;
     }

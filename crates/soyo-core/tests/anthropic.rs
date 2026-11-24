@@ -191,6 +191,7 @@ async fn enabled_image_is_sent_as_anthropic_base64_block() -> Result<(), Box<dyn
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     std::fs::remove_file(&image)?;
     drop(capture);
@@ -304,6 +305,7 @@ async fn tool_result_images_are_embedded_in_the_tool_result_content()
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
 
@@ -389,6 +391,7 @@ async fn disabled_image_profile_sends_no_tool_image_block() -> Result<(), Box<dy
         Some(&store),
         session_id,
         capabilities,
+        None,
     )?);
     collect(&model, &req).await?;
     let body = requests.recv_timeout(Duration::from_secs(1))?;

@@ -22,6 +22,7 @@ pub mod credentials;
 pub mod dispatch;
 pub mod execution;
 pub mod export;
+pub mod file_text;
 pub mod global_memory;
 pub mod goal;
 pub mod hook_store;
