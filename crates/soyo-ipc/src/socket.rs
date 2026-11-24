@@ -16,6 +16,7 @@ use std::{
 };
 use tokio::net::UnixStream;
 
+use crate::remote::RemoteEndpoint;
 use crate::types::DesktopError;
 
 /// Structured helper identity written atomically to `<fp>.pid` (`0600`).
@@ -130,6 +131,16 @@ impl HelperTarget {
         {
             return self.resolve_listen(&raw);
         }
+        // The remote client section selects an authenticated HTTP(S) endpoint;
+        // it wins over `[helper] listen` because the section exists only when
+        // the user deliberately configured remote access.
+        if let Some(endpoint) =
+            config::remote_client_override(&self.config_path).and_then(|client| client.endpoint)
+        {
+            return RemoteEndpoint::parse(&endpoint)
+                .map(ListenEndpoint::Remote)
+                .map_err(|err| DesktopError::new("invalid_config", err.message));
+        }
         if let Some(raw) = config::helper_listen_override(&self.config_path) {
             return self.resolve_listen(&raw);
         }
@@ -141,7 +152,30 @@ impl HelperTarget {
             ListenSpec::Unix(None) => Ok(ListenEndpoint::Unix(self.socket_path())),
             ListenSpec::Unix(Some(path)) => Ok(ListenEndpoint::Unix(path)),
             ListenSpec::Tcp(addr) => Ok(ListenEndpoint::Tcp(addr)),
+            ListenSpec::Remote(endpoint) => Ok(ListenEndpoint::Remote(endpoint)),
         }
+    }
+
+    /// Bearer token and root CA for a remote endpoint. `SOYO_REMOTE_TOKEN` /
+    /// `SOYO_REMOTE_CA` override `[remote.client]`. The token is returned as
+    /// plaintext for the dial path only and is never logged.
+    pub fn remote_client_config(&self) -> RemoteClientConfig {
+        fn env(name: &str) -> Option<String> {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        }
+        let settings = config::remote_client_override(&self.config_path);
+        let token = env("SOYO_REMOTE_TOKEN").or_else(|| {
+            settings
+                .as_ref()
+                .and_then(|client| client.token_env.as_deref())
+                .and_then(env)
+        });
+        let ca_path = env("SOYO_REMOTE_CA")
+            .map(PathBuf::from)
+            .or_else(|| settings.and_then(|client| client.ca_path));
+        RemoteClientConfig { token, ca_path }
     }
 
     /// Whether the resolved endpoint is TCP (dial-only: never spawns, never
@@ -149,6 +183,15 @@ impl HelperTarget {
     /// keep the Unix path and surface the parse error from `connect_for`.
     pub fn is_tcp_endpoint(&self) -> bool {
         matches!(self.listen_endpoint(), Ok(ListenEndpoint::Tcp(_)))
+    }
+
+    /// Endpoints that can only be dialed: loopback TCP or a remote HTTP(S)
+    /// helper. Spawning a local daemon or restarting one is meaningless there.
+    pub fn is_dial_only(&self) -> bool {
+        matches!(
+            self.listen_endpoint(),
+            Ok(ListenEndpoint::Tcp(_) | ListenEndpoint::Remote(_))
+        )
     }
 }
 
@@ -160,6 +203,18 @@ pub enum ListenEndpoint {
     /// Loopback TCP address (`tcp:<host>:<port>`); remote clients reach it
     /// through SSH local forwarding (`ssh -L`).
     Tcp(SocketAddr),
+    /// Authenticated HTTP(S) endpoint (`http://` loopback or `https://<host>`)
+    /// carrying the same NDJSON wire contract (`F-13` D-113 path (b)).
+    Remote(RemoteEndpoint),
+}
+
+/// Client-side remote dial settings resolved from the environment and
+/// `[remote.client]`. The token is plaintext by design at this boundary and is
+/// never part of any debug output.
+#[derive(Clone, Default)]
+pub struct RemoteClientConfig {
+    pub token: Option<String>,
+    pub ca_path: Option<PathBuf>,
 }
 
 /// The endpoint string as configured: `unix`, `unix:<path>`, or
@@ -170,6 +225,8 @@ pub enum ListenSpec {
     Unix(Option<PathBuf>),
     /// `tcp:<host>:<port>` already restricted to a loopback `SocketAddr`.
     Tcp(SocketAddr),
+    /// `http://` (loopback only) or `https://` remote helper endpoint.
+    Remote(RemoteEndpoint),
 }
 
 impl ListenSpec {
@@ -178,6 +235,8 @@ impl ListenSpec {
     /// remote access is intended to arrive via SSH local forwarding, which
     /// still presents as a loopback connection to the daemon. A bare
     /// `host:port` (the D-113 shorthand) is accepted as `tcp:host:port`.
+    /// `http://` / `https://` select the authenticated remote transport
+    /// (client-dial only; the daemon binds it through `[remote]`).
     pub fn parse(raw: &str) -> Result<Self, DesktopError> {
         let fail = |detail: &str| {
             DesktopError::new(
@@ -195,6 +254,9 @@ impl ListenSpec {
                 }
             }
             "tcp" => Ok(Self::Tcp(parse_tcp_addr(rest).map_err(|e| fail(&e))?)),
+            "http" | "https" => RemoteEndpoint::parse(raw)
+                .map(Self::Remote)
+                .map_err(|err| DesktopError::new("invalid_config", err.message)),
             _ if looks_like_host_port(raw) => {
                 Ok(Self::Tcp(parse_tcp_addr(raw).map_err(|e| fail(&e))?))
             }
@@ -450,6 +512,25 @@ mod tests {
             let err = ListenSpec::parse(raw).unwrap_err();
             assert_eq!(err.code, "invalid_config", "{raw}");
         }
+    }
+
+    #[test]
+    fn listen_spec_remote_forms() {
+        // `http(s)://` selects the authenticated remote transport (dial-only).
+        assert!(matches!(
+            ListenSpec::parse("https://helper.example:8443").unwrap(),
+            ListenSpec::Remote(_)
+        ));
+        assert!(matches!(
+            ListenSpec::parse("http://127.0.0.1:7100").unwrap(),
+            ListenSpec::Remote(_)
+        ));
+        assert_eq!(
+            ListenSpec::parse("http://192.168.1.5:7100")
+                .unwrap_err()
+                .code,
+            "invalid_config"
+        );
     }
 
     #[test]

@@ -232,6 +232,215 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
     }
 
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/remote-tls")
+            .join(name)
+    }
+
+    fn fixture_cert() -> std::path::PathBuf {
+        fixture("ca.pem")
+    }
+
+    fn remote_config(port: u16) -> String {
+        format!(
+            "schema_version = 1\n[remote]\nenabled = true\nbind = \"127.0.0.1:{port}\"\n\
+             token_ttl_days = 30\n[remote.tls]\ncert_path = \"{}\"\nkey_path = \"{}\"\n",
+            fixture("chain.pem").display(),
+            fixture("server-key.pem").display()
+        )
+    }
+
+    /// D-113 path (b): the same NDJSON wire contract over authenticated
+    /// HTTPS loopback, using the fixture CA. Covers accept and reject
+    /// (missing/unknown/revoked/expired token) plus the audit trail.
+    ///
+    /// Configuration is built from a synthetic `Environment` and the token is
+    /// passed to `connect_remote` explicitly. The only process-global value
+    /// touched is `SOYO_HELPER_DIR`: sibling socket tests leave it pointing at
+    /// their deleted temp directories, so it is cleared (and restored on drop)
+    /// rather than inherited.
+    #[tokio::test]
+    async fn remote_https_round_trip_requires_a_valid_bearer_token() {
+        use soyo_core::config::{self, Environment, Overrides};
+        use soyo_core::credentials::{
+            CredentialBackend, CredentialGrant, CredentialStore, GrantRunKind, GrantStore,
+            SecretRegistry,
+        };
+        use std::ffi::OsString;
+
+        let _guard = serial().await;
+        let _helper_dir_env = EnvGuard::set(&[("SOYO_HELPER_DIR", "")]);
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let data_dir = dir.path().join("data");
+        let port = free_tcp_port();
+        std::fs::write(&config_path, remote_config(port)).unwrap();
+        let env = Environment::from_pairs([
+            ("HOME".into(), OsString::from(dir.path())),
+            ("XDG_STATE_HOME".into(), OsString::from(dir.path().join("state"))),
+            ("XDG_DATA_HOME".into(), OsString::from(dir.path().join("data-xdg"))),
+            ("XDG_CACHE_HOME".into(), OsString::from(dir.path().join("cache"))),
+        ]);
+        let cfg = config::load(
+            Overrides {
+                config: Some(config_path.clone()),
+                data_dir: Some(data_dir.clone()),
+                ..Default::default()
+            },
+            env.clone(),
+            dir.path(),
+        )
+        .expect("fixture config must load");
+        assert!(cfg.remote.enabled);
+        let state_dir = cfg.state_dir.clone();
+        let target = soyo_ipc::HelperTarget::from_config(&cfg);
+        let server = HelperServer::new(HostService::with_config(cfg));
+        let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let handle = tokio::spawn(async move {
+            if let Err(err) = server.run().await {
+                let _ = error_tx.send(format!("{}: {}", err.code, err.message));
+            }
+        });
+        // `start_remote` binds before the local loop, so a reachable local
+        // socket proves the remote listener is up too. The suite runs many
+        // tests in parallel, so allow for scheduling delays and surface an
+        // early daemon failure instead of timing out opaquely.
+        let mut local = None;
+        for _ in 0..500 {
+            if let Ok(client) = HelperClient::connect_for(&target).await {
+                local = Some(client);
+                break;
+            }
+            match error_rx.try_recv() {
+                Ok(message) => panic!("helper failed to start: {message}"),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("helper task exited before binding")
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let local = local.expect("helper did not start listening locally");
+
+        let store = CredentialStore::open_backend(
+            CredentialBackend::File,
+            &state_dir,
+            std::sync::Arc::new(SecretRegistry::default()),
+        )
+        .unwrap();
+        let endpoint_url = format!("https://127.0.0.1:{port}");
+        let endpoint = soyo_ipc::RemoteEndpoint::parse(&endpoint_url).unwrap();
+        let ca = fixture_cert();
+        let issued = store.issue_remote_token(&endpoint_url, 30).await.unwrap();
+        let token = issued.token.expose().to_owned();
+
+        let river = |token: &str| {
+            let endpoint = endpoint.clone();
+            let token = token.to_owned();
+            let ca = ca.clone();
+            async move {
+                soyo_ipc::remote::connect_remote(&endpoint, &token, Some(ca.as_path())).await
+            }
+        };
+        let stream = river(&token).await.expect("remote https connect");
+        let client = HelperClient::from_stream(stream)
+            .await
+            .expect("protocol handshake over https");
+        let info: serde_json::Value = client
+            .call_typed("helper_info", &json!({}))
+            .await
+            .expect("helper_info over https");
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+        let bootstrap: serde_json::Value = client
+            .call_typed("get_bootstrap_state", &json!({}))
+            .await
+            .expect("bootstrap over https");
+        assert_eq!(bootstrap["config_ready"], true);
+        let prefs: serde_json::Value = client
+            .call_typed("get_desktop_prefs", &json!({}))
+            .await
+            .expect("desktop prefs over https");
+        assert!(prefs.is_object(), "{prefs}");
+        let err = client.call("no_such_method", json!({})).await.unwrap_err();
+        assert_eq!(err.code, "unknown_method");
+
+        // A remote endpoint without a configured token is a configuration
+        // error before any network use (`connect_for`'s remote arm).
+        {
+            let missing_config = dir.path().join("missing-token.toml");
+            std::fs::write(
+                &missing_config,
+                format!(
+                    "{}\n[remote.client]\nendpoint = \"{endpoint_url}\"\n\
+                     token_env = \"SOYO_F13B_UNSET_TOKEN\"\n",
+                    remote_config(port)
+                ),
+            )
+            .unwrap();
+            let missing_target = soyo_ipc::HelperTarget::from_overrides(
+                Some(&missing_config),
+                Some(&data_dir),
+                &env,
+                dir.path(),
+            )
+            .unwrap();
+            let err = HelperClient::connect_for(&missing_target)
+                .await
+                .err()
+                .expect("missing token");
+            assert_eq!(err.code, "invalid_config", "{}", err.message);
+        }
+        // Unknown token: rejected by the helper.
+        {
+            let err = river(&format!("{token}-wrong"))
+                .await
+                .err()
+                .expect("wrong token");
+            assert_eq!(err.code, "helper_unauthorized", "{}", err.message);
+        }
+        // Expired grant: digest still matches, grant does not apply.
+        let expiring = store.issue_remote_token(&endpoint_url, 1).await.unwrap();
+        {
+            let grants = GrantStore::open(store.protected_path()).unwrap();
+            grants.remove(expiring.grant_id).unwrap();
+            grants
+                .put(&CredentialGrant {
+                    grant_id: uuid::Uuid::now_v7(),
+                    reference: expiring.reference,
+                    workspaces: Default::default(),
+                    run_kinds: [GrantRunKind::Remote].into_iter().collect(),
+                    tools: Default::default(),
+                    expires_at: Some("2000-01-01T00:00:00Z".into()),
+                    server_id: "remote".into(),
+                })
+                .unwrap();
+            let err = river(expiring.token.expose())
+                .await
+                .err()
+                .expect("expired token");
+            assert_eq!(err.code, "helper_unauthorized", "{}", err.message);
+        }
+        // Revoked token: tombstone + material removed, denied like an unknown one.
+        store.revoke(issued.reference, &issued.scope).await.unwrap();
+        {
+            let err = river(&token).await.err().expect("revoked token");
+            assert_eq!(err.code, "helper_unauthorized", "{}", err.message);
+        }
+        // The audit trail lists accepted and denied attempts, never the token.
+        let audit = std::fs::read_to_string(store.protected_path().join("audit.log")).unwrap();
+        assert!(audit.contains("remote_auth_ok"), "{audit}");
+        assert!(audit.contains("remote_auth_denied"), "{audit}");
+        assert!(!audit.contains(&token), "{audit}");
+
+        // Shutdown travels over the remote transport like any other frame.
+        client.shutdown_daemon().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(HelperClient::connect_for(&target).await.is_err());
+        drop(local);
+    }
+
     /// Process-global env vars must be restored on drop so other tests in the
     /// same process never observe a leaked configuration.
     struct EnvGuard(Vec<(String, Option<std::ffi::OsString>)>);

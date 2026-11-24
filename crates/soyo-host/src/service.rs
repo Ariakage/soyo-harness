@@ -511,6 +511,30 @@ impl HostService {
         self.inner.lock().await.target.clone()
     }
 
+    /// The resolved configuration this daemon runs with, if it loaded.
+    pub async fn resolved_config(&self) -> Option<soyo_core::config::Config> {
+        self.inner.lock().await.config.clone()
+    }
+
+    /// Open the shared credential store selected by `[credentials] backend`.
+    /// Used by the remote transport to verify bearer tokens against stored
+    /// digests and `run_kinds = ["remote"]` grants.
+    pub async fn open_credential_store(
+        &self,
+    ) -> Result<soyo_core::credentials::CredentialStore, soyo_core::contract::BoundaryError> {
+        let cfg = self.resolved_config().await.ok_or_else(|| {
+            soyo_core::contract::BoundaryError::new(
+                "invalid_config",
+                "Remote access requires a valid loaded configuration",
+            )
+        })?;
+        soyo_core::credentials::CredentialStore::open_backend(
+            cfg.credentials.backend,
+            &cfg.state_dir,
+            self.secrets.clone(),
+        )
+    }
+
     pub fn with_test_model(mut self, factory: TestModelFactory) -> Self {
         self.test_model_factory = Some(factory);
         self

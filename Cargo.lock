@@ -4361,6 +4361,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -5158,6 +5159,8 @@ name = "soyo-ipc"
 version = "0.3.0"
 dependencies = [
  "libc",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -5167,6 +5170,7 @@ dependencies = [
  "specta-typescript",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "uuid",
 ]
 

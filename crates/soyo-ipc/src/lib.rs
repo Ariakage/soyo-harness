@@ -2,14 +2,17 @@
 
 pub mod client;
 pub mod framing;
+pub mod http;
 pub mod protocol;
 pub mod redaction;
+pub mod remote;
 pub mod socket;
 pub mod tool_format;
 pub mod types;
 
 pub use client::{HelperClient, HelperCompat};
 pub use protocol::{ClientFrame, PROTOCOL_VERSION, ServerFrame};
+pub use remote::{RemoteEndpoint, RemoteScheme, RemoteServer};
 pub use socket::{
     HelperEndpoint, HelperPidRecord, HelperTarget, ListenEndpoint, ListenSpec, helper_pid_path,
     process_exe_path, process_started_id, verify_peer_euid,

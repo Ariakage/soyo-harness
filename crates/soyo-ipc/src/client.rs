@@ -70,9 +70,9 @@ impl HelperClient {
 
     /// Connect to the helper matching `target`, spawning `soyo helper` if needed.
     ///
-    /// A `tcp:` endpoint only dials: the daemon lives on the other side of an
-    /// SSH forward (or another machine), so spawning a local process here would
-    /// be meaningless. Spawning stays Unix-socket-only.
+    /// A `tcp:` or remote HTTP(S) endpoint only dials: the daemon lives on the
+    /// other side of an SSH forward or another machine, so spawning a local
+    /// process here would be meaningless. Spawning stays Unix-socket-only.
     pub async fn connect_or_spawn_for(target: &HelperTarget) -> Result<Arc<Self>, DesktopError> {
         match Self::connect_for(target).await {
             Ok(client) => Ok(client),
@@ -81,7 +81,7 @@ impl HelperClient {
                 // reachable already (e.g. through `ssh -L`), never spawned.
                 // An unresolvable endpoint is a hard configuration error too:
                 // a spawned helper would hit the same failure.
-                if first_err.code == "invalid_config" || target.is_tcp_endpoint() {
+                if first_err.code == "invalid_config" || target.is_dial_only() {
                     return Err(first_err);
                 }
                 spawn_helper_process(target)?;
@@ -108,6 +108,8 @@ impl HelperClient {
     /// private directory and peer UID. `tcp:` endpoints dial the loopback
     /// address directly — peer credentials do not exist there, so security
     /// rests on the loopback bind plus the SSH forward delivering traffic.
+    /// Remote HTTP(S) endpoints authenticate with the configured bearer token
+    /// and then carry the identical NDJSON framing over the tunnel.
     pub async fn connect_for(target: &HelperTarget) -> Result<Arc<Self>, DesktopError> {
         match target
             .listen_endpoint()
@@ -123,6 +125,20 @@ impl HelperClient {
                         ),
                     )
                 })?;
+                Self::from_stream_with_target(stream, Some(target.clone())).await
+            }
+            ListenEndpoint::Remote(endpoint) => {
+                let settings = target.remote_client_config();
+                let token = settings.token.ok_or_else(|| {
+                    DesktopError::new(
+                        "invalid_config",
+                        "Remote helper endpoint requires a bearer token \
+                         (SOYO_REMOTE_TOKEN or [remote.client] token_env)",
+                    )
+                })?;
+                let stream =
+                    crate::remote::connect_remote(&endpoint, &token, settings.ca_path.as_deref())
+                        .await?;
                 Self::from_stream_with_target(stream, Some(target.clone())).await
             }
             ListenEndpoint::Unix(socket_path) => {
@@ -441,19 +457,19 @@ impl HelperClient {
     /// Shut down the connected helper and establish a fresh connection for the
     /// same configuration target. Fails if the daemon does not exit or cannot serve.
     ///
-    /// TCP endpoints are refused up front: this side can shut the daemon down
-    /// but cannot spawn its replacement across an SSH forward, and killing a
-    /// healthy remote daemon would leave nothing to reconnect to.
+    /// TCP and remote HTTP(S) endpoints are refused up front: this side can
+    /// shut the daemon down but cannot spawn its replacement across a tunnel,
+    /// and killing a healthy remote daemon would leave nothing to reconnect to.
     pub async fn restart(&self) -> Result<Arc<Self>, DesktopError> {
         let target = match &self.target {
             Some(target) => target.clone(),
             None => HelperTarget::from_environment()
                 .map_err(|err| DesktopError::new("invalid_config", err.message().to_owned()))?,
         };
-        if target.is_tcp_endpoint() {
+        if target.is_dial_only() {
             return Err(DesktopError::new(
                 "helper_restart",
-                "Cannot restart a helper reached over TCP; restart it on its host",
+                "Cannot restart a helper reached over TCP or HTTP(S); restart it on its host",
             ));
         }
         self.shutdown_daemon().await;

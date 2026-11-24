@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use soyo_ipc::{RemoteScheme, RemoteServer, remote::RemoteAccept};
 use soyo_ipc::{
     framing::{FrameWriter, read_client_frame, split, write_frame},
     protocol::{ClientFrame, PROTOCOL_VERSION, ServerFrame},
@@ -83,6 +84,9 @@ impl HelperServer {
     /// `[helper] listen` in config > the fingerprint Unix socket. A `tcp:`
     /// endpoint binds loopback only (D-113: remote access arrives via
     /// `ssh -L`, so no TLS/auth layer exists on this transport yet).
+    ///
+    /// Independently, `[remote] enabled = true` also binds the authenticated
+    /// HTTP(S) listener; the local endpoint keeps serving alongside it.
     pub async fn run(&self) -> Result<(), DesktopError> {
         let target = self.service.helper_target().await;
         let endpoint = self.resolve_endpoint(&target)?;
@@ -107,10 +111,94 @@ impl HelperServer {
         )
         .map_err(|err| DesktopError::new(err.code(), err.message().to_owned()))?;
 
-        match endpoint {
+        let remote_task = self.start_remote().await?;
+        let outcome = match endpoint {
             ListenEndpoint::Unix(socket_path) => self.run_unix(&target, &socket_path).await,
             ListenEndpoint::Tcp(addr) => self.run_tcp(&target, addr).await,
+            ListenEndpoint::Remote(_) => Err(DesktopError::new(
+                "invalid_config",
+                "HTTP(S) endpoints are bound through [remote], not --listen",
+            )),
+        };
+        // Stop the remote accept loop before returning, including early local
+        // bind failures.
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(task) = remote_task {
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
         }
+        outcome
+    }
+
+    /// Start the `[remote]` HTTP(S) listener when enabled. Binding errors fail
+    /// helper startup explicitly instead of silently serving locally only.
+    async fn start_remote(&self) -> Result<Option<tokio::task::JoinHandle<()>>, DesktopError> {
+        let Some(config) = self.service.resolved_config().await else {
+            return Ok(None);
+        };
+        if !config.remote.enabled {
+            return Ok(None);
+        }
+        let bind = config
+            .remote
+            .bind_addr()
+            .map_err(|err| DesktopError::new(err.0.code, err.0.message))?
+            .ok_or_else(|| {
+                DesktopError::new("invalid_config", "remote bind is required when enabled")
+            })?;
+        let tls = config
+            .remote
+            .tls
+            .as_ref()
+            .map(|tls| (tls.cert_path.clone(), tls.key_path.clone()));
+        let server = RemoteServer::bind(bind, tls).await?;
+        let scheme = match server.scheme() {
+            RemoteScheme::Http => "http",
+            RemoteScheme::Https => "https",
+        };
+        eprintln!(
+            "soyo helper: remote {scheme} listener on {} (bearer token required)",
+            server.address()
+        );
+        let store = self
+            .service
+            .open_credential_store()
+            .await
+            .map_err(|err| DesktopError::new(err.0.code, err.0.message))?;
+        let service = Arc::clone(&self.service);
+        let shutdown = Arc::clone(&self.shutdown);
+        Ok(Some(tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+                // Accept (including the TLS handshake and head read) must not
+                // race a short poll timer: cancelling it mid-handshake resets
+                // the client. Only the shutdown notification may cancel it.
+                let accepted = tokio::select! {
+                    result = server.accept(&store) => result,
+                    _ = wait_for_shutdown(&shutdown) => break,
+                };
+                match accepted {
+                    Ok(RemoteAccept {
+                        peer: _,
+                        stream: Some(stream),
+                    }) => {
+                        spawn_client_stream(Arc::clone(&service), Arc::clone(&shutdown), stream);
+                    }
+                    Ok(RemoteAccept { peer, stream: None }) => {
+                        eprintln!("soyo helper: rejected remote client {peer}");
+                    }
+                    Err(err) => {
+                        if shutdown.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        eprintln!("soyo helper: remote accept failed: {err}");
+                        // Do not spin on a persistent accept error (EMFILE etc.).
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })))
     }
 
     /// Resolve the endpoint this server binds: explicit `--listen` flag first,
@@ -125,6 +213,10 @@ impl HelperServer {
                 ListenSpec::Unix(None) => Ok(ListenEndpoint::Unix(target.socket_path())),
                 ListenSpec::Unix(Some(path)) => Ok(ListenEndpoint::Unix(path)),
                 ListenSpec::Tcp(addr) => Ok(ListenEndpoint::Tcp(addr)),
+                ListenSpec::Remote(_) => Err(DesktopError::new(
+                    "invalid_config",
+                    "HTTP(S) endpoints are bound through [remote], not --listen",
+                )),
             };
         }
         target.listen_endpoint()
@@ -298,18 +390,36 @@ impl HelperServer {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-        let svc = Arc::clone(&self.service);
-        let shutdown = Arc::clone(&self.shutdown);
-        svc.active_clients.fetch_add(1, Ordering::AcqRel);
-        tokio::spawn(async move {
-            handle_client(conn_id, stream, svc, shutdown).await;
-        });
+        spawn_client_stream(
+            Arc::clone(&self.service),
+            Arc::clone(&self.shutdown),
+            stream,
+        );
     }
 
     fn manage_pid(&self) -> bool {
         true
     }
+}
+
+/// Resolve once the daemon-wide shutdown flag is observed. Used as the
+/// cancellation branch for the remote accept loop so an in-flight TLS
+/// handshake is only abandoned when the helper is actually stopping.
+async fn wait_for_shutdown(shutdown: &Arc<AtomicBool>) {
+    while !shutdown.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+fn spawn_client_stream<S>(service: Arc<HostService>, shutdown: Arc<AtomicBool>, stream: S)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+    service.active_clients.fetch_add(1, Ordering::AcqRel);
+    tokio::spawn(async move {
+        handle_client(conn_id, stream, service, shutdown).await;
+    });
 }
 
 fn current_pid_record(target: &HelperTarget) -> HelperPidRecord {
@@ -400,6 +510,9 @@ async fn handle_client<S>(
         if shutdown.load(Ordering::Relaxed) {
             let mut w = writer.lock().await;
             let _ = write_frame(&mut w, &ServerFrame::Bye).await;
+            // Terminate the byte stream cleanly (also closes the chunked body
+            // on the HTTP(S) transport) before the connection is dropped.
+            let _ = tokio::io::AsyncWriteExt::shutdown(&mut *w).await;
             break;
         }
         match read_client_frame(&mut reader).await {
@@ -420,6 +533,7 @@ async fn handle_client<S>(
                     service.shutdown().await;
                     let mut w = writer.lock().await;
                     let _ = write_frame(&mut w, &ServerFrame::Bye).await;
+                    let _ = tokio::io::AsyncWriteExt::shutdown(&mut *w).await;
                     break;
                 }
             },
