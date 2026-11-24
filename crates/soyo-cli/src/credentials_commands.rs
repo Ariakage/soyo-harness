@@ -321,8 +321,9 @@ fn audit(
         "at": soyo_core::credentials::now_rfc3339(),
         "reference": reference,
     });
-    line.as_object_mut()
-        .map(|object| object.extend(extra.as_object().cloned().unwrap_or_default()));
+    if let Some(object) = line.as_object_mut() {
+        object.extend(extra.as_object().cloned().unwrap_or_default());
+    }
     let encoded = serde_json::to_string(&line)
         .map_err(|_| failure("credential_io", "credential event could not be encoded"))?;
     // Redaction gate: the journal must never carry a known secret.
