@@ -214,7 +214,7 @@ pub struct BrowserSettings {
     pub remote: BrowserRemoteSettings,
     /// Opt-in persisted login/profile state on the dedicated VM backend.
     /// Deliberate relaxation of the per-Run scratch guarantee; OFF by default
-    /// (decision D-096). Mutually exclusive with `remote`.
+    /// (decision D-098). Mutually exclusive with `remote`.
     pub profile: BrowserProfileSettings,
     /// Opt-in exact loopback dev-service forwarding entries on the dedicated
     /// VM backend.

@@ -190,7 +190,7 @@ pub enum BrowserProfileRetention {
 /// Opt-in persisted login/profile state (`[browser.profile]`). When enabled the
 /// browser profile directory survives across Runs instead of living in the
 /// per-Run scratch tree. This is an explicit relaxation of the per-Run scratch
-/// guarantee and is OFF by default; see decision D-096.
+/// guarantee and is OFF by default; see decision D-098.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrowserProfileSettings {

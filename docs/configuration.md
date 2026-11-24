@@ -346,7 +346,7 @@ enabled = true
 max_download_bytes = 8388608
 max_upload_bytes = 8388608
 
-# D-096：持久登录/profile 状态，默认关闭、仅 VM 后端、与 remote 互斥。
+# D-098：持久登录/profile 状态，默认关闭、仅 VM 后端、与 remote 互斥。
 # 刻意放宽 per-Run scratch 保证：cookies/storage 跨 Run 存活，属 opt-in 外泄面。
 # [browser.profile]
 # enabled = false
@@ -354,7 +354,7 @@ max_upload_bytes = 8388608
 # remote_root = "/home/soyo/profiles"  # VM 端 POSIX 绝对路径，必填
 # retention = "persist"            # 默认；或 retention = { expires_after = { seconds = 604800 } }（60..31536000）
 
-# D-095：远程/CDP attach，默认关闭、仅 VM 后端、与 profile 互斥。
+# D-096：远程/CDP attach，默认关闭、仅 VM 后端、与 profile 互斥。
 # worker 仍在 VM 内经身份验证；私有 processInfo/captureScreenshot 通道不可满足，
 # 故四项 facts 全部失败关闭。endpoint 须为 VM 回环字面量且有精确 dev_service 转发。
 # [browser.remote]
@@ -363,7 +363,7 @@ max_upload_bytes = 8388608
 # connect_timeout_ms = 20000
 # request_timeout_ms = 120000
 
-# D-097：localhost 开发服务转发，默认关闭、仅 VM 后端且需 [browser.network]。
+# D-099：localhost 开发服务转发，默认关闭、仅 VM 后端且需 [browser.network]。
 # 每条 alias+回环字面 host+精确端口，1–16 条、(host,port) 唯一、绝无通配。
 # [browser.dev_service]
 # enabled = false
@@ -385,7 +385,7 @@ DEV-080 的 `[browser.worker]` 仅描述宿主预置的 Playwright MCP worker，
 
 `[browser.credentials]` 默认关闭；启用时必须给出绝对私有 store 路径和至少一个 slot，所有 slot 的 alias 必须唯一，`credential_ref` 必须是合法 UUID 引用，origin 必须是无 path／query／fragment 的精确规范化 HTTPS origin；只有显式回环开发 origin（`localhost` 或回环 IP）允许 HTTP，其余 HTTP origin 拒绝。purpose 只能是 `form_fill`，`max_uses` 为 1 至 32。store 以及运行中解析出的凭据值不会进入模型上下文；只要 credentials 已启用并声明 store，非 Host 执行后端会把 store 路径加入受保护路径，Host 后端直接拒绝，即使 `browser.enabled = false`。`[browser.files]` 默认启用，下载／上传上限各自限制为不超过 16 MiB 的有界 File artifact；启用时不接受任意宿主路径，上传只接受同一 Session 且摘要校验通过的 artifact 引用。
 
-`[browser.profile]`／`[browser.remote]`／`[browser.dev_service]` 是三个默认关闭、互不耦合、仅在专用 VM 后端提供的 opt-in 增量，关闭时逐字节零漂移、启用条件不满足即 `invalid_config` 失败关闭。`attach_mode()` 把三者收敛为 `BrowserAttachMode`（`Isolated` 默认／`PersistentProfile`／`RemoteCdp`），模型输入永不可达配置。`[browser.profile]`（D-096）按名字持久 `userDataDir` 跨 Run 保留 cookies／storage，是刻意放宽 per-Run scratch 的 opt-in 外泄面；持久上下文强制 `isolated:false`、私有 `processInfo`＋`captureScreenshot` 通道失效，故 `screenshots`/`screenshot_masking` 失败关闭，`downloads`/`uploads` 保留，VM 侧仍经远程 `/proc` 扫描验证 renderer 沙箱；与 `[browser.remote]` 互斥，`remote_root` 必填、`root`（宿主路径）不得同时声明。`[browser.remote]`（D-095）把 attach 换成显式 CDP endpoint（VM 回环字面量、无凭据／path／query、端口非 0 且非 `31281`），endpoint 必须有一条 `(host,port)` 精确匹配的 dev_service 转发才可经 SSH 反向 streamlocal 抵达宿主侧浏览器；远程浏览器不满足私有通道契约，`screenshots`/`screenshot_masking`/`downloads`/`uploads` 四项 facts 全部失败关闭并跳过 renderer 沙箱证据扫描。`[browser.dev_service]`（D-097）每条转发为 `alias`＋回环字面 `host`＋非 0 精确 `port`（不占用 `31281`），1–16 条、`(host,port)` 唯一、`[::1]`/`::1` 归一化匹配、绝无通配；每条经一条 SSH `-R` 反向 streamlocal（`StreamLocalBindUnlink`＋`ExitOnForwardFailure`）＋netns `socat TCP-LISTEN` 桥到宿主同名服务，`devspec` 建立失败归 `browser_network_unavailable`，且仅在 `[browser.vm]` 与 `[browser.network]` 同时启用时可用。遮蔽截图引擎按 `MASKED_CAPTURE_ENGINE_TARGETS` 显式集合分发：当前仅 `aarch64-unknown-linux-gnu` 已交付验收，`linux-x86_64` 为下一目标（真实 patched 构建待产出），macOS 双架构不支持；非列出目标绝不 provisioning、绝不声称 `screenshots`/`screenshot_masking`。
+`[browser.profile]`／`[browser.remote]`／`[browser.dev_service]` 是三个默认关闭、互不耦合、仅在专用 VM 后端提供的 opt-in 增量，关闭时逐字节零漂移、启用条件不满足即 `invalid_config` 失败关闭。`attach_mode()` 把三者收敛为 `BrowserAttachMode`（`Isolated` 默认／`PersistentProfile`／`RemoteCdp`），模型输入永不可达配置。`[browser.profile]`（D-098）按名字持久 `userDataDir` 跨 Run 保留 cookies／storage，是刻意放宽 per-Run scratch 的 opt-in 外泄面；持久上下文强制 `isolated:false`、私有 `processInfo`＋`captureScreenshot` 通道失效，故 `screenshots`/`screenshot_masking` 失败关闭，`downloads`/`uploads` 保留，VM 侧仍经远程 `/proc` 扫描验证 renderer 沙箱；与 `[browser.remote]` 互斥，`remote_root` 必填、`root`（宿主路径）不得同时声明。`[browser.remote]`（D-096）把 attach 换成显式 CDP endpoint（VM 回环字面量、无凭据／path／query、端口非 0 且非 `31281`），endpoint 必须有一条 `(host,port)` 精确匹配的 dev_service 转发才可经 SSH 反向 streamlocal 抵达宿主侧浏览器；远程浏览器不满足私有通道契约，`screenshots`/`screenshot_masking`/`downloads`/`uploads` 四项 facts 全部失败关闭并跳过 renderer 沙箱证据扫描。`[browser.dev_service]`（D-099）每条转发为 `alias`＋回环字面 `host`＋非 0 精确 `port`（不占用 `31281`），1–16 条、`(host,port)` 唯一、`[::1]`/`::1` 归一化匹配、绝无通配；每条经一条 SSH `-R` 反向 streamlocal（`StreamLocalBindUnlink`＋`ExitOnForwardFailure`）＋netns `socat TCP-LISTEN` 桥到宿主同名服务，`devspec` 建立失败归 `browser_network_unavailable`，且仅在 `[browser.vm]` 与 `[browser.network]` 同时启用时可用。遮蔽截图引擎按 `MASKED_CAPTURE_ENGINE_TARGETS` 显式集合分发：当前仅 `aarch64-unknown-linux-gnu` 已交付验收，`linux-x86_64` 为下一目标（真实 patched 构建待产出），macOS 双架构不支持；非列出目标绝不 provisioning、绝不声称 `screenshots`/`screenshot_masking`。
 
 `[js_repl]`（`F-21`，`D-082`/`D-083`）是实验性、严格默认关闭的只读 JavaScript 编排面。`enabled = true` 时模型可见 `js_repl` 工具：脚本在原生沙箱（Seatbelt／Bubblewrap）内的 `__soyo-js-worker` 同二进制子进程中经 QuickJS 求值，没有文件、网络、进程、模块或凭据访问；脚本内 `await soyo.callTool(name, args)` 逐次经有界 RPC 回到宿主，每一次底层调用都重新过 deny、路径根检查、`tool.before_dispatch`/`tool.finished` Hooks、审批、预算、取消与脱敏，只有只读工具（文件读取、发现与输出查询、Web 读取与声明只读副作用的外部工具）可桥接，`exec`、写入、交互、多智能体、会话控制与 `js_repl` 自身一律在派发前拒绝。审批绑定完整脚本原文与超时，显式 `Host` 兼容后端拒绝该工具。所有限额均可调但有硬上界；脚本字节、桥消息与底层调用数超限、worker 崩溃或超时一律以失败结果返回，中间结果不进入模型历史。
 

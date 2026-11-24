@@ -216,7 +216,7 @@ URL 读取使用独立的受控 HTTP 客户端，认证信息按用途绑定。�
 
 ## 登录、文件与输出
 
-- 临时 profile 按 Run 清理（默认 `Isolated`）。登录状态保存或复用需要单独范围、来源和期限，用户级凭据由 F-18 管理；`[browser.profile]`（D-096）是默认关闭、仅 VM 后端的显式 opt-in 放宽，按名字持久 `userDataDir` 并带保留期限，使 cookies／storage 跨 Run 存活——属新增外泄面，且持久上下文使 `screenshots`/`screenshot_masking` 失败关闭。另有默认关闭的 `[browser.remote]`（CDP attach，四项 facts 失败关闭）与 `[browser.dev_service]`（精确回环转发），三者均为仅 VM 后端的 opt-in，见 D-095／D-097 与[配置](configuration.md)。
+- 临时 profile 按 Run 清理（默认 `Isolated`）。登录状态保存或复用需要单独范围、来源和期限，用户级凭据由 F-18 管理；`[browser.profile]`（D-098）是默认关闭、仅 VM 后端的显式 opt-in 放宽，按名字持久 `userDataDir` 并带保留期限，使 cookies／storage 跨 Run 存活——属新增外泄面，且持久上下文使 `screenshots`/`screenshot_masking` 失败关闭。另有默认关闭的 `[browser.remote]`（CDP attach，四项 facts 失败关闭）与 `[browser.dev_service]`（精确回环转发），三者均为仅 VM 后端的 opt-in，见 D-096／D-099 与[配置](configuration.md)。
 - 认证字段使用绑定 origin 的 credential slot，实际值通过宿主 broker 注入。工具意图、日志和上下文保存引用与遮蔽后的信息。
 - 上传使用已授权 artifact ID，下载经 broker 生成文件名、检查来源／大小／类型并保存摘要。写入项目文件时经过工作区写回策略。
 - 默认观察使用有界 ARIA／文本快照，返回子树、匹配项与文档水位。完整可保留内容按[输出策略](context-management.md)进入 OutputStore。
