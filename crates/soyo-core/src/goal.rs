@@ -13,6 +13,7 @@ use crate::{
         Artifact, BoundaryError, ErrorInfo, PermissionMode, RunId, RunResult, RunStatus, SessionId,
         Usage, WorkMode,
     },
+    task_queue::TaskId,
     text,
 };
 use cap_std::fs::OpenOptionsExt as _;
@@ -452,6 +453,15 @@ pub fn goal_report_markdown(record: &GoalRecord) -> Result<Vec<u8>, BoundaryErro
                     .unwrap_or_default()
             ));
         }
+        if let Some(state) = step.delegation_state(record.wait_reason.as_ref()) {
+            report.push_str(&format!(
+                "- Delegated subagent: `{}` (state `{}`)\n",
+                step.subagent_id
+                    .map(|task_id| task_id.0.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                state.as_str()
+            ));
+        }
         if let Some(verification) = &step.last_verification {
             report.push_str(&format!(
                 "- Host verification outcome: `{:?}` · Exit code: `{}` · Duration: {}ms\n",
@@ -591,6 +601,16 @@ impl GoalRunSummary {
         }
         Ok(())
     }
+}
+
+/// Bounded usage observed from one delegated subagent attempt. The Goal worker
+/// attributes it to the durable Goal after the child reaches a terminal state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DelegatedUsage {
+    pub request_count: u64,
+    pub tool_calls: u64,
+    pub active_seconds: u64,
+    pub usage: Option<Usage>,
 }
 
 fn default_verifier_timeout_seconds() -> u64 {
@@ -752,6 +772,49 @@ impl StepVerificationResult {
     }
 }
 
+/// Opt-in delegation of one Goal step's Run to a persistent subagent (`D-112`).
+/// The Goal still owns the host-side step verifier and completion evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepDelegation {
+    pub subagent: bool,
+}
+
+impl StepDelegation {
+    fn validate(&self) -> Result<(), BoundaryError> {
+        if !self.subagent {
+            return Err(failure(
+                "invalid_goal",
+                "Goal step delegation requires `subagent: true`",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Operator-facing projection of a delegated step's durable state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepDelegationState {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    WaitingUnknown,
+}
+
+impl StepDelegationState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::WaitingUnknown => "waiting_unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalStep {
     pub id: StepId,
@@ -763,6 +826,11 @@ pub struct GoalStep {
     pub depends_on: Vec<StepId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier: Option<StepVerifier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<StepDelegation>,
+    /// Task id of the persistent subagent driving this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_id: Option<TaskId>,
     pub status: StepStatus,
     pub attempts: u32,
     pub run_id: Option<RunId>,
@@ -789,6 +857,32 @@ impl GoalStep {
         }
         if let Some(verifier) = &self.verifier {
             verifier.validate()?;
+        }
+        if let Some(delegation) = &self.delegate {
+            delegation.validate()?;
+            if self.verifier.is_none() {
+                return Err(failure(
+                    "invalid_goal",
+                    "a delegated Goal step requires a host-side step verifier",
+                ));
+            }
+            if self.status == StepStatus::Completed && self.subagent_id.is_none() {
+                return Err(failure(
+                    "invalid_goal",
+                    "a completed delegated Goal step requires its subagent task id",
+                ));
+            }
+        } else if self.subagent_id.is_some() {
+            return Err(failure(
+                "invalid_goal",
+                "only delegated Goal steps may reference a subagent task",
+            ));
+        }
+        if self.status == StepStatus::Pending && self.subagent_id.is_some() {
+            return Err(failure(
+                "invalid_goal",
+                "a pending Goal step cannot retain a previous subagent task id",
+            ));
         }
         if self.status == StepStatus::Running && self.run_id.is_none() {
             return Err(failure(
@@ -827,6 +921,31 @@ impl GoalStep {
             ));
         }
         Ok(())
+    }
+
+    /// Projection consumed by `goal status` / reports. A failed step whose
+    /// Goal is conservatively waiting on its unknown side effect is reported as
+    /// `waiting_unknown`, never as a plain failure.
+    pub fn delegation_state(
+        &self,
+        wait_reason: Option<&GoalWaitReason>,
+    ) -> Option<StepDelegationState> {
+        self.delegate.as_ref()?;
+        Some(match self.status {
+            StepStatus::Pending => StepDelegationState::Pending,
+            StepStatus::Running => StepDelegationState::Running,
+            StepStatus::Completed => StepDelegationState::Completed,
+            StepStatus::Skipped => StepDelegationState::Failed,
+            StepStatus::Failed
+                if matches!(
+                    wait_reason,
+                    Some(GoalWaitReason::UnknownSideEffect { step_id }) if *step_id == self.id
+                ) =>
+            {
+                StepDelegationState::WaitingUnknown
+            }
+            StepStatus::Failed => StepDelegationState::Failed,
+        })
     }
 }
 
@@ -1049,6 +1168,10 @@ pub struct PlannedStep {
     pub depends_on: Vec<StepId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier: Option<StepVerifier>,
+    /// Opt-in persistent-subagent delegation (`D-112`). A delegated planned
+    /// step must also carry a verifier; validation rejects the plan otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<StepDelegation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1206,12 +1329,19 @@ impl GoalRecord {
             .iter_mut()
             .find(|step| step.id == step_id)
             .ok_or_else(|| failure("goal_not_found", "Goal step was not found"))?;
+        if verifier.is_none() && step.delegate.is_some() {
+            return Err(failure(
+                "invalid_goal",
+                "a delegated Goal step requires a host-side step verifier",
+            ));
+        }
         step.verifier = verifier;
         step.last_verification = None;
         if step.status == StepStatus::Completed {
             step.status = StepStatus::Pending;
             step.run_id = None;
             step.last_result = None;
+            step.subagent_id = None;
         }
         self.confirmed_verifiers_digest = None;
         self.authorization = None;
@@ -1362,6 +1492,8 @@ impl GoalRecord {
                 mode: self.mode,
                 depends_on: planned.depends_on,
                 verifier: planned.verifier,
+                delegate: planned.delegate,
+                subagent_id: None,
                 status: StepStatus::Pending,
                 attempts: 0,
                 run_id: None,

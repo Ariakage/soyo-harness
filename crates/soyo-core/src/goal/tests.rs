@@ -42,6 +42,7 @@ fn plan(first: StepId, second: StepId) -> GoalPlan {
                 instruction: "Implement and test the API".into(),
                 depends_on: vec![],
                 verifier: None,
+                delegate: None,
             },
             PlannedStep {
                 id: second,
@@ -49,6 +50,7 @@ fn plan(first: StepId, second: StepId) -> GoalPlan {
                 instruction: "Document the API".into(),
                 depends_on: vec![first],
                 verifier: None,
+                delegate: None,
             },
         ],
     }
@@ -70,6 +72,7 @@ fn single_manual_goal() -> (GoalRecord, StepId) {
                 instruction: "Perform bounded work".into(),
                 depends_on: vec![],
                 verifier: None,
+                delegate: None,
             }],
         },
         "2026-11-12T04:00:00Z".into(),
@@ -290,6 +293,7 @@ async fn goal_worker_lease_excludes_another_goal_in_the_same_workspace() {
                     instruction: "Do work".into(),
                     depends_on: vec![],
                     verifier: None,
+                    delegate: None,
                 }],
             },
             format!("2026-11-12T03:0{index}:00Z"),
@@ -498,6 +502,7 @@ async fn failed_known_work_is_replanned_once_but_unknown_side_effects_wait() {
                     instruction: "Perform the work".into(),
                     depends_on: vec![],
                     verifier: None,
+                    delegate: None,
                 }],
             },
             format!("2026-11-12T01:0{index}:00Z"),
@@ -868,6 +873,7 @@ fn goal_invariants_reject_unverified_completion_and_unconfirmed_verifiers() {
                 instruction: "Create ready.txt".into(),
                 depends_on: vec![],
                 verifier: Some(verifier.clone()),
+                delegate: None,
             }],
         },
         "2026-11-19T00:00:00Z".into(),
@@ -954,7 +960,7 @@ fn goal_invariants_reject_unverified_completion_and_unconfirmed_verifiers() {
 }
 
 #[tokio::test]
-async fn sqlite_v1_migrates_to_v2_and_persists_step_verifications() {
+async fn sqlite_v1_migrates_to_v3_and_persists_step_verifications() {
     let root = tempfile::tempdir().unwrap();
     let data_dir = root.path().join("data");
     let goals_dir = data_dir.join("goals");
@@ -1033,13 +1039,14 @@ async fn sqlite_v1_migrates_to_v2_and_persists_step_verifications() {
     assert_eq!(loaded.id, legacy_goal.id);
     assert!(loaded.verifiers_confirmed());
 
-    // Confirm user_version upgraded to 2 and step_verifications table exists.
+    // Confirm user_version upgraded through v2 to v3, the step_verifications
+    // table exists, and dispatches gained the delegation link column.
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         let ver: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(ver, 2);
+        assert_eq!(ver, 3);
         let exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='step_verifications'",
@@ -1048,6 +1055,14 @@ async fn sqlite_v1_migrates_to_v2_and_persists_step_verifications() {
             )
             .unwrap();
         assert_eq!(exists, 1);
+        let has_subagent_id: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('dispatches') WHERE name='subagent_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_subagent_id, 1);
     }
 
     // Create a second Goal with a StepVerifier, lock via confirm_plan, and persist redacted failure + pass.
@@ -1072,6 +1087,7 @@ async fn sqlite_v1_migrates_to_v2_and_persists_step_verifications() {
                     timeout_seconds: 30,
                     max_output_bytes: 1024,
                 }),
+                delegate: None,
             }],
         },
         "2026-11-19T00:00:00Z".into(),
@@ -1180,6 +1196,7 @@ async fn replan_handles_failed_timed_out_and_denied_step_verifiers_appropriately
                         timeout_seconds: 30,
                         max_output_bytes: 1024,
                     }),
+                    delegate: None,
                 }],
             },
             "2026-11-19T00:00:00Z".into(),
@@ -1279,6 +1296,7 @@ async fn replan_handles_failed_timed_out_and_denied_step_verifiers_appropriately
                         timeout_seconds: 10,
                         max_output_bytes: 1024,
                     }),
+                    delegate: None,
                 }],
             },
             "2026-11-19T00:00:00Z".into(),
@@ -1335,4 +1353,243 @@ async fn replan_handles_failed_timed_out_and_denied_step_verifiers_appropriately
             .await
             .is_err()
     );
+}
+
+#[test]
+fn delegated_goal_plan_requires_a_host_verifier_and_rejects_disabled_delegation() {
+    let step_id = StepId::new();
+    let mut plan = GoalPlan {
+        acceptance: vec![AcceptanceCriterion {
+            id: "criterion-1".into(),
+            text: "The delegated work is verified".into(),
+            verification: VerificationSpec::Manual,
+        }],
+        steps: vec![PlannedStep {
+            id: step_id,
+            title: "Delegate".into(),
+            instruction: "Run the delegated work".into(),
+            depends_on: vec![],
+            verifier: None,
+            delegate: Some(StepDelegation { subagent: true }),
+        }],
+    };
+    let encoded = serde_json::to_string(&plan).unwrap();
+    assert!(GoalPlan::parse(&encoded).is_err());
+
+    plan.steps[0].verifier = Some(StepVerifier {
+        argv: vec!["/bin/true".into()],
+        cwd: None,
+        timeout_seconds: 15,
+        max_output_bytes: 1024,
+    });
+    let parsed = GoalPlan::parse(&serde_json::to_string(&plan).unwrap()).unwrap();
+    assert_eq!(
+        parsed.steps[0].delegate,
+        Some(StepDelegation { subagent: true })
+    );
+
+    plan.steps[0].delegate = Some(StepDelegation { subagent: false });
+    assert!(plan.validate().is_err());
+}
+
+#[tokio::test]
+async fn delegated_step_links_its_subagent_and_unknown_finish_never_replays() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let store = GoalStore::open(&root.path().join("data"), vec![]).unwrap();
+    let mut goal = record();
+    goal.workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let step_id = StepId::new();
+    goal.apply_plan(
+        GoalPlan {
+            acceptance: vec![AcceptanceCriterion {
+                id: "criterion-1".into(),
+                text: "The delegated work is verified".into(),
+                verification: VerificationSpec::Manual,
+            }],
+            steps: vec![PlannedStep {
+                id: step_id,
+                title: "Delegate".into(),
+                instruction: "Run the delegated work".into(),
+                depends_on: vec![],
+                verifier: Some(StepVerifier {
+                    argv: vec!["/bin/true".into()],
+                    cwd: None,
+                    timeout_seconds: 15,
+                    max_output_bytes: 1024,
+                }),
+                delegate: Some(StepDelegation { subagent: true }),
+            }],
+        },
+        "2026-11-24T00:00:00Z".into(),
+    )
+    .unwrap();
+    goal.confirm_plan("2026-11-24T00:01:00Z".into()).unwrap();
+    let goal = store.create(goal).await.unwrap();
+    let lease = store
+        .acquire_lease(goal.id, "worker".into(), 1_000, Some(60_000))
+        .await
+        .unwrap();
+    let dispatch = store
+        .begin_dispatch(&lease, RunId::new(), 2_000, "2026-11-24T00:02:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 3_000).await.unwrap();
+
+    let task_id = crate::task_queue::TaskId::new();
+    let goal = store
+        .begin_delegation(&lease, &dispatch, task_id, "2026-11-24T00:02:30Z".into())
+        .await
+        .unwrap();
+    assert_eq!(goal.steps[0].subagent_id, Some(task_id));
+
+    let goal = store
+        .finish_unknown_dispatch(
+            &lease,
+            &dispatch,
+            DelegatedUsage {
+                request_count: 3,
+                tool_calls: 5,
+                active_seconds: 2,
+                usage: Some(Usage {
+                    input_tokens: Some(4),
+                    output_tokens: Some(2),
+                    cached_input_tokens: None,
+                    estimated: false,
+                }),
+            },
+            ErrorInfo {
+                code: "task_outcome_unknown".into(),
+                message: "the child worker disappeared".into(),
+            },
+            "2026-11-24T00:03:00Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(goal.status, GoalStatus::Waiting);
+    assert_eq!(
+        goal.wait_reason,
+        Some(GoalWaitReason::UnknownSideEffect { step_id })
+    );
+    assert_eq!(goal.steps[0].status, StepStatus::Failed);
+    assert_eq!(goal.steps[0].subagent_id, Some(task_id));
+    assert_eq!(goal.usage.model_requests, 3);
+    assert_eq!(goal.usage.tool_calls, 5);
+    assert_eq!(goal.usage.active_seconds, 2);
+    assert_eq!(goal.usage.input_tokens, 4);
+    assert_eq!(goal.usage.output_tokens, 2);
+
+    // Conservative stop: the same worker may not dispatch a replay.
+    assert!(
+        store
+            .begin_dispatch(&lease, RunId::new(), 4_000, "2026-11-24T00:04:00Z".into())
+            .await
+            .is_err()
+    );
+    // Only explicit resolution requeues, and it drops the stale child link.
+    let goal = store
+        .resolve_unknown_step(goal.id, step_id, true, "2026-11-24T00:05:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(goal.status, GoalStatus::Ready);
+    assert_eq!(goal.steps[0].status, StepStatus::Pending);
+    assert!(goal.steps[0].subagent_id.is_none());
+}
+
+#[tokio::test]
+async fn sqlite_v2_migrates_to_v3_and_preserves_goals() {
+    let root = tempfile::tempdir().unwrap();
+    let data_dir = root.path().join("data");
+    let goals_dir = data_dir.join("goals");
+    fs::create_dir_all(&goals_dir).unwrap();
+    let db_path = goals_dir.join("goals.sqlite3");
+
+    let (legacy_goal, _) = single_manual_goal();
+    let legacy_raw = serde_json::to_string(&legacy_goal).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE goals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                workspace TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                status TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                record TEXT NOT NULL
+            );
+            CREATE INDEX goals_status ON goals(status, revision);
+            CREATE TABLE leases (
+                goal_id TEXT PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,
+                owner TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE workspace_leases (
+                workspace TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE dispatches (
+                goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+                step_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                run_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                PRIMARY KEY(goal_id, step_id, attempt)
+            );
+            CREATE INDEX dispatches_state ON dispatches(state);
+            CREATE TABLE step_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+                step_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                run_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                exit_code INTEGER,
+                record_json TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
+            CREATE INDEX step_verifications_lookup
+                ON step_verifications(goal_id, step_id, attempt DESC, id DESC);
+            PRAGMA application_id = 1397182257;
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO goals(id,session_id,workspace,profile,status,revision,record) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                legacy_goal.id.0.to_string(),
+                legacy_goal.session_id.0.to_string(),
+                legacy_goal.workspace.to_string_lossy().into_owned(),
+                legacy_goal.profile,
+                "ready",
+                i64::try_from(legacy_goal.revision).unwrap(),
+                legacy_raw,
+            ],
+        )
+        .unwrap();
+    }
+    fs::set_permissions(&db_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let store = GoalStore::open(&data_dir, vec![]).unwrap();
+    let loaded = store.load(legacy_goal.id).await.unwrap();
+    assert_eq!(loaded.id, legacy_goal.id);
+    assert!(loaded.steps.iter().all(|step| step.delegate.is_none()));
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let ver: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(ver, 3);
+    let has_subagent_id: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('dispatches') WHERE name='subagent_id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_subagent_id, 1);
 }

@@ -1,14 +1,15 @@
 //! Independent versioned SQLite storage for Goal lifecycle and dispatch intents.
 
 use super::{
-    DispatchState, GoalDispatch, GoalId, GoalRecord, GoalStatus, GoalWaitReason, StepId,
-    StepStatus, StepVerificationResult, StepVerificationStatus, StepVerifier, VerificationSpec,
-    failure,
+    DelegatedUsage, DispatchState, GoalDispatch, GoalId, GoalRecord, GoalStatus, GoalWaitReason,
+    StepId, StepStatus, StepVerificationResult, StepVerificationStatus, StepVerifier,
+    VerificationSpec, failure,
 };
 use crate::{
     contract::{BoundaryError, ErrorInfo, RunId},
     metrics::RunMetrics,
     redaction,
+    task_queue::TaskId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use std::{
@@ -21,7 +22,7 @@ use std::{
 };
 
 const DATABASE_NAME: &str = "goals.sqlite3";
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const APPLICATION_ID: i64 = 0x5347_4f31;
 const MAX_GOAL_ROWS: usize = 512;
 const V1_TO_V2_MIGRATION: &str = r#"
@@ -38,6 +39,9 @@ CREATE TABLE IF NOT EXISTS step_verifications (
 );
 CREATE INDEX IF NOT EXISTS step_verifications_lookup
     ON step_verifications(goal_id, step_id, attempt DESC, id DESC);
+"#;
+const V2_TO_V3_MIGRATION: &str = r#"
+ALTER TABLE dispatches ADD COLUMN subagent_id TEXT;
 "#;
 const SCHEMA: &str = r#"
 CREATE TABLE goals (
@@ -67,6 +71,7 @@ CREATE TABLE dispatches (
     attempt INTEGER NOT NULL,
     run_id TEXT NOT NULL,
     state TEXT NOT NULL,
+    subagent_id TEXT,
     PRIMARY KEY(goal_id, step_id, attempt)
 );
 CREATE INDEX dispatches_state ON dispatches(state);
@@ -415,13 +420,20 @@ impl GoalStore {
                 .pragma_update(None, "user_version", SCHEMA_VERSION)
                 .map_err(sql_error)?;
             transaction.commit().map_err(sql_error)?;
-        } else if application == APPLICATION_ID && version == 1 {
+        } else if application == APPLICATION_ID && (1..SCHEMA_VERSION).contains(&version) {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sql_error)?;
-            transaction
-                .execute_batch(V1_TO_V2_MIGRATION)
-                .map_err(sql_error)?;
+            if version <= 1 {
+                transaction
+                    .execute_batch(V1_TO_V2_MIGRATION)
+                    .map_err(sql_error)?;
+            }
+            if version <= 2 {
+                transaction
+                    .execute_batch(V2_TO_V3_MIGRATION)
+                    .map_err(sql_error)?;
+            }
             transaction
                 .pragma_update(None, "user_version", SCHEMA_VERSION)
                 .map_err(sql_error)?;
@@ -816,6 +828,93 @@ impl GoalStore {
         .map_err(|_| storage("goal_storage", "Goal storage worker failed"))?
     }
 
+    /// Persist the link between a running Goal step and the persistent
+    /// subagent task that now drives it (`D-112`). The dispatch audit row keeps
+    /// the same link for later recovery and reporting.
+    pub async fn begin_delegation(
+        &self,
+        lease: &GoalLease,
+        dispatch: &GoalDispatch,
+        subagent_id: TaskId,
+        now: String,
+    ) -> Result<GoalRecord, BoundaryError> {
+        let connection = self.connection.clone();
+        let secrets = self.secrets.clone();
+        let goal_id = lease.goal_id;
+        let owner = lease.owner.clone();
+        let step_id = dispatch.step_id;
+        let attempt = dispatch.attempt;
+        let run_id = dispatch.run_id;
+        tokio::task::spawn_blocking(move || {
+            let mut connection = connection
+                .lock()
+                .map_err(|_| storage("goal_storage", "Goal database lock poisoned"))?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_error)?;
+            // This is part of the active attempt's own bookkeeping, so an
+            // owner match is enough; expiry must not strand a running attempt.
+            let current: Option<String> = transaction
+                .query_row(
+                    "SELECT owner FROM leases WHERE goal_id=?1",
+                    [id(goal_id.0)],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            if current.as_deref() != Some(owner.as_str()) {
+                return Err(storage("goal_lease_lost", "Goal worker lease was lost"));
+            }
+            let mut record = load_connection(&transaction, goal_id)?;
+            if record.status != GoalStatus::Running || record.current_step != Some(step_id) {
+                return Err(storage(
+                    "goal_dispatch_conflict",
+                    "Goal step is not waiting for a delegated subagent",
+                ));
+            }
+            let index = record
+                .steps
+                .iter()
+                .position(|step| step.id == step_id)
+                .ok_or_else(|| storage("goal_corrupt", "Goal step disappeared"))?;
+            if record.steps[index].run_id != Some(run_id)
+                || record.steps[index].delegate.is_none()
+                || record.steps[index].subagent_id.is_some()
+            {
+                return Err(storage(
+                    "goal_dispatch_conflict",
+                    "Goal step cannot link this delegated subagent attempt",
+                ));
+            }
+            record.steps[index].subagent_id = Some(subagent_id);
+            record.updated_at = now;
+            record.revision = record.revision.saturating_add(1);
+            record.validate()?;
+            write_connection(&transaction, &record, &secrets, None)?;
+            let changed = transaction
+                .execute(
+                    "UPDATE dispatches SET subagent_id=?4 WHERE goal_id=?1 AND step_id=?2 AND attempt=?3",
+                    params![
+                        id(goal_id.0),
+                        id(step_id.0),
+                        i64::from(attempt),
+                        id(subagent_id.0)
+                    ],
+                )
+                .map_err(sql_error)?;
+            if changed != 1 {
+                return Err(storage(
+                    "goal_dispatch_conflict",
+                    "Goal step dispatch disappeared before delegation",
+                ));
+            }
+            transaction.commit().map_err(sql_error)?;
+            Ok(record)
+        })
+        .await
+        .map_err(|_| storage("goal_storage", "Goal storage worker failed"))?
+    }
+
     pub async fn finish_dispatch(
         &self,
         lease: &GoalLease,
@@ -826,6 +925,119 @@ impl GoalStore {
     ) -> Result<GoalRecord, BoundaryError> {
         self.finish_dispatch_with_verification(lease, dispatch, summary, None, metrics, now)
             .await
+    }
+
+    /// Finish a delegated step whose child outcome is unknown or cancelled.
+    /// The step is failed and the Goal enters the existing conservative
+    /// `waiting / unknown_side_effect` state; the dispatch is marked `unknown`
+    /// and no replay occurs without an explicit resolution.
+    pub async fn finish_unknown_dispatch(
+        &self,
+        lease: &GoalLease,
+        dispatch: &GoalDispatch,
+        usage: DelegatedUsage,
+        error: ErrorInfo,
+        now: String,
+    ) -> Result<GoalRecord, BoundaryError> {
+        let connection = self.connection.clone();
+        let secrets = self.secrets.clone();
+        let goal_id = lease.goal_id;
+        let owner = lease.owner.clone();
+        let step_id = dispatch.step_id;
+        let attempt = dispatch.attempt;
+        let run_id = dispatch.run_id;
+        tokio::task::spawn_blocking(move || {
+            let mut connection = connection
+                .lock()
+                .map_err(|_| storage("goal_storage", "Goal database lock poisoned"))?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_error)?;
+            let current: Option<String> = transaction
+                .query_row(
+                    "SELECT owner FROM leases WHERE goal_id=?1",
+                    [id(goal_id.0)],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            if current.as_deref() != Some(owner.as_str()) {
+                return Err(storage("goal_lease_lost", "Goal worker lease was lost"));
+            }
+            let mut record = load_connection(&transaction, goal_id)?;
+            if record.current_step != Some(step_id)
+                || record
+                    .steps
+                    .iter()
+                    .find(|step| step.id == step_id)
+                    .and_then(|step| step.run_id)
+                    != Some(run_id)
+            {
+                return Err(storage(
+                    "goal_dispatch_conflict",
+                    "Goal step is not waiting for this delegated attempt",
+                ));
+            }
+            record.usage.model_requests = record
+                .usage
+                .model_requests
+                .saturating_add(usage.request_count.max(1));
+            record.usage.tool_calls = record.usage.tool_calls.saturating_add(usage.tool_calls);
+            record.usage.active_seconds = record
+                .usage
+                .active_seconds
+                .saturating_add(usage.active_seconds);
+            record.usage.add_incomplete_usage(usage.usage.as_ref());
+            let index = record
+                .steps
+                .iter()
+                .position(|step| step.id == step_id)
+                .ok_or_else(|| storage("goal_corrupt", "Goal step disappeared"))?;
+            record.steps[index].status = StepStatus::Failed;
+            record.steps[index].last_result = None;
+            record.steps[index].last_verification = None;
+            record.current_step = None;
+            let requested_status = record.status;
+            record.phase = crate::goal::GoalPhase::Verifying;
+            record.wait_reason = Some(GoalWaitReason::UnknownSideEffect { step_id });
+            record.failure = Some(error);
+            match requested_status {
+                GoalStatus::Cancelled => {
+                    record.status = GoalStatus::Cancelled;
+                    record.phase = crate::goal::GoalPhase::Finished;
+                    record.wait_reason = None;
+                }
+                GoalStatus::Paused => {
+                    record.status = GoalStatus::Paused;
+                }
+                _ => {
+                    record.status = GoalStatus::Waiting;
+                }
+            }
+            if record.budget_exhausted()
+                && !matches!(
+                    record.wait_reason,
+                    Some(GoalWaitReason::UnknownSideEffect { .. })
+                )
+            {
+                record.status = GoalStatus::LimitReached;
+                record.phase = crate::goal::GoalPhase::Finished;
+            }
+            record.updated_at = now;
+            record.revision = record.revision.saturating_add(1);
+            record.validate()?;
+            write_connection(&transaction, &record, &secrets, None)?;
+            transaction
+                .execute(
+                    "UPDATE dispatches SET state='unknown' WHERE goal_id=?1 AND step_id=?2 AND attempt=?3",
+                    params![id(goal_id.0), id(step_id.0), i64::from(attempt)],
+                )
+                .map_err(sql_error)?;
+            transaction.commit().map_err(sql_error)?;
+            Ok(record)
+        })
+        .await
+        .map_err(|_| storage("goal_storage", "Goal storage worker failed"))?
     }
 
     pub async fn finish_dispatch_with_verification(
@@ -1411,6 +1623,7 @@ impl GoalStore {
                 step.run_id = None;
                 step.last_result = None;
                 step.last_verification = None;
+                step.subagent_id = None;
                 record.status = GoalStatus::Ready;
                 record.phase = crate::goal::GoalPhase::Executing;
                 record.wait_reason = None;
@@ -1587,6 +1800,7 @@ impl GoalStore {
             step.run_id = None;
             step.last_result = None;
             step.last_verification = None;
+            step.subagent_id = None;
             record.usage.replans = record.usage.replans.saturating_add(1);
             record.status = GoalStatus::Ready;
             record.phase = crate::goal::GoalPhase::Replanning;

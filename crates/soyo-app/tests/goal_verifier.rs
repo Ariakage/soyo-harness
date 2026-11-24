@@ -118,6 +118,7 @@ fn build_goal(
                 instruction: "Run step".into(),
                 depends_on: vec![],
                 verifier: Some(verifier),
+                delegate: None,
             }],
         },
         "2026-11-19T00:00:01Z".into(),

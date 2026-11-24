@@ -709,6 +709,7 @@ async fn goal_selector_status_and_pause_use_the_shared_store() {
                 instruction: "Implement the bounded TUI Goal panel".into(),
                 depends_on: vec![],
                 verifier: None,
+                delegate: None,
             }],
         },
         soyo_app::events::timestamp().unwrap(),

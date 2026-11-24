@@ -216,6 +216,7 @@ async fn goal_step_delegates_to_subagent_merges_and_passes_step_verifier() {
             instruction: "Create deliverable.txt via isolated subagent and merge it.".into(),
             depends_on: vec![],
             verifier: None,
+            delegate: None,
         }],
         acceptance: created.acceptance.clone(),
     };
