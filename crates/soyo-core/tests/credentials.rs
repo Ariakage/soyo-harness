@@ -601,7 +601,11 @@ async fn grant_gate_filters_resolution_by_kind_tool_workspace_and_expiry() {
     let now = soyo_core::credentials::now_rfc3339();
 
     // No grant → denied for every kind.
-    for kind in [GrantRunKind::Tool, GrantRunKind::Subagent, GrantRunKind::Profile] {
+    for kind in [
+        GrantRunKind::Tool,
+        GrantRunKind::Subagent,
+        GrantRunKind::Profile,
+    ] {
         assert_eq!(
             store
                 .resolve_granted(reference, &scope, &grants, kind, Some("srv"), None)
@@ -624,9 +628,11 @@ async fn grant_gate_filters_resolution_by_kind_tool_workspace_and_expiry() {
         server_id: "srv".into(),
     };
     grants.put(&wrong_tool).unwrap();
-    assert!(!grants
-        .check(reference, GrantRunKind::Tool, Some("srv"), None, &now)
-        .unwrap());
+    assert!(
+        !grants
+            .check(reference, GrantRunKind::Tool, Some("srv"), None, &now)
+            .unwrap()
+    );
 
     // Matching tool grant authorizes; a different run kind still does not.
     let grant = soyo_core::credentials::CredentialGrant {
@@ -654,17 +660,19 @@ async fn grant_gate_filters_resolution_by_kind_tool_workspace_and_expiry() {
         panic!("wrong kind")
     };
     assert_eq!(value.expose(), "granted-secret");
-    assert!(store
-        .resolve_granted(
-            reference,
-            &scope,
-            &grants,
-            GrantRunKind::Subagent,
-            Some("srv"),
-            None,
-        )
-        .await
-        .is_err());
+    assert!(
+        store
+            .resolve_granted(
+                reference,
+                &scope,
+                &grants,
+                GrantRunKind::Subagent,
+                Some("srv"),
+                None,
+            )
+            .await
+            .is_err()
+    );
 
     // Workspace-bound grant only applies to that workspace. Ids are `ws_` +
     // 64 lowercase hex (the workspace identity digest shape).
@@ -680,15 +688,21 @@ async fn grant_gate_filters_resolution_by_kind_tool_workspace_and_expiry() {
         server_id: "srv".into(),
     };
     grants.put(&ws_grant).unwrap();
-    assert!(grants
-        .check(reference, GrantRunKind::Tool, None, Some(&ws_id), &now)
-        .unwrap());
-    assert!(!grants
-        .check(reference, GrantRunKind::Tool, None, Some(&other_ws), &now)
-        .unwrap());
-    assert!(!grants
-        .check(reference, GrantRunKind::Tool, None, None, &now)
-        .unwrap());
+    assert!(
+        grants
+            .check(reference, GrantRunKind::Tool, None, Some(&ws_id), &now)
+            .unwrap()
+    );
+    assert!(
+        !grants
+            .check(reference, GrantRunKind::Tool, None, Some(&other_ws), &now)
+            .unwrap()
+    );
+    assert!(
+        !grants
+            .check(reference, GrantRunKind::Tool, None, None, &now)
+            .unwrap()
+    );
 
     drop(directory);
 }
@@ -716,13 +730,17 @@ async fn expired_grant_never_applies_and_revoke_drops_grants() {
     };
     grants.put(&expired).unwrap();
     let now = soyo_core::credentials::now_rfc3339();
-    assert!(!grants
-        .check(reference, GrantRunKind::Tool, None, None, &now)
-        .unwrap());
-    assert!(store
-        .resolve_granted(reference, &scope, &grants, GrantRunKind::Tool, None, None)
-        .await
-        .is_err());
+    assert!(
+        !grants
+            .check(reference, GrantRunKind::Tool, None, None, &now)
+            .unwrap()
+    );
+    assert!(
+        store
+            .resolve_granted(reference, &scope, &grants, GrantRunKind::Tool, None, None)
+            .await
+            .is_err()
+    );
 
     // Revoke drops the grant records alongside the tombstone.
     let removed = store.revoke(reference, &scope).await.unwrap();
@@ -770,7 +788,11 @@ async fn rotate_secret_keeps_reference_bumps_revision_and_fails_oauth() {
         .unwrap();
     assert_eq!(
         store
-            .rotate_secret(oauth_ref, &scope, SecretValue::new("unused-rotate-value").unwrap())
+            .rotate_secret(
+                oauth_ref,
+                &scope,
+                SecretValue::new("unused-rotate-value").unwrap()
+            )
             .await
             .unwrap_err()
             .0
@@ -804,8 +826,8 @@ async fn file_backend_zero_drift_revoked_record_has_no_material() {
     store.revoke(reference, &scope).await.unwrap();
     // The tombstone keeps metadata but the on-disk record must not carry the
     // secret material — the historical invariant `revoked == material.is_none()`.
-    let raw = std::fs::read_to_string(store.protected_path().join(format!("{reference}.json")))
-        .unwrap();
+    let raw =
+        std::fs::read_to_string(store.protected_path().join(format!("{reference}.json"))).unwrap();
     assert!(!raw.contains("drift-check"));
     let record: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(record["metadata"]["revoked"], true);

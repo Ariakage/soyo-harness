@@ -61,10 +61,11 @@ impl CredentialGrant {
             || self.run_kinds.len() > 3
             || self.workspaces.len() > MAX_WORKSPACES
             || self.tools.len() > MAX_TOOLS
-            || self
-                .workspaces
-                .iter()
-                .any(|id| crate::global_memory::WorkspaceIdentity { id: id.clone() }.validate().is_err())
+            || self.workspaces.iter().any(|id| {
+                crate::global_memory::WorkspaceIdentity { id: id.clone() }
+                    .validate()
+                    .is_err()
+            })
             || self.tools.iter().any(|name| {
                 name.is_empty()
                     || name.len() > 128
@@ -147,20 +148,28 @@ impl GrantStore {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => {
-                return Err(error("credential_io", "Grant directory could not be created"));
+                return Err(error(
+                    "credential_io",
+                    "Grant directory could not be created",
+                ));
             }
         }
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(&path)
             .map_err(|_| {
-                error("credential_permissions", "Grant directory is unavailable or a symlink")
+                error(
+                    "credential_permissions",
+                    "Grant directory is unavailable or a symlink",
+                )
             })?;
-        let metadata = file.metadata().map_err(|_| {
-            error("credential_io", "Grant directory metadata is unavailable")
-        })?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| error("credential_io", "Grant directory metadata is unavailable"))?;
         use std::os::unix::fs::MetadataExt;
-        if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0
+        if !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
         {
             return Err(error(
                 "credential_permissions",
@@ -184,7 +193,7 @@ impl GrantStore {
                 return Err(error(
                     "credential_permissions",
                     "Grant file is unavailable or is a symlink",
-                ))
+                ));
             }
         };
         let mut bytes = Vec::new();
@@ -193,7 +202,10 @@ impl GrantStore {
             .read_to_end(&mut bytes)
             .map_err(|_| error("credential_io", "Grant file could not be read"))?;
         if bytes.len() > MAX_GRANT_BYTES {
-            return Err(error("credential_limit", "Grant file exceeds its size limit"));
+            return Err(error(
+                "credential_limit",
+                "Grant file exceeds its size limit",
+            ));
         }
         let grant: CredentialGrant = serde_json::from_slice(&bytes)
             .map_err(|_| error("credential_corrupt", "Grant record is malformed"))?;
@@ -213,25 +225,27 @@ impl GrantStore {
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         let outcome = (|| {
-            let mut file = self.dir.open_with(&temporary, &options).map_err(|_| {
-                error("credential_io", "Grant temporary file could not be created")
-            })?;
+            let mut file = self
+                .dir
+                .open_with(&temporary, &options)
+                .map_err(|_| error("credential_io", "Grant temporary file could not be created"))?;
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
                 .map_err(|_| error("credential_io", "Grant record could not be saved"))?;
             self.dir
-                .rename(
-                    &temporary,
-                    &self.dir,
-                    format!("{}.json", grant.grant_id),
-                )
+                .rename(&temporary, &self.dir, format!("{}.json", grant.grant_id))
                 .map_err(|_| error("credential_io", "Grant record replacement failed"))?;
             self.dir
                 .try_clone()
                 .map_err(|_| error("credential_io", "Grant directory could not be cloned"))?
                 .into_std_file()
                 .sync_all()
-                .map_err(|_| error("credential_io", "Grant commit durability could not be confirmed"))
+                .map_err(|_| {
+                    error(
+                        "credential_io",
+                        "Grant commit durability could not be confirmed",
+                    )
+                })
         })();
         if outcome.is_err() {
             let _ = self.dir.remove_file(&temporary);
@@ -258,10 +272,7 @@ impl GrantStore {
         let name = format!("{grant_id}.json");
         match self.dir.remove_file(&name) {
             Ok(()) => {
-                let _ = self
-                    .dir
-                    .try_clone()
-                    .map(|f| f.into_std_file().sync_all());
+                let _ = self.dir.try_clone().map(|f| f.into_std_file().sync_all());
                 Ok(true)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -434,19 +445,54 @@ mod tests {
             &["ws_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
         );
         let ws = "ws_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        assert!(g.applies(GrantRunKind::Tool, Some("exec"), Some(ws), "2099-01-01T00:00:00Z"));
-        assert!(!g.applies(GrantRunKind::Subagent, Some("exec"), Some(ws), "2099-01-01T00:00:00Z"));
-        assert!(!g.applies(GrantRunKind::Tool, Some("read"), Some(ws), "2099-01-01T00:00:00Z"));
-        assert!(!g.applies(GrantRunKind::Tool, Some("exec"), Some("ws_other"), "2099-01-01T00:00:00Z"));
-        assert!(!g.applies(GrantRunKind::Tool, Some("exec"), None, "2099-01-01T00:00:00Z"));
+        assert!(g.applies(
+            GrantRunKind::Tool,
+            Some("exec"),
+            Some(ws),
+            "2099-01-01T00:00:00Z"
+        ));
+        assert!(!g.applies(
+            GrantRunKind::Subagent,
+            Some("exec"),
+            Some(ws),
+            "2099-01-01T00:00:00Z"
+        ));
+        assert!(!g.applies(
+            GrantRunKind::Tool,
+            Some("read"),
+            Some(ws),
+            "2099-01-01T00:00:00Z"
+        ));
+        assert!(!g.applies(
+            GrantRunKind::Tool,
+            Some("exec"),
+            Some("ws_other"),
+            "2099-01-01T00:00:00Z"
+        ));
+        assert!(!g.applies(
+            GrantRunKind::Tool,
+            Some("exec"),
+            None,
+            "2099-01-01T00:00:00Z"
+        ));
     }
 
     #[test]
     fn expired_grant_never_applies() {
         let mut g = grant(&[GrantRunKind::Tool], &[], &[]);
         g.expires_at = Some("2020-01-01T00:00:00Z".into());
-        assert!(!g.applies(GrantRunKind::Tool, Some("exec"), None, "2020-01-01T00:00:00Z"));
-        assert!(!g.applies(GrantRunKind::Tool, Some("exec"), None, "2021-01-01T00:00:00Z"));
+        assert!(!g.applies(
+            GrantRunKind::Tool,
+            Some("exec"),
+            None,
+            "2020-01-01T00:00:00Z"
+        ));
+        assert!(!g.applies(
+            GrantRunKind::Tool,
+            Some("exec"),
+            None,
+            "2021-01-01T00:00:00Z"
+        ));
     }
 
     #[test]
@@ -473,19 +519,33 @@ mod tests {
         g.reference = reference();
         store.put(&g).unwrap();
         let now = now_rfc3339();
-        assert!(store
-            .check(reference(), GrantRunKind::Tool, Some("exec"), None, &now)
-            .unwrap());
-        assert!(!store
-            .check(reference(), GrantRunKind::Subagent, Some("exec"), None, &now)
-            .unwrap());
-        assert!(!store
-            .check(reference(), GrantRunKind::Tool, Some("read"), None, &now)
-            .unwrap());
+        assert!(
+            store
+                .check(reference(), GrantRunKind::Tool, Some("exec"), None, &now)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .check(
+                    reference(),
+                    GrantRunKind::Subagent,
+                    Some("exec"),
+                    None,
+                    &now
+                )
+                .unwrap()
+        );
+        assert!(
+            !store
+                .check(reference(), GrantRunKind::Tool, Some("read"), None, &now)
+                .unwrap()
+        );
         // remove_for clears grants on revoke.
         assert_eq!(store.remove_for(reference()).unwrap(), 1);
-        assert!(!store
-            .check(reference(), GrantRunKind::Tool, Some("exec"), None, &now)
-            .unwrap());
+        assert!(
+            !store
+                .check(reference(), GrantRunKind::Tool, Some("exec"), None, &now)
+                .unwrap()
+        );
     }
 }

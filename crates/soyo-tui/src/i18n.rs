@@ -955,8 +955,7 @@ pub(crate) mod checkpoint {
     pub const PREPARE_BEFORE_REVIEW: &str = "Prepare an operation before review";
     pub const PUBLICATION_IDLE: &str = "Checkpoint operations require an idle runtime";
     pub const PREPARE_BEFORE_CONFIRM: &str = "Prepare and review an operation before confirmation";
-    pub const CONFIRMATION_MISMATCH: &str =
-        "Confirmation must match the displayed operation ID";
+    pub const CONFIRMATION_MISMATCH: &str = "Confirmation must match the displayed operation ID";
     pub const REVIEW_EXPIRED: &str = "Checkpoint review expired";
     pub const CHANGE_IDLE: &str =
         "Checkpoint captures and restores can be prepared and confirmed while idle";

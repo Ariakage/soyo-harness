@@ -168,11 +168,7 @@ fn model(
     /// environment; `api_key_ref` resolves through the credential store (scope
     /// bound to `server_id = "profile.<name>"` and the exact `base_url`), so a
     /// revoked/rotated reference fails the *next* resolve immediately.
-    fn profile_api_key(
-        config: &Config,
-        name: &str,
-        p: &Profile,
-    ) -> Result<String, BoundaryError> {
+    fn profile_api_key(config: &Config, name: &str, p: &Profile) -> Result<String, BoundaryError> {
         if let Some(reference) = &p.api_key_ref {
             let reference = reference
                 .parse::<soyo_core::credentials::CredentialRef>()

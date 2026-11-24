@@ -334,9 +334,10 @@ impl AgentRuntime {
             };
             let canonical = std::fs::canonicalize(&workspace)
                 .map_err(|_| error("checkpoint_scope", "Workspace is unavailable"))?;
-            let bound = state
-                .store
-                .bind_workspace(&canonical, session_id, &state.protected_roots)?;
+            let bound =
+                state
+                    .store
+                    .bind_workspace(&canonical, session_id, &state.protected_roots)?;
             bound.capture(&[path], source, &AtomicBool::new(false))?;
             Ok::<_, BoundaryError>(())
         })

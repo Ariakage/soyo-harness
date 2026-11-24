@@ -46,8 +46,12 @@ impl CredentialBackend {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum MaterialRecord {
-    Secret { value: String },
-    OAuth { credentials: Box<rmcp::transport::auth::StoredCredentials> },
+    Secret {
+        value: String,
+    },
+    OAuth {
+        credentials: Box<rmcp::transport::auth::StoredCredentials>,
+    },
 }
 
 impl MaterialRecord {
@@ -63,9 +67,7 @@ impl MaterialRecord {
     }
     pub(crate) fn into_public(self) -> Result<CredentialValue, BoundaryError> {
         match self {
-            Self::Secret { value } => {
-                super::SecretValue::new(value).map(CredentialValue::Secret)
-            }
+            Self::Secret { value } => super::SecretValue::new(value).map(CredentialValue::Secret),
             Self::OAuth { credentials } => Ok(CredentialValue::OAuth(credentials)),
         }
     }
@@ -110,7 +112,10 @@ impl fmt::Debug for CredentialStore {
 impl CredentialStore {
     /// Open the default file backend at `path` — the historical
     /// `FileCredentialStore::open` signature.
-    pub fn open(path: impl AsRef<Path>, secrets: Arc<SecretRegistry>) -> Result<Self, BoundaryError> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        secrets: Arc<SecretRegistry>,
+    ) -> Result<Self, BoundaryError> {
         Self::open_file(path, secrets)
     }
 

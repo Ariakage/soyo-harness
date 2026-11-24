@@ -47,12 +47,10 @@ impl SdkCredentialStore for McpCredentialStore {
         let reference = self.reference;
         let scope = self.scope.clone();
         let inner = self.store.inner().clone();
-        tokio::task::spawn_blocking(move || {
-            inner.index.save_oauth(reference, &scope, credentials)
-        })
-        .await
-        .map_err(|_| auth_error(worker_error()))?
-        .map_err(auth_error)
+        tokio::task::spawn_blocking(move || inner.index.save_oauth(reference, &scope, credentials))
+            .await
+            .map_err(|_| auth_error(worker_error()))?
+            .map_err(auth_error)
     }
     async fn clear(&self) -> Result<(), AuthError> {
         self.store

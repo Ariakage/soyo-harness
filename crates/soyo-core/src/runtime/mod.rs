@@ -996,13 +996,9 @@ impl AgentRuntime {
     ) -> Result<Self, BoundaryError> {
         let runtime = self.with_secret_registry(registry.clone())?;
         runtime.dispatcher.configure_mcp_discovery(&settings)?;
-        runtime.services.configure_mcp(
-            settings,
-            environment,
-            authorizer,
-            registry,
-            credentials,
-        )?;
+        runtime
+            .services
+            .configure_mcp(settings, environment, authorizer, registry, credentials)?;
         Ok(runtime)
     }
     /// Register the host-controlled web tool surface. Settings default to

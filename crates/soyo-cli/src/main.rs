@@ -707,9 +707,8 @@ async fn approve_checkpoint_restore(
             "Checkpoint restore requires --yes or a controlling terminal",
         ));
     }
-    let terminal = Terminal::open(secrets.to_vec()).map_err(|_| {
-        cli_error("terminal_error", "cannot open controlling terminal")
-    })?;
+    let terminal = Terminal::open(secrets.to_vec())
+        .map_err(|_| cli_error("terminal_error", "cannot open controlling terminal"))?;
     let cancel = soyo_app::interaction::RunCancellation::new();
     // Print the bounded review to stderr so the JSON result stays on stdout.
     let mut rendered = String::from("\nCheckpoint restore review\n");
@@ -747,7 +746,12 @@ async fn approve_checkpoint_restore(
         .map(|changes| {
             changes
                 .iter()
-                .filter_map(|change| change.get("path").and_then(|p| p.as_str()).map(str::to_owned))
+                .filter_map(|change| {
+                    change
+                        .get("path")
+                        .and_then(|p| p.as_str())
+                        .map(str::to_owned)
+                })
                 .collect::<std::collections::BTreeSet<String>>()
         });
     Ok(approved)

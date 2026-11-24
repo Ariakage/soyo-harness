@@ -181,7 +181,10 @@ fn ensure_clean_metadata(value: &str, secrets: &[String]) -> Result<(), Boundary
     }
     Err(sensitive())
 }
-fn http_settings<'a>(config: &'a Config, server: &str) -> Result<&'a HttpMcpSettings, BoundaryError> {
+fn http_settings<'a>(
+    config: &'a Config,
+    server: &str,
+) -> Result<&'a HttpMcpSettings, BoundaryError> {
     let configured = config
         .mcp
         .servers
@@ -215,7 +218,9 @@ fn open_store(
     )?;
     Ok((store, registry))
 }
-fn open_grants(store: &soyo_core::credentials::CredentialStore) -> Result<GrantStore, BoundaryError> {
+fn open_grants(
+    store: &soyo_core::credentials::CredentialStore,
+) -> Result<GrantStore, BoundaryError> {
     GrantStore::open(store.protected_path())
 }
 /// Persist configured `[[credentials.grants]]` entries plus return them merged
@@ -338,11 +343,18 @@ fn audit(
         use std::os::unix::fs::PermissionsExt;
         let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
-    writeln!(file, "{encoded}")
-        .map_err(|_| failure("credential_io", "credential audit event could not be written"))
+    writeln!(file, "{encoded}").map_err(|_| {
+        failure(
+            "credential_io",
+            "credential audit event could not be written",
+        )
+    })
 }
 
-pub(crate) async fn perform(config: &Config, action: &CredentialsAction) -> Result<serde_json::Value, BoundaryError> {
+pub(crate) async fn perform(
+    config: &Config,
+    action: &CredentialsAction,
+) -> Result<serde_json::Value, BoundaryError> {
     let cancel = Arc::new(super::Cancel::default());
     let _listener = super::signals::CancellationListener::start(cancel.clone())
         .map_err(|_| failure("signal_error", "Signal handlers could not be installed"))?;
@@ -350,7 +362,9 @@ pub(crate) async fn perform(config: &Config, action: &CredentialsAction) -> Resu
     match action {
         CredentialsAction::List => {
             let metadata = store.list().await?;
-            let grants = open_grants(&store).and_then(|store| store.list()).unwrap_or_default();
+            let grants = open_grants(&store)
+                .and_then(|store| store.list())
+                .unwrap_or_default();
             Ok(serde_json::json!({
                 "backend": store.backend_name(),
                 "system_backend_supported": CredentialBackend::system_supported(),
@@ -384,7 +398,10 @@ pub(crate) async fn perform(config: &Config, action: &CredentialsAction) -> Resu
                 "grants_removed": removed,
             }))
         }
-        CredentialsAction::Rotate { reference, from_env } => {
+        CredentialsAction::Rotate {
+            reference,
+            from_env,
+        } => {
             let reference: CredentialRef = reference.parse()?;
             let value = SecretValue::new(config.secret(from_env)?.to_owned())?;
             let mut secrets = known_credentials(config)?;
@@ -401,7 +418,9 @@ pub(crate) async fn perform(config: &Config, action: &CredentialsAction) -> Resu
                         "Credential reference was not found",
                     )
                 })?;
-            let revision = store.rotate_secret(reference, &metadata.scope, value).await?;
+            let revision = store
+                .rotate_secret(reference, &metadata.scope, value)
+                .await?;
             audit(
                 &store,
                 "rotate",
@@ -457,7 +476,12 @@ pub(crate) async fn perform(config: &Config, action: &CredentialsAction) -> Resu
                 .map_err(|_| failure("invalid_args", "grant id is not a UUID"))?;
             let removed = open_grants(&store)?.remove(grant_id)?;
             if removed {
-                audit(&store, "grant_revoke", None, serde_json::json!({"grant_id": grant_id}))?;
+                audit(
+                    &store,
+                    "grant_revoke",
+                    None,
+                    serde_json::json!({"grant_id": grant_id}),
+                )?;
             }
             Ok(serde_json::json!({"grant_id": grant_id, "removed": removed}))
         }

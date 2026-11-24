@@ -4,8 +4,8 @@
 //! [`CheckpointAdmin::open_locked`].
 use clap::Subcommand;
 use serde_json::{Value, json};
-use soyo_app::checkpoint_admin::{CheckpointAction, CheckpointAdmin};
 pub use soyo_app::checkpoint_admin::resolve_session_id;
+use soyo_app::checkpoint_admin::{CheckpointAction, CheckpointAdmin};
 use soyo_core::{
     checkpoint::{CheckpointToken, RestoreOperation},
     config::Config,
@@ -140,8 +140,7 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), BoundaryError> {
     Ok(())
 }
 fn parse_session(value: &str) -> Result<SessionId, BoundaryError> {
-    soyo_app::session::parse_id(value)
-        .map_err(|_| failure("invalid_args", "Session id is invalid"))
+    soyo_app::session::parse_id(value).map_err(|_| failure("invalid_args", "Session id is invalid"))
 }
 fn parse_token(id: &str, sha256: &str) -> Result<CheckpointToken, BoundaryError> {
     let token = CheckpointToken {
@@ -239,7 +238,10 @@ fn resolve_future(path: &Path) -> Result<PathBuf, BoundaryError> {
                     parent
                         .file_name()
                         .ok_or_else(|| {
-                            failure("checkpoint_path", "Checkpoint path has no existing ancestor")
+                            failure(
+                                "checkpoint_path",
+                                "Checkpoint path has no existing ancestor",
+                            )
                         })?
                         .to_owned(),
                 );
@@ -319,7 +321,10 @@ pub enum Prepared {
     /// bounded redacted JSON shown to the user; `confirm` applies it once.
     Restore {
         review: Value,
-        confirm: Box<dyn FnOnce(Option<std::collections::BTreeSet<String>>) -> Result<Value, BoundaryError> + Send>,
+        confirm: Box<
+            dyn FnOnce(Option<std::collections::BTreeSet<String>>) -> Result<Value, BoundaryError>
+                + Send,
+        >,
     },
 }
 
@@ -365,7 +370,8 @@ pub fn run_cancellable(
         }
         CheckpointAction_::Create { paths, label, .. } => {
             let admin = CheckpointAdmin::open_locked(config, secrets.clone(), session_id)?;
-            let prepared = admin.prepare(CheckpointAction::Create { paths }, label, cancel.as_ref())?;
+            let prepared =
+                admin.prepare(CheckpointAction::Create { paths }, label, cancel.as_ref())?;
             let value = admin.confirm(prepared, cancel.as_ref(), |_| Ok(()))?;
             return Ok(Prepared::Done(safe_output(
                 json!({"schema_version":1,"kind":"checkpoint","action":"create","ok":true,"data":value}),
@@ -417,7 +423,10 @@ pub fn run_cancellable(
             if *yes {
                 let workspace = admin.workspace_root().clone();
                 let protected = admin.protected_roots().into_iter().next().ok_or_else(|| {
-                    failure("checkpoint_config", "Checkpoint protected root is unavailable")
+                    failure(
+                        "checkpoint_config",
+                        "Checkpoint protected root is unavailable",
+                    )
                 })?;
                 let value = admin.confirm(
                     prepared,
@@ -433,7 +442,10 @@ pub fn run_cancellable(
             // the approved path set and calls `confirm` once on its worker.
             let workspace = admin.workspace_root().clone();
             let protected = admin.protected_roots().into_iter().next().ok_or_else(|| {
-                failure("checkpoint_config", "Checkpoint protected root is unavailable")
+                failure(
+                    "checkpoint_config",
+                    "Checkpoint protected root is unavailable",
+                )
             })?;
             let secrets_confirm = secrets.clone();
             let cancel_confirm = cancel.clone();

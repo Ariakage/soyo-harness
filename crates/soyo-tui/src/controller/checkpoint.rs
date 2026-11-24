@@ -27,9 +27,22 @@ enum QueryKind {
     Recover,
 }
 enum PrepareKind {
-    Create { paths: Vec<String>, label: String },
-    Accept { id: String, sha256: String, paths: Vec<String>, label: String },
-    Restore { id: String, sha256: String, paths: Vec<String>, label: String },
+    Create {
+        paths: Vec<String>,
+        label: String,
+    },
+    Accept {
+        id: String,
+        sha256: String,
+        paths: Vec<String>,
+        label: String,
+    },
+    Restore {
+        id: String,
+        sha256: String,
+        paths: Vec<String>,
+        label: String,
+    },
 }
 
 fn failure(code: &str, message: impl Into<String>) -> BoundaryError {
@@ -94,8 +107,12 @@ impl App {
             settings: self.checkpoint_settings(),
             ..Default::default()
         });
-        self.checkpoint_command(if argument.is_empty() { "list" } else { argument })
-            .await?;
+        self.checkpoint_command(if argument.is_empty() {
+            "list"
+        } else {
+            argument
+        })
+        .await?;
         Ok(())
     }
     fn checkpoint_worker(&mut self, task: Task) -> Result<()> {
@@ -122,11 +139,12 @@ impl App {
                 }
                 Task::Query(QueryKind::Diff { id, sha256 }) => {
                     let admin = CheckpointAdmin::open(&config, secrets, session_id)?;
-                    let token = parse_token(&id, &sha256)
-                        .map_err(|error| match error.downcast::<BoundaryError>() {
+                    let token = parse_token(&id, &sha256).map_err(|error| {
+                        match error.downcast::<BoundaryError>() {
                             Ok(error) => *error,
                             Err(error) => failure("invalid_args", error.to_string()),
-                        })?;
+                        }
+                    })?;
                     CheckpointUiResult::View(admin.diff_view(&token, &flag)?)
                 }
                 Task::Query(QueryKind::Recover) => {
@@ -252,7 +270,11 @@ impl App {
         }
         match verb {
             "help" => self.checkpoint_lines(
-                text::HELP_LINES.iter().copied().map(str::to_owned).collect(),
+                text::HELP_LINES
+                    .iter()
+                    .copied()
+                    .map(str::to_owned)
+                    .collect(),
             ),
             "reject" => {
                 self.checkpoint_pending = None;
@@ -281,10 +303,7 @@ impl App {
                 if argument.trim() != prepared.operation_id() {
                     return Err(text::CONFIRMATION_MISMATCH.into());
                 }
-                let prepared = self
-                    .checkpoint_pending
-                    .take()
-                    .ok_or(text::REVIEW_EXPIRED)?;
+                let prepared = self.checkpoint_pending.take().ok_or(text::REVIEW_EXPIRED)?;
                 if let Some(panel) = &mut self.state.checkpoint_panel {
                     panel.confirmation = None;
                 }
@@ -329,9 +348,7 @@ impl App {
         }
         match result {
             CheckpointUiResult::View(data) if !cancelled => {
-                self.checkpoint_next = data["next_page"]
-                    .as_u64()
-                    .map(|page| page.to_string());
+                self.checkpoint_next = data["next_page"].as_u64().map(|page| page.to_string());
                 self.checkpoint_lines(json_lines(&data)?);
             }
             CheckpointUiResult::Review(prepared)

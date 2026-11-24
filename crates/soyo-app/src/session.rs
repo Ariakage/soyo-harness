@@ -287,7 +287,8 @@ pub async fn resume(
                 registry,
                 soyo_core::checkpoint::CheckpointLimits::default(),
             )?;
-            let bound = store.bind_workspace(&workspace, id, &[store.protected_path().to_owned()])?;
+            let bound =
+                store.bind_workspace(&workspace, id, &[store.protected_path().to_owned()])?;
             let journals = bound.recover(&std::sync::atomic::AtomicBool::new(false))?;
             Ok::<usize, Box<dyn std::error::Error>>(journals.len())
         })

@@ -218,8 +218,7 @@ impl McpSettings {
                         })
                         || settings.env_credential_refs.len() > 32
                         || settings.env_credential_refs.iter().any(|(destination, _)| {
-                            !valid_env_name(destination)
-                                || settings.env.contains_key(destination)
+                            !valid_env_name(destination) || settings.env.contains_key(destination)
                         })
                     {
                         return Err(error(

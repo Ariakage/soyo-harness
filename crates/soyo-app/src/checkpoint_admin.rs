@@ -243,8 +243,11 @@ impl CheckpointAdmin {
     }
     fn workspace(&self, cancel: &AtomicBool) -> Result<CheckpointWorkspace, BoundaryError> {
         check_cancel(cancel)?;
-        self.store
-            .bind_workspace(&self.workspace, self.session_id, &self.protected_root_list())
+        self.store.bind_workspace(
+            &self.workspace,
+            self.session_id,
+            &self.protected_root_list(),
+        )
     }
     /// Host-private roots that checkpoint paths must never resolve into.
     fn protected_root_list(&self) -> Vec<PathBuf> {
@@ -268,9 +271,8 @@ impl CheckpointAdmin {
         Ok(())
     }
     fn safe(&self, mut value: Value) -> Result<Value, BoundaryError> {
-        let encoded = serde_json::to_vec(&value).map_err(|_| {
-            failure("checkpoint_output", "Checkpoint view cannot be encoded")
-        })?;
+        let encoded = serde_json::to_vec(&value)
+            .map_err(|_| failure("checkpoint_output", "Checkpoint view cannot be encoded"))?;
         if encoded.len() > MAX_VIEW_BYTES {
             return Err(failure(
                 "checkpoint_view_limit",
@@ -462,7 +464,9 @@ impl CheckpointAdmin {
 
 /// User-selected administration action for [`CheckpointAdmin::prepare`].
 pub enum CheckpointAction<'a> {
-    Create { paths: &'a [String] },
+    Create {
+        paths: &'a [String],
+    },
     Accept {
         checkpoint: &'a CheckpointToken,
         paths: &'a [String],

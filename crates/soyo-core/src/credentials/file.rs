@@ -362,7 +362,8 @@ impl IndexDir {
         let mut record = self.read_record(reference)?;
         check_scope(&record, scope)?;
         if let Some(material) = record.material.take() {
-            self.inner.secrets
+            self.inner
+                .secrets
                 .register(&material.into_public()?.secrets()?)?;
         }
         if !record.metadata.revoked {
@@ -388,7 +389,9 @@ impl IndexDir {
     }
 
     /// List only identities and scope metadata, including tombstones.
-    pub(in crate::credentials) fn list_metadata(&self) -> Result<Vec<CredentialMetadata>, BoundaryError> {
+    pub(in crate::credentials) fn list_metadata(
+        &self,
+    ) -> Result<Vec<CredentialMetadata>, BoundaryError> {
         let _index = FileLock::acquire(&self.inner.dir, "index.lock")?;
         let mut result = Vec::new();
         for reference in self.references()? {
@@ -456,17 +459,22 @@ impl IndexDir {
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         let outcome = (|| {
-            let mut file = self.inner.dir.open_with(&temporary, &options).map_err(|_| {
-                error(
-                    "credential_io",
-                    "Private credential temporary file could not be created",
-                )
-            })?;
+            let mut file = self
+                .inner
+                .dir
+                .open_with(&temporary, &options)
+                .map_err(|_| {
+                    error(
+                        "credential_io",
+                        "Private credential temporary file could not be created",
+                    )
+                })?;
             private_file(&file)?;
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
                 .map_err(|_| error("credential_io", "Credential record could not be saved"))?;
-            self.inner.dir
+            self.inner
+                .dir
                 .rename(
                     &temporary,
                     &self.inner.dir,
@@ -483,7 +491,8 @@ impl IndexDir {
     }
 
     fn sync_directory(&self) -> Result<(), BoundaryError> {
-        self.inner.dir
+        self.inner
+            .dir
             .try_clone()
             .map_err(|_| error("credential_io", "Credential directory could not be cloned"))?
             .into_std_file()
@@ -527,7 +536,8 @@ impl IndexDir {
         }
         match record.material {
             Some(MaterialRecord::OAuth { credentials }) => {
-                self.inner.secrets
+                self.inner
+                    .secrets
                     .register(&CredentialValue::OAuth(credentials.clone()).secrets()?)?;
                 Ok(Some(*credentials))
             }
@@ -622,7 +632,8 @@ impl IndexDir {
         if encoded_current != encoded_rejected {
             return Ok(());
         }
-        self.inner.secrets
+        self.inner
+            .secrets
             .register(&CredentialValue::OAuth(current.clone()).secrets()?)?;
         record.material = None;
         record.metadata.revoked = true;
@@ -649,7 +660,8 @@ impl MaterialBackend for FileMaterialBackend {
     }
     fn put(&self, reference: CredentialRef, record: &MaterialRecord) -> Result<(), BoundaryError> {
         let _lock = self.index.data_lock(reference)?;
-        self.index.write_inline_material(reference, record.clone(), false)
+        self.index
+            .write_inline_material(reference, record.clone(), false)
     }
     fn get(&self, reference: CredentialRef) -> Result<MaterialRecord, BoundaryError> {
         let _lock = self.index.data_lock(reference)?;

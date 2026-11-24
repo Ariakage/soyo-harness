@@ -19,8 +19,8 @@ use super::{
 };
 use crate::contract::BoundaryError;
 use security_framework::item::{
-    ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, ItemUpdateOptions,
-    ItemUpdateValue, Limit, SearchResult,
+    ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, ItemUpdateOptions, ItemUpdateValue,
+    Limit, SearchResult,
 };
 use std::sync::Mutex;
 
@@ -40,14 +40,12 @@ impl SystemMaterialBackend {
         let mut probe = ItemSearchOptions::new();
         probe.class(ItemClass::generic_password());
         probe.limit(Limit::Max(0));
-        probe
-            .search()
-            .map_err(|_| {
-                error(
-                    "credential_backend_unavailable",
-                    "System credential backend (macOS Keychain) is unavailable",
-                )
-            })?;
+        probe.search().map_err(|_| {
+            error(
+                "credential_backend_unavailable",
+                "System credential backend (macOS Keychain) is unavailable",
+            )
+        })?;
         Ok(Self {
             lock: Mutex::new(()),
         })
@@ -109,9 +107,10 @@ impl MaterialBackend for SystemMaterialBackend {
         search.load_data(true);
         search.limit(Limit::Max(1));
         let results = search.search().map_err(|_| self.backend_error())?;
-        let item = results.into_iter().next().ok_or_else(|| {
-            error("credential_not_found", "Credential reference was not found")
-        })?;
+        let item = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| error("credential_not_found", "Credential reference was not found"))?;
         let SearchResult::Data(bytes) = item else {
             return Err(self.backend_error());
         };
