@@ -212,6 +212,8 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 - 独立 worktree／sandbox 与合并流程，避免多个 Agent 同时覆盖同一文件。
 - 取消、失败、超时和资源预算向子任务传递，汇总结果仍需实际验证。
 
+**已确认增量（D-109、D-110，方向定案）**：(1) **多层委派**——`[subagents] max_depth` 可配置（默认 1，上限 3），子孙代经 `derive_for_subagent` 逐级收紧、预算沿链向顶层汇总、`PLAN` 切态沿整棵子树取消；(2) **持久子 Agent**（依赖多层先行）——`subagent_spawn persistent: true` 落库 `TaskStore`（`run_kind = "subagent"`），父 run detach 后由后台 worker 续跑，`subagent_merge` 按既有冲突检测合回，绝不自动重放未确认副作用。
+
 先做受控父子任务，再考虑多层委派与更复杂协作。验收包含两个独立改动的隔离、冲突处理、总预算与取消；子任务需要有可核验的产物与合并结果。
 
 ## F-10 联网读取与浏览器
@@ -271,6 +273,8 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 > **实现状态（D-105、D-106）**：首批已落地冻结面与 SDK crate。`soyo-ipc::protocol::PUBLISHED_METHODS` 声明对外 16 个 method（helper 握手 2、会话 6、运行 4、压缩 1、任务 3），`soyo-host` dispatch 测试保证表内方法不被改名成 `unknown_method`；冻结面与版本规则、D-107 断线语义见 [SDK 文档](sdk.md)。`crates/soyo-sdk` 为新 default-member：`SoyoClient` 收敛 `connect_or_spawn`/`connect`＋`helper_compat` 探测，`new_session`/`resume_session`/`attach`/`detach` 携带 D-107 语义（detach 不取消、attach 重绑会话），`submit_prompt`/`run_prompt`/`compact_session` 返回 `RunEventStream`＋`RunHandle`，`run_events` 经 `read_session_snapshot` 按 `run_id` 过滤持久事件；错误收敛为 `SdkError`（`Helper`/`Disconnected`/`IncompatibleHelper`/`InvalidInput`）。stdio 版 Soyo-as-MCP-Server（D-108）与远程增量仍属后续批次。
 - 按需求增加远程 worker、工作区／产物同步、执行身份、凭据与配额隔离（待决策：传输形态、身份模型、同步协议）。
 - Soyo 作为 MCP Server 对外提供任务能力属于这一层的可选入口，不能通过暴露接口绕开原权限与 sandbox（D-108：stdio 版先行）。
+
+**已确认远程增量（D-113，方向定案）**：三条路径全部采纳、按递进交付——(a) SSH 隧道转发（helper 可配置 TCP 监听 + 文档化 `ssh -L` 用法，零新协议）；(b) HTTP(S)+bearer token transport（`[remote]` opt-in 端点、token 经 F-18 `CredentialStore` 签发为 `run_kinds = "remote"` grant、同一 wire 契约经 HTTPS 承载）；(c) 远程 worker+内容寻址同步（`soyo remote-worker` 独立进程，依赖 D-110 持久子 Agent 的 TaskStore 通道）。三条路径共享「断线≠取消」语义。
 
 验收：一个外部程序能通过 SDK／服务执行和取消任务，断连、重连及远端失败不会丢失状态或重复副作用。
 
@@ -357,6 +361,8 @@ DEV-043 至 DEV-046 已实现并通过本机离线验收。
 Goal 生命周期与四工作模式分别表达。每次工具执行经过当前权限与隔离边界，自动阶段需要显式有限授权及总预算，目标完成以验收证据判定。具体方案见[Goal 设计](goal.md)，任务为 DEV-069 至 DEV-074。
 
 **N6 规划中增量（已由 `D-080` 定案，未实现）**：S3（`DEV-091` 至 `DEV-092`）在不重做现有 N4 Goal 的前提下，为 `GoalStep` 增加可选宿主验证器（仅结构化 argv，禁隐式 shell 拼接）；支持 `goal plan` 提议或 `--plan-file`／CLI 指定，并强制经 `goal confirm` 人工展示锁定，执行走原生沙箱与现行 `deny`／权限规则（`PLAN` 禁执行），`goal start --auto` 仅在宿主退出码为 0 并落库证据后前进、失败则在预算与 `max_replans` 内重规划，模型自述不得单独关闭 Goal。详见[N6 规划](n6-plan.md)。
+
+**已确认增量（D-111、D-112，方向定案）**：(1) **自动推进链**——`auto_chain` opt-in 下步骤 `passed`＋verifier 集合未变＋预算未超＋无 unknown 时自动调度后续步骤，verifier 失败仍 `replan_failed_step`、unknown/取消/`!verifiers_confirmed()` 保守停止；(2) **Goal×子 Agent 委派**（依赖 D-109/D-110）——`GoalStep.delegate.subagent` 使委派 step 的 Run spawn 持久子 Agent，step verifier 仍在 Goal 宿主侧执行，结合 auto_chain 可实现跨 run 自动 Goal 链。
 
 ## F-21 实验性程序化工具编排（已实现 · opt-in）
 
