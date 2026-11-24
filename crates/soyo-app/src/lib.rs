@@ -10,6 +10,7 @@ pub mod interaction;
 pub mod mcp;
 pub mod memory_admin;
 pub mod observe;
+pub mod remote_worker;
 pub mod session;
 pub mod subagent_jobs;
 pub mod task_queue;

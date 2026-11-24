@@ -66,7 +66,7 @@ pub struct TaskRunOutcome {
     pub streamed: bool,
 }
 
-fn failed_result(
+pub(crate) fn failed_result(
     session_id: soyo_core::contract::SessionId,
     run_id: RunId,
     error: BoundaryError,

@@ -14,6 +14,8 @@ mod memory_commands;
 mod module_commands;
 mod observe;
 mod plugin_commands;
+mod remote_commands;
+mod remote_worker;
 mod signals;
 mod subagent_commands;
 mod task_commands;
@@ -246,6 +248,14 @@ enum Command {
     Kill,
     /// Serve Soyo as an MCP server over stdio (D-108: run/status/cancel via the helper).
     McpServer,
+    /// Run dispatched tasks on a remote machine (D-113 path (c)).
+    #[command(name = "remote-worker")]
+    RemoteWorker(remote_worker::RemoteWorkerArgs),
+    /// Inspect remote workers and apply their results (D-117).
+    Remote {
+        #[command(subcommand)]
+        action: remote_commands::RemoteAction,
+    },
 }
 #[derive(Subcommand)]
 enum RoutingAction {
@@ -1958,6 +1968,20 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Goal { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),
             Ok(config) => match goal_commands::run(action, cli, &config).await {
+                Ok(code) => code,
+                Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
+            },
+        },
+        Some(Command::Remote { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match remote_commands::run(action, cli, &config).await {
+                Ok(code) => code,
+                Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
+            },
+        },
+        Some(Command::RemoteWorker(args)) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match remote_worker::run(args, &config).await {
                 Ok(code) => code,
                 Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
             },
