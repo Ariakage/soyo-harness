@@ -29,6 +29,10 @@ pub struct McpSettings {
     pub defer_loading: McpDeferMode,
     #[serde(default = "default_defer_threshold")]
     pub defer_threshold: usize,
+    /// Opt-in SEP-2663 `tasks/*` long-running task support (`F-02`). Disabled
+    /// by default; when off, task responses stay fail-closed and no host task
+    /// tools register regardless of server advertisement.
+    pub tasks: McpTasksSettings,
     pub servers: BTreeMap<String, McpServerSettings>,
 }
 
@@ -37,9 +41,19 @@ impl Default for McpSettings {
         Self {
             defer_loading: McpDeferMode::Auto,
             defer_threshold: DEFAULT_MCP_DEFER_THRESHOLD,
+            tasks: McpTasksSettings::default(),
             servers: BTreeMap::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpTasksSettings {
+    /// Advertise the SEP-2663 tasks extension and allow host `mcp_*_task`
+    /// tools. `false` keeps the tool directory unchanged even when a server
+    /// advertises the extension.
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
