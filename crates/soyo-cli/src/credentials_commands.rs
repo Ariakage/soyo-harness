@@ -359,9 +359,9 @@ pub(crate) async fn perform(
     let cancel = Arc::new(super::Cancel::default());
     let _listener = super::signals::CancellationListener::start(cancel.clone())
         .map_err(|_| failure("signal_error", "Signal handlers could not be installed"))?;
-    let (store, _registry) = open_store(config)?;
     match action {
         CredentialsAction::List => {
+            let (store, _registry) = open_store(config)?;
             let metadata = store.list().await?;
             let grants = open_grants(&store)
                 .and_then(|store| store.list())
@@ -375,6 +375,7 @@ pub(crate) async fn perform(
         }
         CredentialsAction::Revoke { reference } => {
             let reference: CredentialRef = reference.parse()?;
+            let (store, _registry) = open_store(config)?;
             let metadata = store
                 .list()
                 .await?
@@ -407,6 +408,7 @@ pub(crate) async fn perform(
             let value = SecretValue::new(config.secret(from_env)?.to_owned())?;
             let mut secrets = known_credentials(config)?;
             secrets.push(value.expose().to_owned());
+            let (store, _registry) = open_store(config)?;
             store.secret_registry().register(&secrets)?;
             let metadata = store
                 .list()
@@ -435,6 +437,7 @@ pub(crate) async fn perform(
         }
         CredentialsAction::Grant(args) => {
             let reference: CredentialRef = args.reference.parse()?;
+            let (store, _registry) = open_store(config)?;
             let metadata = store
                 .list()
                 .await?
@@ -475,6 +478,7 @@ pub(crate) async fn perform(
             let grant_id: uuid::Uuid = grant_id
                 .parse()
                 .map_err(|_| failure("invalid_args", "grant id is not a UUID"))?;
+            let (store, _registry) = open_store(config)?;
             let removed = open_grants(&store)?.remove(grant_id)?;
             if removed {
                 audit(
@@ -487,6 +491,7 @@ pub(crate) async fn perform(
             Ok(serde_json::json!({"grant_id": grant_id, "removed": removed}))
         }
         CredentialsAction::GrantList => {
+            let (store, _registry) = open_store(config)?;
             let grants = materialize_grants(config, &open_grants(&store)?)?;
             Ok(serde_json::to_value(grants)
                 .map_err(|_| failure("output_error", "grants could not be encoded"))?)
@@ -497,6 +502,9 @@ pub(crate) async fn perform(
             secrets.push(value.expose().to_owned());
             let scope = scope(config, &args.server, &args.scope, &secrets)?;
             approve(&scope, args.approve_scopes, &secrets, cancel.as_ref()).await?;
+            // Only create the store (and its private state dir) once the value,
+            // scope and approval all pass — a rejected import leaves no dirs.
+            let (store, _registry) = open_store(config)?;
             let reference = store.create(scope, CredentialValue::Secret(value)).await?;
             audit(
                 &store,
@@ -514,6 +522,7 @@ pub(crate) async fn perform(
             )?;
             let scope = scope(config, &args.server, &args.scope, &secrets)?;
             approve(&scope, args.approve_scopes, &secrets, cancel.as_ref()).await?;
+            let (store, _registry) = open_store(config)?;
             let interactive = io::stdin().is_terminal() && io::stderr().is_terminal();
             let flow = soyo_core::credentials::McpOAuthLogin::begin(
                 store.clone(),
