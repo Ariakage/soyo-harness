@@ -11,6 +11,7 @@ mod logs;
 mod mcp;
 mod memory_commands;
 mod module_commands;
+mod observe;
 mod plugin_commands;
 mod signals;
 mod task_commands;
@@ -171,6 +172,12 @@ enum Command {
         #[command(subcommand)]
         action: RoutingAction,
     },
+    /// Aggregate persisted per-run usage and cost attribution (read-only).
+    Usage(observe::UsageArgs),
+    /// Replay a persisted session timeline without executing anything.
+    Replay(observe::ReplayArgs),
+    /// Pinpoint the first failure in a persisted session or run timeline.
+    Diagnose(observe::DiagnoseArgs),
     /// Build, query, or inspect the external workspace symbol index.
     Index {
         #[command(subcommand)]
@@ -271,6 +278,8 @@ enum IndexAction {
 #[derive(Subcommand)]
 enum SessionAction {
     Export(export::ExportArgs),
+    /// Render a run-scoped Markdown/JSON report and publish it to `--file`.
+    Report(observe::ReportArgs),
     List {
         #[arg(long, default_value_t = 1)]
         page: u64,
@@ -1769,13 +1778,25 @@ async fn query_sessions(
     if let SessionAction::Export(args) = action {
         return export::run(config, args).await;
     }
+    if let SessionAction::Report(args) = action {
+        let cancel = Arc::new(Cancel::new());
+        let outcome = observe::run(
+            config,
+            &observe::ObserveCommand::Report(args.clone()),
+            cancel,
+        )
+        .await;
+        return Ok(observe::emit(config, outcome, "session.report"));
+    }
     session::check_roots(config, &config.cwd, config.mode)?;
     let store = {
         let owned = config.clone();
         soyo_app::offload(move || session::open(&owned)).await?
     };
     let mut data = match action {
-        SessionAction::Export(_) => return Err("invalid export routing".into()),
+        SessionAction::Export(_) | SessionAction::Report(_) => {
+            return Err("invalid export routing".into());
+        }
         SessionAction::List { page } => {
             let offset = page
                 .checked_sub(1)
@@ -2011,6 +2032,45 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
             cli.config.is_some(),
             *strict,
         ),
+        Some(Command::Usage(args)) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => {
+                let cancel = Arc::new(Cancel::new());
+                let outcome = observe::run(
+                    &config,
+                    &observe::ObserveCommand::Usage(args.clone()),
+                    cancel,
+                )
+                .await;
+                observe::emit(&config, outcome, "usage.report")
+            }
+        },
+        Some(Command::Replay(args)) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => {
+                let cancel = Arc::new(Cancel::new());
+                let outcome = observe::run(
+                    &config,
+                    &observe::ObserveCommand::Replay(args.clone()),
+                    cancel,
+                )
+                .await;
+                observe::emit(&config, outcome, "session.replay")
+            }
+        },
+        Some(Command::Diagnose(args)) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => {
+                let cancel = Arc::new(Cancel::new());
+                let outcome = observe::run(
+                    &config,
+                    &observe::ObserveCommand::Diagnose(args.clone()),
+                    cancel,
+                )
+                .await;
+                observe::emit(&config, outcome, "session.diagnose")
+            }
+        },
         Some(Command::Helper) => {
             helper_commands::run_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await
         }
