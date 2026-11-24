@@ -85,6 +85,30 @@ pub fn masked_capture_engine_supported(target: &str) -> bool {
     MASKED_CAPTURE_ENGINE_TARGETS.contains(&target)
 }
 
+/// The Rust target triple the running binary was built for, e.g.
+/// `aarch64-apple-darwin`. The capture engine is a patched Chromium
+/// `headless_shell` selected by the triple of the environment it executes in,
+/// so this value is the distribution key for a natively executed engine.
+pub fn host_target_triple() -> String {
+    // `std::env::consts` carries the build target's components rather than the
+    // full triple, so the triple is reconstructed from arch + vendor/os/env.
+    // The OS-to-triple segment is not one-to-one with `target_os` (e.g.
+    // `macos` -> `darwin`); unknown combinations keep `target_os` verbatim so
+    // an unlisted platform degrades to a triple the engine set never matches.
+    let arch = std::env::consts::ARCH;
+    let os = std::env::consts::OS;
+    let os_segment = match os {
+        "macos" => "apple-darwin",
+        "ios" => "apple-ios",
+        "linux" => "unknown-linux-gnu",
+        "windows" => "pc-windows-msvc",
+        "freebsd" => "unknown-freebsd",
+        "android" => "linux-android",
+        other => other,
+    };
+    format!("{arch}-{os_segment}")
+}
+
 /// The protocol version the pinned worker echoes during initialization.
 pub const WORKER_PROTOCOL_VERSION: &str = "2025-11-25";
 

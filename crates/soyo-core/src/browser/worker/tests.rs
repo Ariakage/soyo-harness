@@ -1001,6 +1001,26 @@ fn fake_provider(
     (provider, launcher)
 }
 
+fn provider_with_engine_target(
+    fixture: &IdentityFixture,
+    connection: Arc<FakeConnection>,
+    capture_engine_target: &str,
+) -> PlaywrightMcpProvider {
+    let launcher: Arc<dyn WorkerLauncher> = FakeLauncher::new(vec![Ok(connection)]);
+    let verifier = Arc::new(LocalWorkerIdentityVerifier::new(fixture.settings.clone()));
+    let planner = Arc::new(LocalWorkerLaunchPlanner::new(fixture.settings.clone()));
+    PlaywrightMcpProvider::assemble(
+        "test",
+        verifier,
+        planner,
+        Some(fixture.settings.clone()),
+        launcher,
+        None,
+        offline_sandbox_inspector(),
+        capture_engine_target.to_string(),
+    )
+}
+
 #[test]
 fn verifies_each_pinned_identity_file() {
     let fixture = fixture_identity();
@@ -3631,8 +3651,12 @@ async fn pinned_worker_declares_masked_screenshot_capability_and_fails_closed() 
     let connection = FakeConnection::new(pinned_catalog());
     let (provider, _) = fake_provider(&fixture, connection.clone());
     let facts = provider.facts();
-    assert!(facts.screenshots);
-    assert!(facts.screenshot_masking);
+    // Native backend: the managed Chromium runs on the host, so the captured
+    // engine target is the host triple and screenshots/masking are claimed
+    // only when the host triple is in `MASKED_CAPTURE_ENGINE_TARGETS`.
+    let engine_supported = masked_capture_engine_supported(&host_target_triple());
+    assert_eq!(facts.screenshots, engine_supported);
+    assert_eq!(facts.screenshot_masking, engine_supported);
     assert!(facts.downloads);
     assert!(facts.uploads);
     let cancel = SwitchCancel(Arc::new(AtomicBool::new(false)));
@@ -3657,6 +3681,57 @@ async fn pinned_worker_declares_masked_screenshot_capability_and_fails_closed() 
     assert!(shot.masked);
     assert_eq!(shot.url.as_deref(), Some("http://allowed.example/"));
     provider.shutdown(&cancel).await.unwrap();
+}
+
+#[test]
+fn facts_claim_masked_capture_only_on_distributed_engine_targets() {
+    let fixture = fixture_identity();
+    // A target that ships the patched headless_shell claims both flags.
+    let supported = provider_with_engine_target(
+        &fixture,
+        FakeConnection::new(pinned_catalog()),
+        "aarch64-unknown-linux-gnu",
+    );
+    let facts = supported.facts();
+    assert!(facts.screenshots);
+    assert!(facts.screenshot_masking);
+    assert!(facts.downloads);
+    assert!(facts.uploads);
+
+    // Unlisted targets — the linux-x86_64 pending build and every non-Linux
+    // host — never claim the masked screenshot capability, but keep the
+    // download/upload channels that do not depend on the patched engine.
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ] {
+        let provider =
+            provider_with_engine_target(&fixture, FakeConnection::new(pinned_catalog()), target);
+        let facts = provider.facts();
+        assert!(!facts.screenshots, "{target} must never claim screenshots");
+        assert!(
+            !facts.screenshot_masking,
+            "{target} must never claim screenshot masking"
+        );
+        assert!(facts.downloads, "{target} keeps downloads");
+        assert!(facts.uploads, "{target} keeps uploads");
+    }
+}
+
+#[test]
+fn host_target_triple_matches_rust_triple_shape() {
+    let triple = host_target_triple();
+    // The triple carries arch + vendor/os; never empty, never the bare arch.
+    assert!(triple.contains('-'));
+    assert!(triple.starts_with(std::env::consts::ARCH));
+    #[cfg(target_os = "macos")]
+    assert!(triple.ends_with("apple-darwin"));
+    #[cfg(target_os = "linux")]
+    assert!(triple.ends_with("unknown-linux-gnu"));
+    #[cfg(target_os = "windows")]
+    assert!(triple.ends_with("pc-windows-msvc"));
 }
 
 #[test]

@@ -78,6 +78,13 @@ pub struct PlaywrightMcpProvider {
     /// opt-in modes (persisted profile, remote CDP) supply a degraded set that
     /// fails closed on capabilities the private channel cannot provide.
     pub(super) facts_override: Option<BrowserFacts>,
+    /// The target triple the masked capture engine executes under for this
+    /// backend. The engine is a patched Linux `headless_shell`, so a backend
+    /// reports `screenshots`/`screenshot_masking` only when its engine target
+    /// is in [`MASKED_CAPTURE_ENGINE_TARGETS`]. Native runs the engine on the
+    /// host triple; the VM backend runs it on the guest Linux triple of the
+    /// host architecture.
+    pub(super) capture_engine_target: String,
     /// When the private isolated-stdio channels are unavailable (persisted
     /// profile or remote attach), the private-channel sandbox evidence cannot
     /// be produced. Backends with an independent evidence source (the VM /proc
@@ -141,6 +148,10 @@ impl PlaywrightMcpProvider {
             launcher,
             Some(environment_factory),
             sandbox_inspector,
+            // The managed Chromium executes inside the dedicated Linux guest,
+            // so the capture engine target is the guest Linux triple of the
+            // host architecture — never the host OS triple.
+            format!("{}-unknown-linux-gnu", std::env::consts::ARCH),
         ))
     }
 
@@ -164,9 +175,13 @@ impl PlaywrightMcpProvider {
             launcher,
             environment_factory,
             Arc::new(ProcfsChromiumSandboxInspector::default()),
+            // The managed Chromium executes natively on the host, so the
+            // capture engine target is the host triple itself.
+            host_target_triple(),
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn assemble(
         label: &'static str,
         identity_verifier: Arc<dyn WorkerIdentityVerifier>,
@@ -175,6 +190,7 @@ impl PlaywrightMcpProvider {
         launcher: Arc<dyn WorkerLauncher>,
         environment_factory: Option<Arc<dyn BrowserEnvironmentFactory>>,
         sandbox_inspector: Arc<dyn ChromiumSandboxInspector>,
+        capture_engine_target: String,
     ) -> Self {
         Self {
             label,
@@ -186,6 +202,7 @@ impl PlaywrightMcpProvider {
             sandbox_inspector,
             network_log: None,
             facts_override: None,
+            capture_engine_target,
             sandbox_evidence_disabled: false,
             inner: AsyncMutex::new(ProviderInner {
                 connection: None,
@@ -689,13 +706,18 @@ impl BrowserProvider for PlaywrightMcpProvider {
         if let Some(facts) = &self.facts_override {
             return facts.clone();
         }
+        // Pre-capture masking is delegated through the private host-only
+        // `soyo/browser/captureScreenshot` channel; runtime capture still
+        // fails closed unless the worker and the patched capture engine
+        // confirm masking. The engine is a patched Linux `headless_shell`
+        // shipped only for the targets in `MASKED_CAPTURE_ENGINE_TARGETS`:
+        // a backend whose engine target is not distributed never claims the
+        // screenshot capability, so the model-facing tool fails closed.
+        let masked_capture = masked_capture_engine_supported(&self.capture_engine_target);
         BrowserFacts {
             provider: format!("playwright-mcp-{PLAYWRIGHT_MCP_VERSION}"),
-            // Pre-capture masking is delegated through the private host-only
-            // `soyo/browser/captureScreenshot` channel; runtime capture still
-            // fails closed unless the worker and native capture engine confirm masking.
-            screenshots: true,
-            screenshot_masking: true,
+            screenshots: masked_capture,
+            screenshot_masking: masked_capture,
             downloads: true,
             uploads: true,
         }

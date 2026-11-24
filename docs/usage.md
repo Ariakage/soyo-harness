@@ -143,7 +143,7 @@ Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工�
 - **PLAN 存储路径冲突**：将数据、状态和缓存目录放在工作区之外后重试，包括通过 XDG 变量选择的目录。
 - **会话正在使用、配置改变或恢复失败**：先确认是否有另一 Soyo 进程持有会话锁；核对 profile 和工作区。不要删除数据库或 WAL 来强行解锁；涉及损坏时先保留原文件及备份，再调查错误。
 - **日志不可写**：检查状态目录权限与剩余空间；日志路径不应指向不安全的符号链接。
-- **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
+- **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵（含各目标平台定制遮蔽 `headless_shell` 分发覆盖：仅 `linux-arm64` 已分发，`linux-x86_64` 待构建，macOS 双架构因引擎为 Linux ELF 显式不覆盖）；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
 
 ```sh
 ./target/release/soyo --config "$config_path" doctor
