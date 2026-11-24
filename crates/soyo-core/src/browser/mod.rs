@@ -41,7 +41,9 @@ use artifacts::BrowserArtifactStore;
 use credentials::BrowserCredentialBroker;
 use serde::{Deserialize, Serialize};
 pub use settings::{
-    BrowserCredentialPurpose, BrowserCredentialSettings, BrowserCredentialSlot, BrowserFileSettings,
+    BrowserAttachMode, BrowserCredentialPurpose, BrowserCredentialSettings, BrowserCredentialSlot,
+    BrowserDevServiceForward, BrowserDevServiceSettings, BrowserFileSettings,
+    BrowserProfileRetention, BrowserProfileSettings, BrowserRemoteSettings,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -205,6 +207,18 @@ pub struct BrowserSettings {
     pub credentials: BrowserCredentialSettings,
     /// Bounded download/upload file broker.
     pub files: BrowserFileSettings,
+    /// Opt-in remote/CDP attach on the dedicated VM backend. The pinned worker
+    /// still runs inside the VM; only the browser it drives is remote. Facts
+    /// fail closed because a remote browser cannot satisfy the private-channel
+    /// contract. Mutually exclusive with `profile`.
+    pub remote: BrowserRemoteSettings,
+    /// Opt-in persisted login/profile state on the dedicated VM backend.
+    /// Deliberate relaxation of the per-Run scratch guarantee; OFF by default
+    /// (decision D-096). Mutually exclusive with `remote`.
+    pub profile: BrowserProfileSettings,
+    /// Opt-in exact loopback dev-service forwarding entries on the dedicated
+    /// VM backend.
+    pub dev_service: BrowserDevServiceSettings,
 }
 impl Default for BrowserSettings {
     fn default() -> Self {
@@ -217,6 +231,9 @@ impl Default for BrowserSettings {
             network: network::BrowserNetworkSettings::default(),
             credentials: BrowserCredentialSettings::default(),
             files: BrowserFileSettings::default(),
+            remote: BrowserRemoteSettings::default(),
+            profile: BrowserProfileSettings::default(),
+            dev_service: BrowserDevServiceSettings::default(),
         }
     }
 }
@@ -234,9 +251,14 @@ impl BrowserSettings {
         self.network.validate()?;
         self.credentials.validate()?;
         self.files.validate()?;
-        if self.vm.enabled && self.worker.enabled {
+        self.remote.validate()?;
+        self.profile
+            .validate(self.vm.enabled, self.remote.enabled)?;
+        self.dev_service
+            .validate(self.vm.enabled, self.network.enabled)?;
+        if self.worker.enabled && self.vm.enabled {
             return Err(invalid_config(
-                "Browser must select either the native worker or the VM backend, not both",
+                "Browser must select either the native worker or the dedicated VM backend",
             ));
         }
         if self.vm.enabled && !self.network.enabled {
@@ -244,7 +266,55 @@ impl BrowserSettings {
                 "The VM browser backend requires an explicit browser network policy",
             ));
         }
+        // `[browser.remote]` is an attach mode on the dedicated VM backend,
+        // not a third backend: the pinned worker still runs inside the VM and
+        // stays identity-verified. The CDP endpoint is dialed from inside the
+        // VM's private network namespace, so it needs the matching dev-service
+        // forward to reach the host-side browser it names.
+        if self.remote.enabled {
+            if !self.vm.enabled || self.worker.enabled {
+                return Err(invalid_config(
+                    "The remote browser attach mode requires the dedicated VM backend",
+                ));
+            }
+            let (host, port) = self
+                .remote
+                .endpoint_host_port()
+                .ok_or_else(|| invalid_config("The remote browser endpoint is invalid"))?;
+            if self.dev_service.forward_for(&host, port).is_none() {
+                return Err(invalid_config(
+                    "The remote browser endpoint requires a matching dev_service forward",
+                ));
+            }
+        }
+        if self.remote.enabled && self.profile.enabled {
+            return Err(invalid_config(
+                "Browser remote attach and profile persistence are mutually exclusive",
+            ));
+        }
         Ok(())
+    }
+
+    /// Resolve the attach mode for the VM backend from the opt-in settings.
+    /// Precedence and backend gating are enforced by `validate`: remote ⊥
+    /// profile, and both require the dedicated VM backend. `Isolated` is
+    /// returned for every other case — including when the whole feature is off
+    /// — so the default launch is byte-for-byte unchanged.
+    pub fn attach_mode(&self) -> BrowserAttachMode {
+        if self.remote.enabled
+            && let Some(endpoint) = self.remote.cdp_endpoint()
+        {
+            return BrowserAttachMode::RemoteCdp { endpoint };
+        }
+        if self.profile.enabled
+            && let Some(user_data_dir) = self.profile.remote_user_data_dir()
+        {
+            return BrowserAttachMode::PersistentProfile {
+                user_data_dir,
+                retention: self.profile.retention,
+            };
+        }
+        BrowserAttachMode::Isolated
     }
 }
 

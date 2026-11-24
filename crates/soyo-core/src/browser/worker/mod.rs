@@ -62,6 +62,29 @@ pub const PLAYWRIGHT_VERSION: &str = "1.66.0-alpha-2026-11-09";
 pub const CHROMIUM_REVISION: u32 = 1254;
 pub const CHROMIUM_VERSION: &str = "158.0.8127.18";
 
+/// Target triples for which the masked-screenshot capture engine has been
+/// built, verified and shipped with a pinned identity. The masked capture is a
+/// patched Chromium `headless_shell`; a non-patched engine never satisfies the
+/// masking handshake and fails closed at capture time. This set is the
+/// explicit distribution boundary: a platform not listed is never provisioned
+/// the patched engine and never claims the capability.
+///
+/// `linux-aarch64` is the only verified target today. `linux-x86_64` is the
+/// next distribution target (a real patched cross-build still required);
+/// macOS (both arches) is unsupported because the capture engine is a Linux
+/// ELF that runs inside the VM/native Linux boundary, not a macOS binary.
+/// Keeping the set explicit — rather than inferred from the host — is what
+/// stops an unverified platform from ever reporting a masked screenshot.
+pub const MASKED_CAPTURE_ENGINE_TARGETS: &[&str] = &["aarch64-unknown-linux-gnu"];
+
+/// Whether the masked-screenshot capture engine is distributed for `target`
+/// (a `target_arch`-`target_os` style triple, e.g. `aarch64-unknown-linux-gnu`).
+/// A `false` result is the fail-closed posture: the engine is not provisioned
+/// and the screenshot capability is never claimed for that target.
+pub fn masked_capture_engine_supported(target: &str) -> bool {
+    MASKED_CAPTURE_ENGINE_TARGETS.contains(&target)
+}
+
 /// The protocol version the pinned worker echoes during initialization.
 pub const WORKER_PROTOCOL_VERSION: &str = "2025-11-25";
 

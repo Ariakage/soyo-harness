@@ -348,6 +348,8 @@ fn assemble_browser_provider_from_settings(
             browser.network.clone(),
             run_id,
             exec,
+            browser.attach_mode(),
+            browser.dev_service.forwards.clone(),
         )?;
         return Ok(Some(Arc::new(provider)));
     }

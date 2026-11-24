@@ -178,9 +178,21 @@ pub(super) fn strict_ssh_config(
 /// One reverse streamlocal forward used as the VM's only browser egress.
 /// sshd creates the socket on the VM; the SSH client connects its local side
 /// to the per-Run broker on host loopback.
+#[derive(Debug, Clone)]
 pub(super) struct ReverseForward {
     pub(super) remote_socket: String,
     pub(super) local_port: u16,
+}
+
+/// One opt-in dev-service forward: a TCP listener inside the VM's private
+/// network namespace on `vm_port`, bridged through a reverse streamlocal
+/// forward back to `127.0.0.1:host_port` on the host. Exact endpoints only.
+#[derive(Debug, Clone)]
+pub(super) struct DevServiceForward {
+    /// Remote streamlocal socket sshd creates for this forward.
+    pub(super) remote_socket: String,
+    /// Host loopback port the service actually listens on.
+    pub(super) host_port: u16,
 }
 
 pub(super) fn ssh_argv(
@@ -190,6 +202,7 @@ pub(super) fn ssh_argv(
     script: &str,
     args: &[String],
     forward: Option<&ReverseForward>,
+    dev_forwards: &[DevServiceForward],
 ) -> Result<Vec<String>, BoundaryError> {
     let host = settings
         .host
@@ -255,10 +268,10 @@ pub(super) fn ssh_argv(
         "-o".into(),
         "LogLevel=ERROR".into(),
     ];
-    if let Some(forward) = forward {
+    let has_forward = forward.is_some() || !dev_forwards.is_empty();
+    if has_forward {
         // `ssh` uses the first obtained value for each option, so replace the
         // base ClearAllForwardings=yes instead of appending a later override.
-        // A browser launch adds exactly one reverse streamlocal forward.
         for value in &mut argv {
             if value == "ClearAllForwardings=yes" {
                 *value = "ClearAllForwardings=no".into();
@@ -269,9 +282,19 @@ pub(super) fn ssh_argv(
             "ExitOnForwardFailure=yes".into(),
             "-o".into(),
             "StreamLocalBindUnlink=yes".into(),
-            "-R".into(),
-            format!("{}:127.0.0.1:{}", forward.remote_socket, forward.local_port),
         ]);
+        if let Some(forward) = forward {
+            argv.extend([
+                "-R".into(),
+                format!("{}:127.0.0.1:{}", forward.remote_socket, forward.local_port),
+            ]);
+        }
+        for forward in dev_forwards {
+            argv.extend([
+                "-R".into(),
+                format!("{}:127.0.0.1:{}", forward.remote_socket, forward.host_port),
+            ]);
+        }
     }
     argv.extend([
         "-p".into(),
@@ -458,6 +481,7 @@ impl SshVmCommandRunner {
             spec.script,
             spec.args,
             None,
+            &[],
         )
         .map_err(|failure| BrowserFailure::new(failure.0.code, failure.0.message))?;
         let mut env = BTreeMap::new();
@@ -615,6 +639,34 @@ done
 
 pub(super) const CAT_SCRIPT: &str = "set -eu\ncat -- \"$1\"\n";
 
+/// Create or expire the persisted browser profile directory under a 0700
+/// umask. `$1` is the remote user-data dir, `$2` the retention seconds
+/// (`0` = persist). Runs only when `[browser.profile]` is enabled; otherwise
+/// the per-Run scratch profile is used and this script is never invoked.
+pub(super) const PROFILE_PREP_SCRIPT: &str = r#"set -eu
+dir=$1
+retain=$2
+stamp="$dir/.soyo-profile"
+mkdir -p -- "$dir"
+chmod 700 -- "$dir"
+if [ "$retain" != "0" ] && [ -f "$stamp" ]; then
+  now=$(date +%s)
+  created=$(cat -- "$stamp" 2>/dev/null || echo 0)
+  case "$created" in ''|*[!0-9]*) created=0 ;; esac
+  age=$((now - created))
+  if [ "$age" -gt "$retain" ]; then
+    rm -rf -- "$dir"
+    mkdir -p -- "$dir"
+    chmod 700 -- "$dir"
+    printf '%s' "$now" > "$stamp"
+    chmod 600 -- "$stamp"
+  fi
+elif [ ! -f "$stamp" ]; then
+  printf '%s' "$(date +%s)" > "$stamp"
+  chmod 600 -- "$stamp"
+fi
+"#;
+
 pub(super) const NODE_VERSION_SCRIPT: &str = "set -eu\n\"$1\" --version\n";
 pub(super) const INSTALLATION_PROBE_SCRIPT: &str = "set -eu\ncd /\nexec env -i PATH=/usr/bin:/bin \"$1\" --no-addons - \"$2\" \"$3\" \"$4\" \"$5\"\n";
 pub(super) const INSTALLATION_PROBE: &str = include_str!("../worker/installation_probe.js");
@@ -640,7 +692,7 @@ printf '%s' "$d"
 "#;
 
 pub(super) const LAUNCH_SCRIPT: &str = r#"set -eu
-runroot=$1; sock=$2; port=$3; pidfile=$4; shift 4
+runroot=$1; sock=$2; port=$3; pidfile=$4; devspec=$5; shift 5
 umask 077
 cd "$runroot"
 status_file="$runroot/worker.status"
@@ -653,10 +705,11 @@ sudo -n true >/dev/null 2>&1 || { echo "network=sudo-unavailable" >&2; exit 46; 
 uid=$(id -u)
 gid=$(id -g)
 # The worker and Chromium run inside a fresh network namespace created by
-# root. Only loopback exists there; a socat listener bridges the SSH reverse
-# streamlocal socket to 127.0.0.1:PORT. Privileges are then dropped back to the
-# invoking user before the worker starts, and no host or VM-wide setting is
-# changed. Any failure here is fatal: there is no default-network fallback.
+# root. Only loopback exists there; socat listeners bridge each SSH reverse
+# streamlocal socket to a loopback TCP port: the broker proxy plus each
+# opt-in dev-service entry. Privileges are dropped back to the invoking user
+# before the worker starts, and no host or VM-wide setting is changed. Any
+# failure here is fatal: there is no default-network fallback.
 sudo -n unshare -n -- /bin/sh -c '
   set -eu
   ip link set lo up 2>/dev/null || { echo "network=loopback-unavailable" >&2; exit 47; }
@@ -666,12 +719,33 @@ sudo -n unshare -n -- /bin/sh -c '
   fi
   uid=$5
   gid=$6
-  # Run the bridge as the invoking user, not root, so the same-user Run
+  devspec=$8
+  pids=""
+  # Run each bridge as the invoking user, not root, so the same-user Run
   # cleanup can always terminate it. Only loopback setup needs root.
   setpriv --reuid="$uid" --regid="$gid" --init-groups -- \
     socat TCP-LISTEN:"$1",bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:"$2" \
     >/dev/null 2>&1 &
-  sp=$!
+  pids="$pids $!"
+  # Opt-in dev-service forwards: each `port:sock` pair gets its own socat
+  # listener on the exact loopback port, bridged to its reverse-forward socket.
+  oldifs=$IFS
+  IFS=,
+  for spec in $devspec; do
+    IFS=$oldifs
+    [ -n "$spec" ] || continue
+    dp=${spec%%:*}
+    ds=${spec#*:}
+    [ -n "$dp" ] && [ -n "$ds" ] && [ "$dp" != "$spec" ] || { echo "network=devspec-malformed" >&2; exit 52; }
+    [ -S "$ds" ] || { echo "network=devspec-socket-missing" >&2; exit 53; }
+    setpriv --reuid="$uid" --regid="$gid" --init-groups -- \
+      socat TCP-LISTEN:"$dp",bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:"$ds" \
+      >/dev/null 2>&1 &
+    pids="$pids $!"
+    IFS=,
+  done
+  IFS=$oldifs
+  sp=$(printf '%s' "$pids" | awk "{print \$1}")
   i=0
   listening=0
   while [ "$i" -lt 50 ]; do
@@ -691,10 +765,10 @@ sudo -n unshare -n -- /bin/sh -c '
   fi
   kill -0 "$sp" 2>/dev/null || { echo "network=proxy-start-failed" >&2; exit 49; }
   [ "$listening" = "1" ] || { echo "network=proxy-not-listening" >&2; exit 50; }
-  stop_proxy() { kill "$sp" 2>/dev/null || true; }
-  trap stop_proxy TERM INT HUP
+  stop_bridges() { for b in $pids; do kill "$b" 2>/dev/null || true; done; }
+  trap stop_bridges TERM INT HUP
   runroot=$3; pidfile=$4; uid=$5; gid=$6; stderr=$7
-  shift 7
+  shift 8
   export HOME="$runroot/home"
   export TMPDIR="$runroot/tmp"
   export XDG_CONFIG_HOME="$runroot/config"
@@ -713,9 +787,9 @@ sudo -n unshare -n -- /bin/sh -c '
     setsid -w sh -c '"'"'printf "%s" "$$" > "$1"; shift; exec "$@" 2> "$SOYO_WORKER_STDERR"'"'"' \
       soyo-browser-worker "$pidfile" "$@" || status=$?
   trap - TERM INT HUP
-  stop_proxy
+  stop_bridges
   exit "$status"
-' sh "$port" "$sock" "$runroot" "$pidfile" "$uid" "$gid" "$stderr_file" "$@"
+' sh "$port" "$sock" "$runroot" "$pidfile" "$uid" "$gid" "$stderr_file" "$devspec" "$@"
 status=$?
 printf '%s\n' "$status" > "$status_file"
 exit "$status"

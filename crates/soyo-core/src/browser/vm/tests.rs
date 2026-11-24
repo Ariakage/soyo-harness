@@ -415,6 +415,7 @@ fn ssh_config_is_strict_and_contains_no_secret_values() {
         PROBE_SCRIPT,
         &["/opt/file".into()],
         None,
+        &[],
     )
     .unwrap();
     let joined = argv.join(" ");
@@ -441,6 +442,7 @@ fn reverse_streamlocal_forward_replaces_clear_all_forwardings_and_fails_closed()
         PROBE_SCRIPT,
         &[],
         None,
+        &[],
     )
     .unwrap();
     // Plain identity commands keep every forwarding disabled.
@@ -458,6 +460,7 @@ fn reverse_streamlocal_forward_replaces_clear_all_forwardings_and_fails_closed()
             remote_socket: "/tmp/run/proxy.sock".into(),
             local_port: 41_234,
         }),
+        &[],
     )
     .unwrap();
     // ssh uses the first obtained value, so the strict base value must be
@@ -647,10 +650,12 @@ fn vm_launch_arguments_keep_chromium_sandbox_enabled() {
         "/tmp/runs/one/proxy.sock",
         31281,
         "/tmp/runs/one/worker.pid",
+        "",
         "/opt/soyo/node/bin/node",
         "/opt/soyo/worker/node_modules/@playwright/mcp/cli.js",
         "/tmp/runs/one/config/config.json",
         "/opt/soyo/browsers/chromium_headless_shell-1254/chrome-headless-shell-linux64/chrome-headless-shell",
+        &crate::browser::BrowserAttachMode::Isolated,
     );
     for required in [
         "--sandbox",
@@ -677,7 +682,13 @@ fn vm_launch_arguments_keep_chromium_sandbox_enabled() {
 #[test]
 fn worker_config_pins_chromium_to_the_run_proxy_without_bypasses() {
     let settings = IdentityFixture::new().settings;
-    let bytes = worker_config_json(&settings, "/tmp/runs/one", "http://127.0.0.1:40123").unwrap();
+    let bytes = worker_config_json(
+        &settings,
+        "/tmp/runs/one",
+        "http://127.0.0.1:40123",
+        &crate::browser::BrowserAttachMode::Isolated,
+    )
+    .unwrap();
     let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let options = &config["browser"]["launchOptions"];
     assert_eq!(options["proxy"]["server"], "http://127.0.0.1:40123");
@@ -1335,6 +1346,7 @@ fn bracketed_loopback_host_is_normalized_for_config_and_argv() {
         PROBE_SCRIPT,
         &[],
         None,
+        &[],
     )
     .unwrap();
     assert!(argv.iter().any(|value| value == "::1"));
@@ -1994,4 +2006,199 @@ async fn vm_factory_creates_and_releases_fresh_host_environments() {
     second.release().await.unwrap();
     assert!(!first_directories.work.exists());
     assert!(!second_directories.work.exists());
+}
+
+// ---------------------------------------------------------------------
+// F-10 opt-in attach modes: persisted profile, remote CDP, dev_service.
+// Each is VM-backend-only and degrades facts fail-closed.
+// ---------------------------------------------------------------------
+
+#[test]
+fn launch_arguments_drop_isolated_and_set_user_data_dir_for_profile() {
+    let args = worker_launch_arguments(
+        "/tmp/runs/one",
+        "/tmp/runs/one/proxy.sock",
+        31281,
+        "/tmp/runs/one/worker.pid",
+        "",
+        "/opt/soyo/node/bin/node",
+        "/opt/soyo/worker/node_modules/@playwright/mcp/cli.js",
+        "/tmp/runs/one/config/config.json",
+        "/opt/soyo/chromium/headless_shell",
+        &crate::browser::BrowserAttachMode::PersistentProfile {
+            user_data_dir: "/home/soyo/profiles/work".into(),
+            retention: crate::browser::BrowserProfileRetention::Persist,
+        },
+    );
+    // The persisted profile keeps the managed Chromium and its sandbox but
+    // swaps `--isolated` for an explicit user-data dir.
+    assert!(args.iter().any(|v| v == "--user-data-dir"));
+    assert!(args.iter().any(|v| v == "/home/soyo/profiles/work"));
+    assert!(args.iter().any(|v| v == "--executable-path"));
+    assert!(args.iter().any(|v| v == "--sandbox"));
+    assert!(
+        !args.iter().any(|v| v == "--isolated"),
+        "isolated mode and a persistent userDataDir are mutually exclusive"
+    );
+    assert!(!args.iter().any(|v| v == "--cdp-endpoint"));
+}
+
+#[test]
+fn launch_arguments_attach_cdp_endpoint_and_never_launch_chromium() {
+    let args = worker_launch_arguments(
+        "/tmp/runs/one",
+        "/tmp/runs/one/proxy.sock",
+        31281,
+        "/tmp/runs/one/worker.pid",
+        "9222:/tmp/runs/one/dev-cdp.sock",
+        "/opt/soyo/node/bin/node",
+        "/opt/soyo/worker/node_modules/@playwright/mcp/cli.js",
+        "/tmp/runs/one/config/config.json",
+        "/opt/soyo/chromium/headless_shell",
+        &crate::browser::BrowserAttachMode::RemoteCdp {
+            endpoint: "ws://127.0.0.1:9222".into(),
+        },
+    );
+    assert!(args.iter().any(|v| v == "--cdp-endpoint"));
+    assert!(args.iter().any(|v| v == "ws://127.0.0.1:9222"));
+    // No managed browser: never launch an executable and never isolate.
+    assert!(!args.iter().any(|v| v == "--executable-path"));
+    assert!(!args.iter().any(|v| v == "--isolated"));
+    assert!(!args.iter().any(|v| v == "--user-data-dir"));
+    // The devspec positional is carried for the netns listener.
+    assert_eq!(args[4], "9222:/tmp/runs/one/dev-cdp.sock");
+}
+
+#[test]
+fn worker_config_emits_user_data_dir_for_profile_and_keeps_proxy() {
+    let settings = IdentityFixture::new().settings;
+    let bytes = worker_config_json(
+        &settings,
+        "/tmp/runs/one",
+        "http://127.0.0.1:40123",
+        &crate::browser::BrowserAttachMode::PersistentProfile {
+            user_data_dir: "/home/soyo/profiles/work".into(),
+            retention: crate::browser::BrowserProfileRetention::Persist,
+        },
+    )
+    .unwrap();
+    let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let browser = &config["browser"];
+    assert_eq!(browser["isolated"], false);
+    assert_eq!(browser["userDataDir"], "/home/soyo/profiles/work");
+    // Managed Chromium still launches pinned and proxied; sandbox stays on.
+    let options = &browser["launchOptions"];
+    assert_eq!(options["chromiumSandbox"], true);
+    assert!(options["executablePath"].is_string());
+    assert_eq!(options["proxy"]["server"], "http://127.0.0.1:40123");
+    assert!(browser.get("cdpEndpoint").is_none());
+}
+
+#[test]
+fn worker_config_emits_cdp_endpoint_and_no_launch_options_for_remote() {
+    let settings = IdentityFixture::new().settings;
+    let bytes = worker_config_json(
+        &settings,
+        "/tmp/runs/one",
+        "http://127.0.0.1:40123",
+        &crate::browser::BrowserAttachMode::RemoteCdp {
+            endpoint: "ws://127.0.0.1:9222".into(),
+        },
+    )
+    .unwrap();
+    let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let browser = &config["browser"];
+    assert_eq!(browser["isolated"], false);
+    assert_eq!(browser["cdpEndpoint"], "ws://127.0.0.1:9222");
+    // Nothing managed: no executable, no userDataDir, no launchOptions.
+    assert!(browser.get("userDataDir").is_none());
+    assert!(browser.get("launchOptions").is_none());
+}
+
+#[test]
+fn ssh_argv_adds_one_reverse_forward_per_dev_service() {
+    let settings = IdentityFixture::new().settings;
+    let paths = VmLocalPaths {
+        ssh: PathBuf::from("/usr/bin/ssh"),
+        identity_file: PathBuf::from("/private/tmp/key"),
+        known_hosts: PathBuf::from("/private/tmp/known_hosts"),
+        colima: PathBuf::from("/usr/local/bin/colima"),
+    };
+    let argv = ssh_argv(
+        &settings,
+        &paths,
+        Path::new("/private/tmp/ssh_config"),
+        PROBE_SCRIPT,
+        &[],
+        Some(&ReverseForward {
+            remote_socket: "/tmp/run/proxy.sock".into(),
+            local_port: 41_234,
+        }),
+        &[
+            DevServiceForward {
+                remote_socket: "/tmp/run/dev-web.sock".into(),
+                host_port: 3000,
+            },
+            DevServiceForward {
+                remote_socket: "/tmp/run/dev-api.sock".into(),
+                host_port: 4000,
+            },
+        ],
+    )
+    .unwrap();
+    // Three reverse forwards total: the broker proxy plus both dev services.
+    let forwards: Vec<&String> = argv.iter().filter(|v| *v == "-R").collect();
+    assert_eq!(forwards.len(), 3, "expected proxy + two dev-service -R");
+    let joined = argv.join(" ");
+    assert!(joined.contains("/tmp/run/proxy.sock"));
+    assert!(joined.contains("/tmp/run/dev-web.sock"));
+    assert!(joined.contains("/tmp/run/dev-api.sock"));
+    assert!(joined.contains("StreamLocalBindUnlink=yes"));
+    assert!(joined.contains("ExitOnForwardFailure=yes"));
+    assert!(!argv.iter().any(|v| v == "ClearAllForwardings=yes"));
+}
+
+#[test]
+fn dev_service_spec_and_reverse_forwards_pair_ports_with_run_root_sockets() {
+    let network = Arc::new(
+        BrowserNetworkFactory::new(
+            crate::browser::network::BrowserNetworkSettings {
+                enabled: true,
+                public_web: true,
+                ..Default::default()
+            },
+            "test-run",
+        )
+        .unwrap(),
+    );
+    let launcher = VmWorkerLauncher::new(
+        IdentityFixture::new().settings,
+        QueueRunner::new(VecDeque::new()),
+        ExecConfig::default(),
+        network,
+    )
+    .with_dev_forwards(vec![
+        crate::browser::BrowserDevServiceForward {
+            alias: "web".into(),
+            host: "127.0.0.1".into(),
+            port: 3000,
+        },
+        crate::browser::BrowserDevServiceForward {
+            alias: "api".into(),
+            host: "127.0.0.1".into(),
+            port: 4000,
+        },
+    ]);
+    // devspec: exact port:runroot-socket CSV for the netns socat listeners.
+    assert_eq!(
+        launcher.dev_service_spec("/tmp/runs/one"),
+        "3000:/tmp/runs/one/dev-web.sock,4000:/tmp/runs/one/dev-api.sock"
+    );
+    // reverse forwards: one remote socket per forward under the run root.
+    let rf = launcher.dev_service_reverse_forwards("/tmp/runs/one");
+    assert_eq!(rf.len(), 2);
+    assert_eq!(rf[0].remote_socket, "/tmp/runs/one/dev-web.sock");
+    assert_eq!(rf[0].host_port, 3000);
+    assert_eq!(rf[1].remote_socket, "/tmp/runs/one/dev-api.sock");
+    assert_eq!(rf[1].host_port, 4000);
 }

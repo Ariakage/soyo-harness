@@ -113,6 +113,8 @@ async fn real_vm_worker_verifies_chromium_sandbox_inside_the_vm() {
             network,
             "test-run",
             ExecConfig::default(),
+            soyo_core::browser::BrowserAttachMode::Isolated,
+            Vec::new(),
         )
         .expect("VM provider assembly"),
     );

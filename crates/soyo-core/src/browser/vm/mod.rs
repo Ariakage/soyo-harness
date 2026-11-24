@@ -84,10 +84,10 @@ pub(in crate::browser::vm) use settings::{
     remote_cleanup_failure, remote_failure, safe_token, validate_ssh_paths, vm_unavailable,
 };
 pub(in crate::browser::vm) use ssh::{
-    CAT_SCRIPT, CLEANUP_SCRIPT, INSTALLATION_PROBE, INSTALLATION_PROBE_SCRIPT, LAUNCH_SCRIPT,
-    NODE_VERSION_SCRIPT, PID_SCRIPT, PREPARE_RUN_SCRIPT, PROBE_SCRIPT, ReverseForward,
-    SANDBOX_SCRIPT, VmHostEnvironment, open_directory, ssh_argv, strict_ssh_config,
-    vm_command_result, write_private,
+    CAT_SCRIPT, CLEANUP_SCRIPT, DevServiceForward, INSTALLATION_PROBE, INSTALLATION_PROBE_SCRIPT,
+    LAUNCH_SCRIPT, NODE_VERSION_SCRIPT, PID_SCRIPT, PREPARE_RUN_SCRIPT, PROBE_SCRIPT,
+    PROFILE_PREP_SCRIPT, ReverseForward, SANDBOX_SCRIPT, VmHostEnvironment, open_directory,
+    ssh_argv, strict_ssh_config, vm_command_result, write_private,
 };
 pub use ssh::{SshVmCommandRunner, VmCommandOutput, VmCommandRunner, VmCommandSpec};
 #[cfg(test)]

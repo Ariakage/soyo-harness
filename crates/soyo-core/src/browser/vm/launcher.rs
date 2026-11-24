@@ -402,6 +402,7 @@ const NETWORK_FAILURE_PREFIXES: &[&[u8]] = &[
     b"network=loopback-",
     b"network=unexpected-route",
     b"network=proxy-",
+    b"network=devspec-",
     // With ExitOnForwardFailure=yes, an sshd that refuses reverse
     // streamlocal forwarding terminates the session before LAUNCH_SCRIPT
     // runs, so the client's own fixed diagnostic is the only sentinel.
@@ -839,29 +840,35 @@ fn map_mcp_failure(failure: BoundaryError) -> BrowserFailure {
 }
 
 /// Fixed worker arguments for the VM backend. Chromium's sandbox is always
-/// enabled; no flag here disables it.
+/// enabled; no flag here disables it. The attach mode controls only the
+/// browser-attach shape — the worker, Run root, output dir and proxy stay
+/// identical across modes. `devspec` is the comma-separated `port:sock` list
+/// of opt-in dev-service forwards (empty when none), consumed by LAUNCH_SCRIPT
+/// before the worker argv begins.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn worker_launch_arguments(
     run_root: &str,
     proxy_socket: &str,
     proxy_port: u16,
     pid_file: &str,
+    devspec: &str,
     node: &str,
     cli_js: &str,
     config_path: &str,
     chromium: &str,
+    mode: &crate::browser::BrowserAttachMode,
 ) -> Vec<String> {
-    vec![
+    let mut args = vec![
         run_root.to_owned(),
         proxy_socket.to_owned(),
         proxy_port.to_string(),
         pid_file.to_owned(),
+        devspec.to_owned(),
         node.to_owned(),
         cli_js.to_owned(),
         "--config".into(),
         config_path.to_owned(),
         "--headless".into(),
-        "--isolated".into(),
         "--sandbox".into(),
         "--block-service-workers".into(),
         "--no-webmcp".into(),
@@ -870,9 +877,29 @@ pub(super) fn worker_launch_arguments(
         "omit".into(),
         "--output-dir".into(),
         format!("{run_root}/output"),
-        "--executable-path".into(),
-        chromium.to_owned(),
-    ]
+    ];
+    match mode {
+        crate::browser::BrowserAttachMode::Isolated => {
+            args.push("--isolated".into());
+            args.push("--executable-path".into());
+            args.push(chromium.to_owned());
+        }
+        crate::browser::BrowserAttachMode::PersistentProfile { user_data_dir, .. } => {
+            // Persistent context replaces the isolated flag; Chromium is still
+            // launched and sandbox-verified by the VM /proc scan.
+            args.push("--user-data-dir".into());
+            args.push(user_data_dir.clone());
+            args.push("--executable-path".into());
+            args.push(chromium.to_owned());
+        }
+        crate::browser::BrowserAttachMode::RemoteCdp { endpoint } => {
+            // No managed Chromium: the worker attaches to the explicit CDP
+            // endpoint and never launches or sandbox-verifies a browser.
+            args.push("--cdp-endpoint".into());
+            args.push(endpoint.clone());
+        }
+    }
+    args
 }
 
 /// Host-side factory for the per-worker browser broker. It owns the single
@@ -954,6 +981,12 @@ pub struct VmWorkerLauncher {
     /// cleanup await), so dropping the launch future cannot lose the only
     /// handle to the remote directory.
     pub(super) pending_cleanup: Mutex<VecDeque<Arc<PendingCleanup>>>,
+    /// Opt-in browser attach mode for this Run. `Isolated` is the default and
+    /// keeps the launch byte-for-byte unchanged; the other modes degrade facts
+    /// fail-closed.
+    pub(super) attach: crate::browser::BrowserAttachMode,
+    /// Opt-in exact dev-service forwards for this Run. Empty by default.
+    pub(super) dev_forwards: Vec<crate::browser::BrowserDevServiceForward>,
 }
 
 pub(super) struct PendingCleanup {
@@ -976,7 +1009,28 @@ impl VmWorkerLauncher {
             config,
             network,
             pending_cleanup: Mutex::new(VecDeque::new()),
+            attach: crate::browser::BrowserAttachMode::Isolated,
+            dev_forwards: Vec::new(),
         }
+    }
+
+    /// Opt-in attach mode for this Run (profile persistence or remote CDP).
+    /// Defaults to `Isolated`; callers keep the same `VmWorkerLauncher::new`
+    /// signature so existing construction and tests are unchanged.
+    pub fn with_attach_mode(mut self, mode: crate::browser::BrowserAttachMode) -> Self {
+        self.attach = mode;
+        self
+    }
+
+    /// Opt-in exact dev-service forwards for this Run. Each entry adds one
+    /// reverse streamlocal forward plus one netns socat listener; empty keeps
+    /// the single proxy forward. Entries are already validated exact.
+    pub fn with_dev_forwards(
+        mut self,
+        forwards: Vec<crate::browser::BrowserDevServiceForward>,
+    ) -> Self {
+        self.dev_forwards = forwards;
+        self
     }
 
     /// Pending cleanup is only touched synchronously. No guard is held across
@@ -1126,9 +1180,56 @@ impl VmWorkerLauncher {
         vm_proxy_url: &str,
         cancel: &dyn Cancellation,
     ) -> Result<(), BrowserFailure> {
-        let config = worker_config_json(&self.settings, run_root, vm_proxy_url).map_err(|_| {
-            boundary_to_browser_failure(vm_unavailable("Browser VM worker config is invalid"))
-        })?;
+        let config = worker_config_json(&self.settings, run_root, vm_proxy_url, &self.attach)
+            .map_err(|_| {
+                boundary_to_browser_failure(vm_unavailable("Browser VM worker config is invalid"))
+            })?;
+        // For a persisted profile, create or expire the remote user-data dir
+        // under a 0700 umask before the worker launches. The script is a fixed
+        // constant; the dir and retention arrive as arguments. Off = skipped.
+        if let crate::browser::BrowserAttachMode::PersistentProfile {
+            user_data_dir,
+            retention,
+        } = &self.attach
+        {
+            let retain_seconds = match retention {
+                crate::browser::BrowserProfileRetention::Persist => 0,
+                crate::browser::BrowserProfileRetention::ExpiresAfter { seconds } => *seconds,
+            };
+            let profile_args = [user_data_dir.clone(), retain_seconds.to_string()];
+            let profile = vm_command_result(
+                self.runner
+                    .run(
+                        VmCommandSpec {
+                            script: PROFILE_PREP_SCRIPT,
+                            args: &profile_args,
+                            stdin: None,
+                            timeout: Duration::from_millis(self.settings.connect_timeout_ms),
+                            stderr_limit: 16 * 1024,
+                            stdout_limit: 16 * 1024,
+                        },
+                        cancel,
+                    )
+                    .await,
+                "Browser VM profile preparation",
+            );
+            match profile {
+                Ok(output) if output.succeeded() => {}
+                Ok(_) => {
+                    let failure =
+                        remote_failure("Browser VM persisted profile could not be prepared");
+                    return Err(self
+                        .cleanup_or_retain(control.clone(), false, failure)
+                        .await);
+                }
+                Err(failure) if failure.code == "cancelled" => return Err(failure),
+                Err(failure) => {
+                    return Err(self
+                        .cleanup_or_retain(control.clone(), false, failure)
+                        .await);
+                }
+            }
+        }
         let prepare_args = [run_root.to_owned()];
         let prepared = vm_command_result(
             self.runner
@@ -1166,6 +1267,27 @@ impl VmWorkerLauncher {
         }
     }
 
+    /// One `port:sock` pair per opt-in dev-service forward, comma-separated.
+    /// Each reverse forward's remote socket lives under the Run root and the
+    /// netns listener binds the exact loopback port. Empty when none.
+    pub(super) fn dev_service_spec(&self, run_root: &str) -> String {
+        self.dev_forwards
+            .iter()
+            .map(|forward| format!("{}:{}/dev-{}.sock", forward.port, run_root, forward.alias))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    pub(super) fn dev_service_reverse_forwards(&self, run_root: &str) -> Vec<DevServiceForward> {
+        self.dev_forwards
+            .iter()
+            .map(|forward| DevServiceForward {
+                remote_socket: format!("{run_root}/dev-{}.sock", forward.alias),
+                host_port: forward.port,
+            })
+            .collect()
+    }
+
     fn build_ssh_launch_argv(
         &self,
         paths: &VmLocalPaths,
@@ -1173,6 +1295,7 @@ impl VmWorkerLauncher {
         launch_args: &[String],
         proxy_socket: &str,
         local_port: u16,
+        run_root: &str,
     ) -> Result<Vec<String>, BrowserFailure> {
         // The host channel's generated SSH config is written by the runner for
         // short commands; the long-lived launch needs its own copy.
@@ -1192,6 +1315,7 @@ impl VmWorkerLauncher {
                 remote_socket: proxy_socket.to_owned(),
                 local_port,
             }),
+            &self.dev_service_reverse_forwards(run_root),
         )
         .map_err(|_| {
             boundary_to_browser_failure(vm_unavailable("Browser VM SSH launch input is invalid"))
@@ -1284,10 +1408,12 @@ impl VmWorkerLauncher {
             &proxy_socket,
             crate::browser::network::VM_PROXY_PORT,
             &pid_file,
+            &self.dev_service_spec(&run_root),
             &node,
             &cli_js,
             &config_path,
             &chromium,
+            &self.attach,
         );
         let argv = match self.build_ssh_launch_argv(
             &paths,
@@ -1295,6 +1421,7 @@ impl VmWorkerLauncher {
             &launch_args,
             &proxy_socket,
             network.endpoint_port(),
+            &run_root,
         ) {
             Ok(argv) => argv,
             Err(failure) => {
@@ -1559,11 +1686,17 @@ impl BrowserWorkspaceLease for VmBrowserWorkspaceLease {
 
 /// Assemble the production VM provider. The caller has already selected the VM
 /// backend explicitly; there is no fallback to the native or Host path.
+/// `attach` is the opt-in browser attach mode (`Isolated` default) and
+/// `dev_forwards` the exact dev-service forwarding entries (empty default);
+/// both come pre-validated from `BrowserSettings`.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_vm_browser_provider(
     settings: BrowserVmSettings,
     network_settings: BrowserNetworkSettings,
     run_id: &str,
     exec: ExecConfig,
+    attach: crate::browser::BrowserAttachMode,
+    dev_forwards: Vec<crate::browser::BrowserDevServiceForward>,
 ) -> Result<crate::browser::worker::PlaywrightMcpProvider, BoundaryError> {
     settings.preflight_local()?;
     let network = Arc::new(BrowserNetworkFactory::new(network_settings, run_id)?);
@@ -1575,25 +1708,62 @@ pub fn assemble_vm_browser_provider(
         runner.clone(),
     ));
     let planner = Arc::new(VmWorkerLaunchPlanner::new(settings.clone()));
-    let launcher: Arc<dyn WorkerLauncher> = Arc::new(VmWorkerLauncher::new(
-        settings.clone(),
-        runner.clone(),
-        exec,
-        network,
-    ));
+    let launcher: Arc<dyn WorkerLauncher> = Arc::new(
+        VmWorkerLauncher::new(settings.clone(), runner.clone(), exec, network)
+            .with_attach_mode(attach.clone())
+            .with_dev_forwards(dev_forwards),
+    );
     let factory = Arc::new(VmBrowserEnvironmentFactory::new(settings.clone())?);
     let inspector = Arc::new(VmChromiumSandboxInspector::new(settings, runner));
-    Ok(
-        crate::browser::worker::PlaywrightMcpProvider::with_worker_backend(
-            "vm-colima",
-            verifier,
-            planner,
-            launcher,
-            factory,
-            inspector,
-        )?
-        .with_network_log(observation_log),
-    )
+    let provider = crate::browser::worker::PlaywrightMcpProvider::with_worker_backend(
+        "vm-colima",
+        verifier,
+        planner,
+        launcher,
+        factory,
+        inspector,
+    )?
+    .with_network_log(observation_log);
+    // Degrade facts fail-closed for opt-in modes. The private isolated-stdio
+    // channels (processInfo, masked captureScreenshot) are only available on a
+    // managed isolated launch; a persisted profile or remote CDP drops them.
+    let provider = match &attach {
+        crate::browser::BrowserAttachMode::Isolated => provider,
+        crate::browser::BrowserAttachMode::PersistentProfile { .. } => {
+            // Managed Chromium is still launched and /proc-verified, but the
+            // persistent context removes the private screenshot/masking and
+            // processInfo channels. Downloads/uploads keep working through the
+            // Run output dir; screenshots fail closed.
+            provider.with_facts(crate::browser::BrowserFacts {
+                provider: format!(
+                    "playwright-mcp-{}-profile",
+                    crate::browser::worker::PLAYWRIGHT_MCP_VERSION
+                ),
+                screenshots: false,
+                screenshot_masking: false,
+                downloads: true,
+                uploads: true,
+            })
+        }
+        crate::browser::BrowserAttachMode::RemoteCdp { .. } => {
+            // No managed Chromium: nothing is launched or sandbox-verified.
+            // The remote browser supplies page automation but no masking, no
+            // processInfo and no download/upload channel → all fail closed.
+            provider
+                .with_facts(crate::browser::BrowserFacts {
+                    provider: format!(
+                        "playwright-mcp-{}-remote-cdp",
+                        crate::browser::worker::PLAYWRIGHT_MCP_VERSION
+                    ),
+                    screenshots: false,
+                    screenshot_masking: false,
+                    downloads: false,
+                    uploads: false,
+                })
+                .with_sandbox_evidence_disabled()
+        }
+    };
+    Ok(provider)
 }
 
 pub(super) fn boundary_to_browser_failure(error: BoundaryError) -> BrowserFailure {
