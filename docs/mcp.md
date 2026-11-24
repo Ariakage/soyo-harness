@@ -176,4 +176,28 @@ JSONL 运行事件使用 `mcp.status`，其服务器条目仅包含 `server`、`
 
 MCP服务要求额外输入时，当前Run以 `needs_input` 结束并保存实际调用状态。用户可在后续输入中补充信息，新的执行继续经过正常授权。`ClientHandler::create_elicitation` 在无显式交互处理器时默认返回 `Decline` 失败关闭，不替用户自动填写或放行确认；原调用续接与通用 MCP Tasks 长任务仍属后续扩展范围。
 
+## Soyo 作为 MCP 服务器（D-108）
+
+除作为 MCP 客户端外，Soyo 也可经 `soyo mcp-server` 以 stdio 方式对外充当 MCP 服务器，让外部 MCP 客户端驱动一个最小任务面。实现是 `soyo-ipc` 之上的薄适配层：进程内不构造运行时、不直接 spawn run，所有工具调用逐一映射到对外发布的 helper IPC 方法。
+
+```sh
+soyo --config /path/to/config.toml mcp-server
+```
+
+进程启动后经 `soyo_ipc::HelperClient` 连接（必要时拉起）匹配当前 `--config`／`--data-dir` 的 `soyo helper` 守护进程并完成版本兼容检查，随后在 stdin/stdout 上以 `rmcp` server 侧协议服务，直到客户端断开。
+
+**传输与范围**：本批只做 stdio 单连接。HTTP 传输、鉴权模型与远程 worker＋工作区/产物同步按 D-108 明确留作 F-13 后续增量，当前不提供网络监听。
+
+**工具面**（三个，命名与 JSON schema 属对外契约）：
+
+| 工具 | 映射的 helper 方法 | 说明 |
+| --- | --- | --- |
+| `run` | `run_prompt`（流式） | 参数 `prompt` 必填，`session_id`／`cwd`／`profile`／`mode`／`permissions`／`accept_config_change` 可选。`session_id` 缺省时新建会话。返回 `{action: "started", session_id, run_id}`：id 取自第一条携带 run 标识的 schema 事件；其后事件流在后台排空，客户端断开不取消 run（断线语义见 D-107）。annotations：`readOnlyHint=false`、`openWorldHint=true`。 |
+| `status` | `get_run_state`＋`read_session_snapshot` | 参数 `session_id` 必填、`run_id` 可选。合并实时运行状态与持久化快照中该 run 的终态（`result.status`／`error`），`run_id` 缺省时取最近一条 run 记录；未结束的 run 报 `running`。annotations：`readOnlyHint=true`、`idempotentHint=true`。 |
+| `cancel` | `cancel_run` | 参数 `run_id` 可选；缺省时取消该调用方连接上的活动 run。返回 `{cancelled: bool}`，取消为协作语义，终态需再查 `status` 确认。annotations：`readOnlyHint=false`、`destructiveHint=true`、`idempotentHint=true`。 |
+
+工具执行失败（参数非法、run 未找到、helper 错误码）以 `isError=true` 的工具级错误返回，调用方能看到具体 `code: message`；未知工具名走协议层 `invalid_params`。
+
+**权限边界**：`run` 透传的 `permissions` 仅是该次 run 的权限模式取值，与 CLI `--permissions` 同源——Manual Approval 下审批请求会挂起等待（非交互调用以 `needs_confirmation` 收尾），绝不绕过 `HostService` 的权限与 sandbox 路径。`soyo mcp-server` 自身没有独立的鉴权模型：调用方身份就是本机同 UID 用户，等价于直接连 helper socket，与桌面端复用 `HelperClient` 的边界一致。
+
 macOS 后代进程清理仍按能力等级报告为 `best_effort`。Linux 使用私有 PID namespace，系统依赖、有效委派资源控制及原生执行证据按[N2 验收记录](n2-validation.md)维护。可执行插件和自动／手动上下文压缩已完成N3固定源码验收；Browser及其他后续能力按[后续计划](post-mvp-plan.md)推进。
