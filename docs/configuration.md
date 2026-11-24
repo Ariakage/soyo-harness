@@ -534,6 +534,17 @@ enabled = false
 
 生命周期 `queued→running→paused/blocked/completed/failed/cancelled`，另有 `waiting_unknown`：派发意图在 `Run` 启动前单事务落库，崩溃后由 `recover_unknown` 将在飞 dispatch 标记为 `waiting_unknown`，**绝不自动重放**——只有显式 `resolve`（`retry` 重新排队或置 `blocked`）或 `transition` 才能继续。`run_task_once` 复用同一 `Session` 驱动单个 `Run`，带租约心跳与 pause/cancel 轮询，结果按 `persistence_saved` 映射 `completed`/`failed`/`waiting_unknown`。
 
+## 自动检查点（F-05）
+
+写前自动检查点**默认 `auto_capture = false`**；启用后每次 `write_file`／`edit_file`／`apply_patch` 在获准执行前捕获其 `path` 参数的精确路径，生成绑定当前会话与 Run 的检查点（source label `auto:<tool>`）：
+
+```toml
+[checkpoint]
+auto_capture = false
+```
+
+捕获遵守 `CheckpointLimits` 与内容门禁（仅 UTF-8、无 NUL、经 `SecretRegistry` 扫描），在阻塞工作线程上执行且**失败不阻塞工具调用**——capture 失败只影响该次自动快照，不写回工具结果。检查点存储位于 `<data_dir>/checkpoints/`（私有 0700 目录、0600 `O_NOFOLLOW`），与会话绑定；`soyo checkpoint`（`list`/`diff`/`create`/`accept`/`restore`/`recover`）与 TUI `/checkpoint` 提供用户侧查看、比较与恢复，restore 在无 TTY 时需 `--yes`、有 TTY 时逐文件确认 unified diff，且解析目标必须留在会话工作区内、不得指向受保护宿主存储。PLAN 只读；被中断的 restore 其日志在下次会话恢复时经 `recover` 上浮为 Unknown，绝不自动重放。
+
 ### 插件宿主绑定
 
 `[plugins] enabled = true`允许本次Run选择已由用户安装并启用的包，未启用的包保持未加载。包不能从工作区指令修改运行配置。宿主可在 `plugins.bindings.runtimes` 指定当前实际解释器，例如下面的绝对路径。绑定的解释器与只读运行库由宿主核对后进入私有entry视图。

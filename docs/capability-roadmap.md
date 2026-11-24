@@ -65,7 +65,7 @@ flowchart TD
 | F-02 | MCP Client | 最先（已扩展 Resources/Prompts/订阅/Elicitation） | MVP 工具接口；本地隔离依赖 F-01，远程凭据管理依赖 F-18 | 接入已有工具服务、Resources/Templates/Prompts/订阅与失败关闭 Elicitation，不逐个编写专用集成 |
 | F-03 | Skills 与插件包 | 高（已扩展归档/验签/HTTPS） | MVP 指令加载；可执行扩展依赖 F-01、F-02 | 安装、校验（SHA-256／Ed25519／HTTPS）、启停和复用领域能力 |
 | F-04 | Hooks 与自动化规则 | 高（已扩展 8 事件与 `[hooks]`） | F-01、F-12 | 在运行／模型／工具／澄清／压缩事件前后执行受控检查和动作 |
-| F-05 | 工作区隔离、Diff 与检查点 | 高 | MVP 文件与执行记录 | 查看、比较和恢复受控文件改动 |
+| F-05 | 工作区隔离、Diff 与检查点 | 高（已扩展 CLI/TUI 用户层与 opt-in 自动检查点） | MVP 文件与执行记录 | 查看、比较和恢复受控文件改动 |
 | F-06 | 上下文管理 | 高 | MVP 协议状态、F-12 | 长任务继续工作，控制上下文占用 |
 | F-07 | 全局／项目记忆与模型编辑 | 中（已扩展事实 TTL 与检索增强） | F-06、F-12 | 通过可读MEMORY.md、专用工具和审阅恢复机制维护跨会话知识 |
 | F-08 | 后台与持久任务 | 高（已实现跨运行持久队列 opt-in） | F-01、F-05、F-12 | 运行长任务、暂停、继续和管理任务队列 |
@@ -152,6 +152,8 @@ N3 已接入 `run.started`、`run.finished`、`tool.before_dispatch`、`tool.fin
 **价值**：用户能看清 Agent 做了什么，并对受控文件改动进行比较和恢复。
 
 N3 已接入选定文本文件的快照、列表、Diff、接受和恢复，普通目录与 Git 目录复用相同文件版本及冲突检查。独立 worktree 和更广的工作区隔离继续按后续增量推进。[N3 验收](n3-validation.md)
+
+> **实现状态（D-095）**：检查点引擎此前仅经五个模型工具暴露。本批补齐用户侧表面：`soyo-app` 新增 `checkpoint_admin` 服务（复用同一 `CheckpointStore`，按 `--session` 或当前工作区最新会话绑定单一 `session_id`）；CLI `soyo checkpoint` 子命令组提供 `list`/`diff`/`create`/`accept`/`restore`/`recover`，restore 在无 TTY 时需 `--yes`、有 TTY 时逐文件确认 unified diff，且镜像运行时的 `restore_target`/`resolve_future`/`protected_overlap` 允许写根检查；TUI `/checkpoint`（`/checkpoints`）复用 memory 管理面板的模态/确认模式，`confirm OP_ID` 二次确认；会话恢复接入 `CheckpointWorkspace::recover`，被中断的多文件 restore 把 Unknown 结果随 `RecoverySummary.checkpoint_journals` 上浮；新增 opt-in `[checkpoint] auto_capture`（默认关），在 `write_file`/`edit_file`/`apply_patch` 授权后捕获其将触碰的精确路径，失败不阻塞工具。PLAN 只读；restore 在 PLAN/read_only/空写根下仍被抑制。helper IPC 与桌面端 `checkpoint_*` 未接入，Git worktree 隔离仍在后续增量。
 
 - Git 项目可使用独立 worktree；非 Git 工作区使用受控目录与文件快照策略。
 - 在阶段或修改前建立检查点，展示增删改与可追溯产物；支持选择文件接受或恢复。

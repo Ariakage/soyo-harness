@@ -1,5 +1,6 @@
 mod approval;
 mod chat;
+mod checkpoint_commands;
 mod doctor;
 mod events;
 mod export;
@@ -141,6 +142,11 @@ enum Command {
     Memory {
         #[command(subcommand)]
         action: memory_commands::MemoryAction,
+    },
+    /// List, diff, capture and restore per-session workspace checkpoints.
+    Checkpoint {
+        #[command(subcommand)]
+        action: checkpoint_commands::CheckpointAction_,
     },
     /// Inspect and manage local, explicitly enabled plugin packages.
     Plugin {
@@ -505,6 +511,240 @@ async fn administer_memory(action: &memory_commands::MemoryAction, config: &Conf
             Some(config.output),
         ),
     }
+}
+fn checkpoint_failure_value(
+    action: &checkpoint_commands::CheckpointAction_,
+    error: BoundaryError,
+) -> serde_json::Value {
+    serde_json::json!({"schema_version":1,"kind":"checkpoint","action":action.name(),"ok":false,"data":null,"error":error.0,"actual_result":error.2})
+}
+/// Drive one `soyo checkpoint` action. Session resolution runs on the async
+/// side; blocking filesystem work runs on a bounded worker. `restore` without
+/// `--yes` returns a staged review the user confirms per-file on the TTY, and
+/// only then is the single-use confirm invoked on a second worker.
+async fn administer_checkpoint(
+    action: &checkpoint_commands::CheckpointAction_,
+    config: &Config,
+) -> u8 {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let Ok(secrets) = config_secrets(config) else {
+        return query_error(
+            cli_error("invalid_config", "checkpoint credentials are unavailable"),
+            Some(config.output),
+        );
+    };
+    let mut signals = match signals::Signals::new() {
+        Ok(signals) => signals,
+        Err(_) => {
+            return query_error(
+                cli_error(
+                    "runtime_error",
+                    "cannot listen for checkpoint administration cancellation",
+                ),
+                Some(config.output),
+            );
+        }
+    };
+    // Resolve the session on the async side before dispatching blocking work.
+    let session_id = match action.session_id() {
+        Ok(explicit) => {
+            let owned = config.clone();
+            match checkpoint_commands::resolve_session_id(&owned, explicit).await {
+                Ok(id) => id,
+                Err(error) => {
+                    let mut value = checkpoint_failure_value(action, error);
+                    let _ = soyo_core::redaction::redact(&mut value, &secrets);
+                    return writeln_value(value, config, 2, "checkpoint.result");
+                }
+            }
+        }
+        Err(error) => {
+            let mut value = checkpoint_failure_value(action, error);
+            let _ = soyo_core::redaction::redact(&mut value, &secrets);
+            return writeln_value(value, config, 2, "checkpoint.result");
+        }
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let worker_config = config.clone();
+    let worker_action = action.clone();
+    let mut worker = tokio::task::spawn_blocking(move || {
+        checkpoint_commands::run_cancellable(
+            &worker_action,
+            &worker_config,
+            session_id,
+            &worker_cancel,
+        )
+    });
+    let (outcome, interrupted) = tokio::select! {
+        result = &mut worker => (result,None),
+        signal = signals.recv() => {
+            if signal.is_some() { cancel.store(true,Ordering::Release); }
+            (worker.await,signal)
+        },
+    };
+    let mut prepared = match outcome {
+        Ok(Ok(prepared)) => prepared,
+        Ok(Err(error)) => {
+            let mut value = checkpoint_failure_value(action, error);
+            let status = if interrupted.is_some() { 130 } else { 2 };
+            if interrupted.is_some() {
+                value["interrupted"] = true.into();
+            }
+            let _ = soyo_core::redaction::redact(&mut value, &secrets);
+            return writeln_value(value, config, status, "checkpoint.result");
+        }
+        Err(_) => {
+            return query_error(
+                cli_error("runtime_error", "checkpoint administration worker failed"),
+                Some(config.output),
+            );
+        }
+    };
+    // Interactive restore: show the bounded review, collect per-file approval
+    // on the controlling terminal, then run the single-use confirm once.
+    if let checkpoint_commands::Prepared::Restore { review, confirm } = &mut prepared {
+        let approved = match approve_checkpoint_restore(review, config, &secrets).await {
+            Ok(approved) => approved,
+            Err(error) => {
+                let mut value = checkpoint_failure_value(action, error);
+                let _ = soyo_core::redaction::redact(&mut value, &secrets);
+                return writeln_value(value, config, 2, "checkpoint.result");
+            }
+        };
+        let confirm = std::mem::replace(
+            confirm,
+            Box::new(|_| Err(cli_error("runtime_error", "confirm already taken"))),
+        );
+        let mut worker = tokio::task::spawn_blocking(move || confirm(approved));
+        let (outcome, interrupted) = tokio::select! {
+            result = &mut worker => (result,None),
+            signal = signals.recv() => {
+                if signal.is_some() { cancel.store(true,Ordering::Release); }
+                (worker.await,signal)
+            },
+        };
+        let mut value = match outcome {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                let mut value = checkpoint_failure_value(action, error);
+                let status = if interrupted.is_some() { 130 } else { 2 };
+                if interrupted.is_some() {
+                    value["interrupted"] = true.into();
+                }
+                let _ = soyo_core::redaction::redact(&mut value, &secrets);
+                return writeln_value(value, config, status, "checkpoint.result");
+            }
+            Err(_) => {
+                return query_error(
+                    cli_error("runtime_error", "checkpoint confirm worker failed"),
+                    Some(config.output),
+                );
+            }
+        };
+        let status = match interrupted {
+            Some(signals::Received::Interrupt) => 130,
+            Some(signals::Received::Terminate) => 143,
+            None => 0,
+        };
+        if interrupted.is_some() {
+            value["interrupted"] = true.into();
+        }
+        let _ = soyo_core::redaction::redact(&mut value, &secrets);
+        return writeln_value(value, config, status, "checkpoint.result");
+    }
+    // Single-phase result.
+    let checkpoint_commands::Prepared::Done(mut value) = prepared else {
+        unreachable!()
+    };
+    let status = match interrupted {
+        Some(signals::Received::Interrupt) => 130,
+        Some(signals::Received::Terminate) => 143,
+        None => 0,
+    };
+    if interrupted.is_some() {
+        value["interrupted"] = true.into();
+    }
+    let _ = soyo_core::redaction::redact(&mut value, &secrets);
+    writeln_value(value, config, status, "checkpoint.result")
+}
+/// Print one checkpoint result envelope, honouring `--output jsonl`.
+fn writeln_value(
+    mut value: serde_json::Value,
+    config: &Config,
+    status: u8,
+    event_type: &str,
+) -> u8 {
+    if config.output == Output::Jsonl {
+        value["type"] = event_type.into();
+    }
+    match writeln!(io::stdout().lock(), "{value}") {
+        Ok(()) => status,
+        Err(_) => query_error(
+            cli_error("runtime_error", "cannot write checkpoint result"),
+            Some(config.output),
+        ),
+    }
+}
+/// Show the staged restore review on the controlling terminal and collect the
+/// approved workspace-relative path set. Returns the paths to restore, or a
+/// `permission_denied` error when the user declines or no TTY is available.
+async fn approve_checkpoint_restore(
+    review: &serde_json::Value,
+    _config: &Config,
+    secrets: &[String],
+) -> Result<Option<std::collections::BTreeSet<String>>, BoundaryError> {
+    use std::io::IsTerminal;
+    if !io::stdin().is_terminal() {
+        return Err(cli_error(
+            "needs_confirmation",
+            "Checkpoint restore requires --yes or a controlling terminal",
+        ));
+    }
+    let terminal = Terminal::open(secrets.to_vec()).map_err(|_| {
+        cli_error("terminal_error", "cannot open controlling terminal")
+    })?;
+    let cancel = soyo_app::interaction::RunCancellation::new();
+    // Print the bounded review to stderr so the JSON result stays on stdout.
+    let mut rendered = String::from("\nCheckpoint restore review\n");
+    if let Some(changes) = review.get("changes").and_then(|c| c.as_array()) {
+        for change in changes {
+            rendered.push_str(&format!(
+                "  {}\n",
+                approval::safe_terminal_text(
+                    &serde_json::to_string(change).unwrap_or_else(|_| "<unavailable>".into())
+                )
+            ));
+        }
+    } else {
+        rendered.push_str(&approval::safe_terminal_text(
+            &serde_json::to_string_pretty(review).unwrap_or_else(|_| "<unavailable>".into()),
+        ));
+        rendered.push('\n');
+    }
+    rendered.push_str("Restore these files? [y/N] ");
+    eprint!("{rendered}");
+    let answer = terminal
+        .read_line("", &cancel)
+        .await?
+        .ok_or_else(|| cli_error("cancelled", "Checkpoint restore was cancelled"))?;
+    if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return Err(cli_error(
+            "permission_denied",
+            "Checkpoint restore was denied",
+        ));
+    }
+    // Approve every path listed in the review.
+    let approved = review
+        .get("changes")
+        .and_then(|changes| changes.as_array())
+        .map(|changes| {
+            changes
+                .iter()
+                .filter_map(|change| change.get("path").and_then(|p| p.as_str()).map(str::to_owned))
+                .collect::<std::collections::BTreeSet<String>>()
+        });
+    Ok(approved)
 }
 fn init(overrides: &Overrides, env: &Environment) -> Result<(), Box<dyn std::error::Error>> {
     let path = config::config_path(overrides, env)?;
@@ -1056,6 +1296,12 @@ async fn run(
         eprintln!(
             "soyo: recovered {} interrupted run(s); {} tool outcome(s) unknown; no tools were replayed",
             prepared.recovery.interrupted_runs, prepared.recovery.unknown_tools
+        );
+    }
+    if prepared.recovery.checkpoint_journals > 0 {
+        eprintln!(
+            "soyo: {} checkpoint restore journal(s) observed from an interrupted operation; outcomes are unknown and were not replayed (see `soyo checkpoint recover`)",
+            prepared.recovery.checkpoint_journals
         );
     }
     session::append(&mut prepared, text.clone()).await?;
@@ -1675,6 +1921,10 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Memory { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),
             Ok(config) => administer_memory(action, &config).await,
+        },
+        Some(Command::Checkpoint { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => administer_checkpoint(action, &config).await,
         },
         Some(Command::Plugin { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),

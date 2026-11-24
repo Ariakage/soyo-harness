@@ -1,5 +1,6 @@
 //! Interface orchestration using shared application services and durable events.
 mod backend;
+mod checkpoint;
 #[cfg(test)]
 mod compact_tests;
 #[cfg(test)]
@@ -124,6 +125,8 @@ struct App {
     memory_pending: Option<memory::MemoryPending>,
     memory_next: Option<String>,
     memory_last_operation: Option<String>,
+    checkpoint_pending: Option<soyo_app::checkpoint_admin::PreparedCheckpointAction>,
+    checkpoint_next: Option<String>,
     copy_notice_until: Option<Instant>,
 }
 impl App {
@@ -168,6 +171,8 @@ impl App {
             memory_pending: None,
             memory_next: None,
             memory_last_operation: None,
+            checkpoint_pending: None,
+            checkpoint_next: None,
             copy_notice_until: None,
         };
         app.refresh_header();
@@ -877,6 +882,7 @@ impl App {
             self.state.editor.cursor(),
             self.state.command_palette.is_none()
                 && self.state.memory_panel.is_none()
+                && self.state.checkpoint_panel.is_none()
                 && self.state.picker_panel.is_none(),
         );
     }
@@ -892,6 +898,9 @@ impl App {
         }
         if self.state.memory_panel.is_some() {
             return self.memory_key(key).await;
+        }
+        if self.state.checkpoint_panel.is_some() {
+            return self.checkpoint_key(key).await;
         }
         if matches!(self.pending, Some(Request::Approval(..)))
             && (key.kind != KeyEventKind::Press
@@ -1242,6 +1251,8 @@ async fn run_loop(app: &mut App, terminal: &mut TerminalGuard) -> Result<u8> {
             Action::Input(Some(Ok(TerminalEvent::Paste(text)))) => {
                 if app.state.picker_panel.is_none() {
                     if let Some(panel) = &mut app.state.memory_panel {
+                        panel.input.insert_paste(&text);
+                    } else if let Some(panel) = &mut app.state.checkpoint_panel {
                         panel.input.insert_paste(&text);
                     } else if app.state.command_palette.is_none() {
                         app.insert_paste(&text);

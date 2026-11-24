@@ -38,6 +38,9 @@ pub(super) struct CheckpointState {
     store: Arc<CheckpointStore>,
     protected_roots: Vec<PathBuf>,
     allowed_write_roots: Vec<PathBuf>,
+    /// Opt-in pre-write capture (`F-05`); when set, mutating file tools capture
+    /// the exact paths they are about to touch before dispatching.
+    auto_capture: bool,
 }
 impl CheckpointState {
     pub fn definitions(&self, mode: WorkMode, read_only: bool) -> Vec<ToolDefinition> {
@@ -271,8 +274,73 @@ impl AgentRuntime {
             store,
             protected_roots,
             allowed_write_roots,
+            auto_capture: false,
         }));
         Ok(self)
+    }
+    /// Enable or disable opt-in automatic capture before mutating file tools.
+    /// No-op until `with_checkpoints` installed a state.
+    pub fn with_checkpoint_auto_capture(mut self, enabled: bool) -> Self {
+        if let Some(state) = &self.checkpoints {
+            self.checkpoints = Some(Arc::new(CheckpointState {
+                store: state.store.clone(),
+                protected_roots: state.protected_roots.clone(),
+                allowed_write_roots: state.allowed_write_roots.clone(),
+                auto_capture: enabled,
+            }));
+        }
+        self
+    }
+
+    /// Opt-in pre-write capture (`F-05`). Runs only when the tool is a mutating
+    /// file tool (`write_file`/`edit_file`/`apply_patch`) carrying a `path`
+    /// argument and `auto_capture` is on. Captures are bound to the current
+    /// session and run on a blocking worker; failures never block the tool —
+    /// the captured checkpoint's source records a warning instead.
+    pub(super) async fn auto_capture(&self, session: &Session, call: &ToolCall) {
+        let Some(state) = self.checkpoints.clone() else {
+            return;
+        };
+        if !state.auto_capture {
+            return;
+        }
+        if !matches!(
+            call.name.as_str(),
+            "write_file" | "edit_file" | "apply_patch"
+        ) {
+            return;
+        }
+        let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&call.arguments) else {
+            return;
+        };
+        let Some(path) = arguments
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let workspace = session.workspace.clone();
+        let session_id = session.id;
+        let run_id = self.run.id;
+        let revision = session.history.len() as u64;
+        let label = format!("auto:{}", call.name);
+        let _ = tokio::task::spawn_blocking(move || {
+            let source = CheckpointSource {
+                session_id,
+                run_id,
+                revision,
+                label,
+            };
+            let canonical = std::fs::canonicalize(&workspace)
+                .map_err(|_| error("checkpoint_scope", "Workspace is unavailable"))?;
+            let bound = state
+                .store
+                .bind_workspace(&canonical, session_id, &state.protected_roots)?;
+            bound.capture(&[path], source, &AtomicBool::new(false))?;
+            Ok::<_, BoundaryError>(())
+        })
+        .await;
     }
 
     pub(super) async fn execute_checkpoint(

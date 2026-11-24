@@ -1,10 +1,59 @@
 //! Presentation-only memory administration modal. Input belongs to this pane,
-//! so browsing and confirmation never alter the unsent chat message.
+//! so browsing and confirmation never alter the unsent chat message. The same
+//! modal also renders checkpoint administration through [`draw_checkpoint`].
 use super::*;
-use crate::i18n::memory as text;
+use crate::i18n::{checkpoint as checkpoint_text, memory as text};
+
+/// Labels that distinguish the two administration modals. Rendering is
+/// identical; only the static copy and the addressed panel change.
+struct Skin {
+    title: &'static str,
+    help: &'static str,
+    busy: &'static str,
+    confirm: &'static str,
+    commands: &'static str,
+    draft_retained: &'static str,
+    view_truncated: &'static str,
+}
+const MEMORY: Skin = Skin {
+    title: text::TITLE,
+    help: text::HELP,
+    busy: text::BUSY,
+    confirm: text::CONFIRM,
+    commands: text::COMMANDS,
+    draft_retained: text::DRAFT_RETAINED,
+    view_truncated: text::VIEW_TRUNCATED,
+};
+const CHECKPOINT: Skin = Skin {
+    title: checkpoint_text::TITLE,
+    help: checkpoint_text::HELP,
+    busy: checkpoint_text::BUSY,
+    confirm: checkpoint_text::CONFIRM,
+    commands: checkpoint_text::COMMANDS,
+    draft_retained: checkpoint_text::DRAFT_RETAINED,
+    view_truncated: checkpoint_text::VIEW_TRUNCATED,
+};
 
 pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
-    let Some(panel) = &mut state.memory_panel else {
+    if state.memory_panel.is_some() {
+        draw_panel(frame, state, &MEMORY, Panel::Memory);
+    }
+}
+pub(super) fn draw_checkpoint(frame: &mut Frame<'_>, state: &mut State) {
+    if state.checkpoint_panel.is_some() {
+        draw_panel(frame, state, &CHECKPOINT, Panel::Checkpoint);
+    }
+}
+enum Panel {
+    Memory,
+    Checkpoint,
+}
+fn draw_panel(frame: &mut Frame<'_>, state: &mut State, skin: &Skin, which: Panel) {
+    let panel = match which {
+        Panel::Memory => state.memory_panel.as_mut(),
+        Panel::Checkpoint => state.checkpoint_panel.as_mut(),
+    };
+    let Some(panel) = panel else {
         return;
     };
     let area = frame.area();
@@ -20,7 +69,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(text::TITLE)
+        .title(skin.title)
         .style(Style::default().bg(SIDEBAR_BACKGROUND).fg(FOREGROUND))
         .border_style(Style::default().fg(if panel.confirmation.is_some() {
             AMBER
@@ -43,7 +92,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new(text::HELP).style(Style::default().fg(MUTED)),
+        Paragraph::new(skin.help).style(Style::default().fg(MUTED)),
         rows[1],
     );
     let mut lines = VecDeque::new();
@@ -57,7 +106,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
             10_000,
         );
         if count > 10_000 {
-            lines.push_back(Line::raw(text::VIEW_TRUNCATED));
+            lines.push_back(Line::raw(skin.view_truncated));
             break;
         }
     }
@@ -76,11 +125,11 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
         rows[2],
     );
     let hint = if panel.busy {
-        text::BUSY
+        skin.busy
     } else if panel.confirmation.is_some() {
-        text::CONFIRM
+        skin.confirm
     } else {
-        text::COMMANDS
+        skin.commands
     };
     frame.render_widget(
         Paragraph::new(hint).style(Style::default().fg(if panel.confirmation.is_some() {
@@ -92,7 +141,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
     );
     draw_input(frame, &panel.input, rows[4]);
     frame.render_widget(
-        Paragraph::new(text::DRAFT_RETAINED).style(Style::default().fg(MUTED)),
+        Paragraph::new(skin.draft_retained).style(Style::default().fg(MUTED)),
         rows[5],
     );
     state.transcript_viewport = None;

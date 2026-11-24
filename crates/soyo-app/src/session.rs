@@ -264,10 +264,36 @@ pub async fn resume(
             .commit(&[StoreChange::Session(session.clone())])
             .await?;
     }
-    let recovery = store.recover_interrupted(id).await?;
+    let mut recovery = store.recover_interrupted(id).await?;
     if recovery.interrupted_runs > 0 {
         session = store.load_session(id).await?.ok_or("session not found")?;
     }
+    // Observe any interrupted checkpoint restore journals bound to this
+    // session. Best-effort: checkpoint recovery never blocks a resume, and
+    // observed Unknown outcomes are reported, never replayed.
+    recovery.checkpoint_journals = {
+        let owned = config.clone();
+        let workspace = session.workspace.clone();
+        crate::offload(move || {
+            let secrets = owned
+                .secret_env_names()
+                .iter()
+                .map(|name| owned.secret(name).map(str::to_owned))
+                .collect::<Result<Vec<_>, _>>()?;
+            let registry = Arc::new(soyo_core::credentials::SecretRegistry::default());
+            registry.register(&secrets)?;
+            let store = soyo_core::checkpoint::CheckpointStore::open(
+                owned.data_dir.join("checkpoints"),
+                registry,
+                soyo_core::checkpoint::CheckpointLimits::default(),
+            )?;
+            let bound = store.bind_workspace(&workspace, id, &[store.protected_path().to_owned()])?;
+            let journals = bound.recover(&std::sync::atomic::AtomicBool::new(false))?;
+            Ok::<usize, Box<dyn std::error::Error>>(journals.len())
+        })
+        .await
+        .unwrap_or(0)
+    };
     let media = {
         let owned = config.clone();
         crate::offload(move || media_store(&owned)).await?

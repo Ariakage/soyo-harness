@@ -391,6 +391,9 @@ pub async fn chat(
     if prepared.recovery.interrupted_runs > 0 {
         console.print(&format!("Recovered {} interrupted run(s); {} tool outcome(s) unknown; no tools were replayed.\n", prepared.recovery.interrupted_runs, prepared.recovery.unknown_tools))?;
     }
+    if prepared.recovery.checkpoint_journals > 0 {
+        console.print(&format!("{} checkpoint restore journal(s) observed from an interrupted operation; outcomes are unknown and were not replayed (see `soyo checkpoint recover`).\n", prepared.recovery.checkpoint_journals))?;
+    }
     let workspace = prepared.session.workspace.clone();
     let media = prepared.media.clone();
     let media_capabilities = prepared.media_capabilities;
