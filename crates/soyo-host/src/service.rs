@@ -3,6 +3,7 @@
 use crate::attachment::{ActiveAttachmentScope, StagedDraft};
 use serde_json::Value;
 use soyo_app::{
+    checkpoint_admin::PreparedCheckpointAction,
     context::{ContextModel, ContextSnapshot, ContextSources},
     events::{ChannelSink, EventModel, EventSink, EventStore, EventWriter},
     interaction::{Request, RunCancellation, input_channel},
@@ -246,6 +247,11 @@ pub struct HostService {
     pub attachment_scope: Arc<StdMutex<ActiveAttachmentScope>>,
     pub staged_drafts: Arc<StdMutex<HashMap<String, StagedDraft>>>,
     pub pending_memory_actions: Arc<StdMutex<HashMap<String, PreparedMemoryAction>>>,
+    /// Pending single-use checkpoint actions keyed by helper-assigned
+    /// `ck_<uuid>`; the bound session id is stored alongside so confirm can
+    /// re-open the admin under the session's exclusive lock.
+    pub pending_checkpoint_actions:
+        Arc<StdMutex<HashMap<String, (SessionId, PreparedCheckpointAction)>>>,
     pub secrets: Arc<SecretRegistry>,
     pub health_tracker: Arc<soyo_core::provider::routing::ProfileHealthTracker>,
     pub test_model_factory: Option<TestModelFactory>,
@@ -448,6 +454,7 @@ impl HostService {
                     attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
                     staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
                     pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
+                    pending_checkpoint_actions: Arc::new(StdMutex::new(HashMap::new())),
                     secrets,
                     health_tracker: Arc::new(Default::default()),
                     test_model_factory: None,
@@ -479,6 +486,7 @@ impl HostService {
             attachment_scope: Arc::new(StdMutex::new(HashMap::new())),
             staged_drafts: Arc::new(StdMutex::new(HashMap::new())),
             pending_memory_actions: Arc::new(StdMutex::new(HashMap::new())),
+            pending_checkpoint_actions: Arc::new(StdMutex::new(HashMap::new())),
             secrets: registry,
             health_tracker: Arc::new(Default::default()),
             test_model_factory: None,

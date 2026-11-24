@@ -1015,6 +1015,42 @@ pub struct MemoryConfirmResultDto {
     pub result: Value,
 }
 
+/// Bounded, redacted checkpoint list view (`checkpoint_admin.list` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CheckpointListDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Bounded, redacted unified-diff view (`checkpoint_admin.diff_view` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CheckpointDiffDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Observed interrupted restore journals (`checkpoint_admin.recover` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CheckpointRecoverDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Single-use prepared checkpoint action awaiting user confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct PreparedCheckpointReviewDto {
+    pub action_id: String,
+    pub operation_id: String,
+    #[specta(type = Unknown)]
+    pub review: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CheckpointConfirmResultDto {
+    #[specta(type = Unknown)]
+    pub result: Value,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormatDto {

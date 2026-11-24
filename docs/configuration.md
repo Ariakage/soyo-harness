@@ -608,7 +608,7 @@ enabled = false
 auto_capture = false
 ```
 
-捕获遵守 `CheckpointLimits` 与内容门禁（仅 UTF-8、无 NUL、经 `SecretRegistry` 扫描），在阻塞工作线程上执行且**失败不阻塞工具调用**——capture 失败只影响该次自动快照，不写回工具结果。检查点存储位于 `<data_dir>/checkpoints/`（私有 0700 目录、0600 `O_NOFOLLOW`），与会话绑定；`soyo checkpoint`（`list`/`diff`/`create`/`accept`/`restore`/`recover`）与 TUI `/checkpoint` 提供用户侧查看、比较与恢复，restore 在无 TTY 时需 `--yes`、有 TTY 时逐文件确认 unified diff，且解析目标必须留在会话工作区内、不得指向受保护宿主存储。PLAN 只读；被中断的 restore 其日志在下次会话恢复时经 `recover` 上浮为 Unknown，绝不自动重放。
+捕获遵守 `CheckpointLimits` 与内容门禁（仅 UTF-8、无 NUL、经 `SecretRegistry` 扫描），在阻塞工作线程上执行且**失败不阻塞工具调用**——capture 失败只影响该次自动快照，不写回工具结果。检查点存储位于 `<data_dir>/checkpoints/`（私有 0700 目录、0600 `O_NOFOLLOW`），与会话绑定；`soyo checkpoint`（`list`/`diff`/`create`/`accept`/`restore`/`recover`）、TUI `/checkpoint` 与桌面端「Checkpoints」设置页提供用户侧查看、比较与恢复，三端共享同一 `checkpoint_admin` 服务与 `restore_authorize` 写根/受保护根判定。restore 在无 TTY 时需 `--yes`、有 TTY 或桌面端时逐文件确认（桌面端经 helper IPC 两段式：先取 bounded review、勾选批准后再单次 confirm），且解析目标必须留在会话工作区内、不得指向受保护宿主存储。PLAN 只读；被中断的 restore 其日志在下次会话恢复时经 `recover` 上浮为 Unknown，绝不自动重放。
 
 ### 插件宿主绑定
 

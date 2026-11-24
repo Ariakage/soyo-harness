@@ -828,6 +828,76 @@ async fn dispatch(
             };
             r.await.and_then(ok)
         }
+        "checkpoint_list" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                let page = param_opt(&params, "page")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as usize)
+                    .unwrap_or(1);
+                service.checkpoint_list(conn_id, sid, page).await
+            };
+            r.await.and_then(ok)
+        }
+        "checkpoint_diff" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                let id = param_string(&params, "id")?.to_owned();
+                let sha256 = param_string(&params, "sha256")?.to_owned();
+                service.checkpoint_diff(conn_id, sid, &id, &sha256).await
+            };
+            r.await.and_then(ok)
+        }
+        "checkpoint_recover" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                service.checkpoint_recover(conn_id, sid).await
+            };
+            r.await.and_then(ok)
+        }
+        "prepare_checkpoint_action" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id").map(str::to_owned);
+                let action = param_string(&params, "action")?.to_owned();
+                let paths = param_deser::<Vec<String>>(&params, "paths")?;
+                let checkpoint_id = param_opt_str(&params, "id").map(str::to_owned);
+                let sha256 = param_opt_str(&params, "sha256").map(str::to_owned);
+                let label = param_opt_str(&params, "label")
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "desktop".into());
+                service
+                    .prepare_checkpoint_action(
+                        conn_id,
+                        sid.as_deref(),
+                        &action,
+                        paths,
+                        checkpoint_id.as_deref(),
+                        sha256.as_deref(),
+                        &label,
+                    )
+                    .await
+            };
+            r.await.and_then(ok)
+        }
+        "confirm_checkpoint_action" => {
+            let r = async {
+                let action_id = param_string(&params, "action_id")?.to_owned();
+                let approved_paths = param_opt(&params, "approved_paths")
+                    .cloned()
+                    .map(serde_json::from_value::<Vec<String>>)
+                    .transpose()
+                    .map_err(|err| {
+                        DesktopError::new(
+                            "invalid_params",
+                            format!("Param 'approved_paths': {err}"),
+                        )
+                    })?;
+                service
+                    .confirm_checkpoint_action(&action_id, approved_paths)
+                    .await
+            };
+            r.await.and_then(ok)
+        }
         "export_session" => {
             let r = async {
                 let session_id = param_opt_str(&params, "session_id").map(str::to_owned);

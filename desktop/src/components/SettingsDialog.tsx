@@ -9,6 +9,7 @@ import {
   Database,
   Download,
   FlaskConical,
+  History,
   KeyRound,
   Palette,
   RefreshCw,
@@ -41,6 +42,7 @@ import {
   type ThemePreference,
   useAppStore,
 } from "../store/useAppStore";
+import { CheckpointsDialog } from "./CheckpointsDialog";
 import { ExperimentalPanel } from "./ExperimentalPanel";
 import { ExportDialog } from "./ExportDialog";
 import { McpCredentialsDialog } from "./McpCredentialsDialog";
@@ -60,6 +62,7 @@ export type SettingsTab =
   | "experimental"
   | "mcp"
   | "memory"
+  | "checkpoints"
   | "usage"
   | "export";
 
@@ -110,6 +113,7 @@ const NAV_GROUPS: { tab: SettingsTab; icon: LucideIcon }[][] = [
     { tab: "experimental", icon: FlaskConical },
     { tab: "mcp", icon: KeyRound },
     { tab: "memory", icon: Database },
+    { tab: "checkpoints", icon: History },
   ],
   [
     { tab: "usage", icon: Activity },
@@ -420,6 +424,7 @@ export function SettingsDialog({
     experimental: t.settings.navExperimental,
     mcp: t.settings.navMcp,
     memory: t.settings.navMemory,
+    checkpoints: t.settings.navCheckpoints,
     usage: t.settings.navUsage,
     export: t.settings.navExport,
   };
@@ -432,6 +437,7 @@ export function SettingsDialog({
     experimental: t.settings.titleExperimental,
     mcp: t.extra.titleMcp,
     memory: t.extra.titleMemory,
+    checkpoints: t.extra.titleCheckpoints,
     usage: t.settings.titleUsage,
     export: t.extra.titleExport,
   };
@@ -1044,6 +1050,21 @@ export function SettingsDialog({
               onClose={onClose}
             />
           )}
+
+          {activeTab === "checkpoints" &&
+            (sessionId ? (
+              <CheckpointsDialog
+                open
+                embedded
+                sessionId={sessionId}
+                runActive={runActive}
+                onClose={onClose}
+              />
+            ) : (
+              <div className={`${CARD} text-center text-[12px] text-[var(--text-tertiary)]`}>
+                {t.extra.checkpointsUnavailableHint}
+              </div>
+            ))}
 
           {activeTab === "export" &&
             (sessionId ? (

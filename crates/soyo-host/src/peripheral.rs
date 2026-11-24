@@ -5,7 +5,10 @@ use crate::{
     service::{HostService, register_config_secrets},
 };
 use soyo_app::{
-    interaction::RunCancellation, memory_admin::MemoryAdmin, offload_boundary, session,
+    checkpoint_admin::{self, CheckpointAction, CheckpointAdmin, restore_authorize},
+    interaction::RunCancellation,
+    memory_admin::MemoryAdmin,
+    offload_boundary, session,
 };
 use soyo_core::{
     background::JobStatus,
@@ -26,11 +29,12 @@ use soyo_core::{
 use soyo_ipc::{
     redaction,
     types::{
-        BackgroundJobDto, BootstrapStateDto, CredentialRecordDto, DesktopError,
+        BackgroundJobDto, BootstrapStateDto, CheckpointConfirmResultDto, CheckpointDiffDto,
+        CheckpointListDto, CheckpointRecoverDto, CredentialRecordDto, DesktopError,
         ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
         ExtensionItemDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto,
-        ModuleStatusDto, PermissionModeDto, PreparedMemoryReviewDto, SandboxBackendDto,
-        SetupEnvironmentParams, StagedAttachmentDto, WorkModeDto,
+        ModuleStatusDto, PermissionModeDto, PreparedCheckpointReviewDto, PreparedMemoryReviewDto,
+        SandboxBackendDto, SetupEnvironmentParams, StagedAttachmentDto, WorkModeDto,
     },
 };
 use std::{
@@ -1255,6 +1259,262 @@ impl HostService {
         .await
         .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
         Ok(MemoryConfirmResultDto { result })
+    }
+
+    /// Resolve which session a checkpoint call applies to. An explicit id wins
+    /// (parsed but not required to be a tracked session, matching
+    /// `resume_session`); otherwise the connection's bound session is used;
+    /// otherwise the newest session stored for the workspace is selected —
+    /// the same fallback the CLI's `--session` default applies.
+    async fn checkpoint_session_id(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        cfg: &Config,
+    ) -> Result<SessionId, DesktopError> {
+        let secrets = self.current_secrets();
+        if let Some(raw) = session_id {
+            return session::parse_id(raw).map_err(|err| {
+                DesktopError::new(
+                    "invalid_session_id",
+                    redaction::redact_str(&err.to_string(), &secrets),
+                )
+            });
+        }
+        let bound = {
+            let guard = self.inner.lock().await;
+            guard.resolve_session_id(None, conn_id)
+        };
+        if let Some(id) = bound {
+            return Ok(id);
+        }
+        let owned = cfg.clone();
+        checkpoint_admin::resolve_session_id(&owned, None)
+            .await
+            .map_err(|err| DesktopError::from_boundary(&err, &secrets))
+    }
+
+    pub async fn checkpoint_list(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        page: usize,
+    ) -> Result<CheckpointListDto, DesktopError> {
+        let cfg = require_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let sid = self
+            .checkpoint_session_id(conn_id, session_id, &cfg)
+            .await?;
+        let registry = self.secrets.clone();
+        let data = offload_boundary(move || {
+            let admin = CheckpointAdmin::open(&cfg, registry, sid)?;
+            let cancel = AtomicBool::new(false);
+            admin.list(page, &cancel)
+        })
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        Ok(CheckpointListDto { data })
+    }
+
+    pub async fn checkpoint_diff(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        checkpoint_id: &str,
+        sha256: &str,
+    ) -> Result<CheckpointDiffDto, DesktopError> {
+        let cfg = require_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let sid = self
+            .checkpoint_session_id(conn_id, session_id, &cfg)
+            .await?;
+        let registry = self.secrets.clone();
+        let token = soyo_core::checkpoint::CheckpointToken {
+            id: checkpoint_id.to_owned(),
+            sha256: sha256.to_owned(),
+        };
+        let data = offload_boundary(move || {
+            let admin = CheckpointAdmin::open(&cfg, registry, sid)?;
+            let cancel = AtomicBool::new(false);
+            admin.diff_view(&token, &cancel)
+        })
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        Ok(CheckpointDiffDto { data })
+    }
+
+    pub async fn checkpoint_recover(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+    ) -> Result<CheckpointRecoverDto, DesktopError> {
+        let cfg = require_idle_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let sid = self
+            .checkpoint_session_id(conn_id, session_id, &cfg)
+            .await?;
+        let registry = self.secrets.clone();
+        let data = offload_boundary(move || {
+            let admin = CheckpointAdmin::open_locked(&cfg, registry, sid)?;
+            let cancel = AtomicBool::new(false);
+            let recovered = admin.recover(&cancel)?;
+            Ok(serde_json::json!({
+                "session_id": admin.session_id().0.to_string(),
+                "recovered": recovered.len(),
+                "outcomes": recovered.iter().map(|outcome| serde_json::json!({
+                    "operation_id": outcome.operation_id,
+                    "checkpoint": outcome.checkpoint,
+                    "status": outcome.status,
+                    "files": outcome.files.iter().map(|file| serde_json::json!({
+                        "path": file.operation.path,
+                        "status": file.status,
+                    })).collect::<Vec<_>>(),
+                    "error": outcome.error,
+                })).collect::<Vec<_>>(),
+            }))
+        })
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        Ok(CheckpointRecoverDto { data })
+    }
+
+    /// Stage one mutating checkpoint action up to its bounded review. Mirrors
+    /// the memory three-phase pattern: the review is returned for the user to
+    /// approve, and the single-use prepared action is kept server-side until
+    /// `confirm_checkpoint_action` consumes it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_checkpoint_action(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        action: &str,
+        paths: Vec<String>,
+        checkpoint_id: Option<&str>,
+        sha256: Option<&str>,
+        label: &str,
+    ) -> Result<PreparedCheckpointReviewDto, DesktopError> {
+        let cfg = require_idle_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let sid = self
+            .checkpoint_session_id(conn_id, session_id, &cfg)
+            .await?;
+        let registry = self.secrets.clone();
+        let token = match (checkpoint_id, sha256) {
+            (Some(id), Some(digest)) => Some(soyo_core::checkpoint::CheckpointToken {
+                id: id.to_owned(),
+                sha256: digest.to_owned(),
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(DesktopError::new(
+                    "invalid_params",
+                    "Checkpoint id and sha256 must be provided together",
+                ));
+            }
+        };
+        let action_name = action.to_owned();
+        let label = label.to_owned();
+        let prepared = offload_boundary(move || {
+            let admin = CheckpointAdmin::open_locked(&cfg, registry, sid)?;
+            let cancel = AtomicBool::new(false);
+            let token_ref = token.as_ref();
+            let action = match action_name.as_str() {
+                "create" => CheckpointAction::Create { paths: &paths },
+                "accept" => CheckpointAction::Accept {
+                    checkpoint: token_ref.ok_or_else(|| {
+                        BoundaryError::new(
+                            "invalid_args",
+                            "accept requires a checkpoint id and digest",
+                        )
+                    })?,
+                    paths: &paths,
+                },
+                "restore" => CheckpointAction::Restore {
+                    checkpoint: token_ref.ok_or_else(|| {
+                        BoundaryError::new(
+                            "invalid_args",
+                            "restore requires a checkpoint id and digest",
+                        )
+                    })?,
+                    paths: &paths,
+                },
+                other => {
+                    return Err(BoundaryError::new(
+                        "invalid_args",
+                        format!("Unsupported checkpoint action '{other}'"),
+                    ));
+                }
+            };
+            admin.prepare(action, &label, &cancel)
+        })
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+
+        let action_id = format!("ck_{}", Uuid::now_v7().simple());
+        let dto = PreparedCheckpointReviewDto {
+            action_id: action_id.clone(),
+            operation_id: prepared.operation_id().to_owned(),
+            review: prepared.review().clone(),
+        };
+
+        let mut actions = self
+            .pending_checkpoint_actions
+            .lock()
+            .map_err(|_| DesktopError::new("state_lock", "checkpoint action store lock failed"))?;
+        if actions.len() >= 16 {
+            actions.clear();
+        }
+        actions.insert(action_id, (sid, prepared));
+        Ok(dto)
+    }
+
+    /// Apply exactly the reviewed checkpoint action once. `approved_paths`
+    /// carries the per-file paths the user approved for a restore (`None` for
+    /// create/accept, where the shown review is itself the approval — the same
+    /// batch-approve the CLI's `--yes`/non-interactive path performs).
+    pub async fn confirm_checkpoint_action(
+        &self,
+        action_id: &str,
+        approved_paths: Option<Vec<String>>,
+    ) -> Result<CheckpointConfirmResultDto, DesktopError> {
+        let cfg = require_idle_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let (sid, prepared) = {
+            let mut actions = self.pending_checkpoint_actions.lock().map_err(|_| {
+                DesktopError::new("state_lock", "checkpoint action store lock failed")
+            })?;
+            actions.remove(action_id).ok_or_else(|| {
+                DesktopError::new(
+                    "checkpoint_action_not_found",
+                    "Prepared checkpoint action expired or was already confirmed",
+                )
+            })?
+        };
+        let approved: Option<BTreeSet<String>> =
+            approved_paths.map(|paths| paths.into_iter().collect());
+        let registry = self.secrets.clone();
+        let result = offload_boundary(move || {
+            // Re-open under the exclusive session lock so confirm holds the
+            // same SessionLock the prepare did (the lock is per-open, not
+            // carried inside the pending entry).
+            let admin = CheckpointAdmin::open_locked(&cfg, registry, sid)?;
+            let cancel = AtomicBool::new(false);
+            let workspace = admin.workspace_root().clone();
+            let protected = admin.protected_roots().into_iter().next().ok_or_else(|| {
+                BoundaryError::new(
+                    "checkpoint_config",
+                    "Checkpoint protected root is unavailable",
+                )
+            })?;
+            admin.confirm(
+                prepared,
+                &cancel,
+                restore_authorize(&workspace, &protected, approved.as_ref()),
+            )
+        })
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        Ok(CheckpointConfirmResultDto { result })
     }
 
     pub async fn export_session(
