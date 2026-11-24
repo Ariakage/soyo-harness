@@ -9,6 +9,7 @@ pub mod goal;
 pub mod interaction;
 pub mod mcp;
 pub mod memory_admin;
+pub mod observe;
 pub mod session;
 pub mod task_queue;
 pub mod thinking;

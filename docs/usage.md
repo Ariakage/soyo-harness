@@ -182,6 +182,20 @@ soyo --output jsonl logs tail --session SESSION_ID
 
 show支持text／json／jsonl，tail支持text／jsonl并以Ctrl-C退出。查询支持run、时间范围、offset和limit，具体字段与轮转边界见[日志说明](observability.md)。
 
+## 只读观测与回放
+
+当前开发线提供四条只读观测命令，全部经 `read_snapshot` 不可变快照投影持久化数据，绝不派发模型请求、执行工具或访问网络；除跨会话 `usage` 经活动存储做只读 SELECT 外，均不打开可写存储，会话持锁时仍可使用。
+
+```sh
+soyo usage --session SESSION_ID --by run
+soyo usage --since 30 --by profile
+soyo replay SESSION_ID --run RUN_ID --step 3
+soyo diagnose SESSION_ID
+soyo session report SESSION_ID --run RUN_ID --file ./run-report.md
+```
+
+`usage` 聚合 run_metrics 的 token、费用与 profile 归因，`--by` 选 run／profile／day 分组（day 按 UTC 日界，仅跨会话路径可用），`--since` 限制近 N 天（默认30）。`replay` 按事件序与 history 序重建时间线，`--step` 输出该步完整输入输出。`diagnose` 定位第一个 failed／denied／cancelled 步骤并给出最近健康步骤与错误码。`session report` 把指定 run 的元数据、结果、metrics、时间线与诊断发布为 Markdown 或 JSON 文件（独占创建、0600，与 `session export` 同约定）。四者均支持 text／json／jsonl，取消退出130、其他错误退出2，细节见[日志说明](observability.md)。
+
 ### 凭据检测边界
 
 已知凭据按原文及逐字符JSON／Unicode混合转义检测。无法安全清除的残留正文整体扣留。重复键或超范围数字构成的无凭据JSON文本保持原文，含凭据且无法无损处理时失败关闭。无反斜杠纯文本不占用转义解码预算。

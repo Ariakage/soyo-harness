@@ -246,7 +246,9 @@ BrowserProvider 首版候选为托管 Chromium／Playwright MCP worker，通过�
 
 ## F-12 观测、回放与评估
 
-DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本地查询与跟随，并通过本机验收。历史回放与评估仍按本能力的后续范围推进，细节见[日志与追踪](observability.md)。
+DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本地查询与跟随，并通过本机验收。
+
+> **实现状态（D-102、D-103）**：只读投影层已落地——`soyo-app::observe` 把 `read_snapshot` 不可变快照投影为时间线，CLI 提供 `soyo usage`（run_metrics 用量／费用／profile 归因）、`soyo replay`（events＋history 重建时间线，含 `--run`／`--step` 钻取）、`soyo diagnose`（首个 failed／denied／cancelled 步骤定位）与 `soyo session report`（run 级 Markdown／JSON 报告，复用 `publish_session` 发布约定）。四者全部只读，绝不派发模型、执行工具或访问网络。固定任务集版本回归评估与 TUI／桌面端观测面板仍按后续范围推进，细节见[日志与追踪](observability.md)。
 
 **价值**：持续回答“为什么失败”“改版是否更好”“消耗发生在哪里”。
 

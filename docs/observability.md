@@ -74,6 +74,17 @@ Prompt、环境变量、HTTP 认证头、命令完整环境和工具正文具有
 - `logs show` 分页读取轮转文件，`tail` 跟随文件更换。二者处理损坏尾行、取消、符号链接和私有文件权限，输出经过终端安全转换。
 - 日志保持本地保存，远端追踪接收端属于后续独立集成。
 
+## 只读投影与回放
+
+F-12 的投影层在已持久化采集底座（sessions／runs／events／change_log／run_metrics）之上提供四条只读 CLI 命令，实现位于 `soyo-app::observe`（纯函数投影）与 `soyo-cli::observe`（命令装配与输出）。所有命令经 `SqliteStore::read_snapshot` 读取不可变 WAL 快照——不加会话锁、不触发迁移、不写 WAL；唯一例外是无 `--session` 的 `soyo usage`，它经活动存储执行只读 SELECT 聚合全部会话。四者均不构造运行时、不派发模型请求、不执行工具、不访问网络，会话被其他进程持锁时仍可查询。
+
+- `soyo usage [--session ID] [--since DAYS] [--by run|profile|day]`：聚合 run_metrics 的 execution_requests、token 与按币种 microunits 累加的 cost，保留 by_profile 归因行；token 仅在已上报值上累加，`estimated` 沿记录向上传播。`--session` 路径走快照，`--since`（默认30天，上限365）仅对跨会话路径按 `runs.started_at` 下限过滤；day 分组按 UTC 日界，仅在跨会话路径可用。
+- `soyo replay SESSION_ID [--run ID] [--step N]`：把 events（按 seq）与 history（按 ordinal）投影为有序时间线，tool 行经持久 `tool_calls` 补齐 run 归属；`ProviderItem` 不透出，输入／输出字段分别按 4 KiB／64 KiB 截断。`--step` 输出单步完整 input／output。
+- `soyo diagnose SESSION_ID [--run ID]`：在同一时间线上定位第一个 `failed`／`denied`／`cancelled` 步骤（覆盖 tool.finished、model.finished、permission.resolved denied、run.finished 非 completed），输出错误码、最近健康步骤序号与 run 终态。
+- `soyo session report SESSION_ID [--run ID] [--format markdown|json] --file PATH`：把指定 run 的元数据、RunResult、RunMetrics、时间线与诊断经 `publish_session` 发布——与 `session export` 相同的独占创建、0600 权限、PLAN 工作区拒绝约定；前者面向 run 级报告，后者面向整会话转录。未指定 `--run` 时选最近 finished run，否则最后一个持久化 run，均无则报 `run_not_found`。
+
+输出与其他查询一致：text 为终端安全文本，JSON 使用 `{schema_version:1,data}` 信封，JSONL 附加 `type`；取消退出130，其余错误退出2。
+
 ## 验收
 
 DEV-040 验证全部级别、旧行读取、字段白名单、深层编码秘密、权限、符号链接和跨进程轮转。DEV-041 验证并发模型／核查／工具／后台任务的 span 归属，以及队列过载、慢磁盘与退出排空。DEV-042 验证筛选、跟随、取消和 JSON／JSONL stdout。
