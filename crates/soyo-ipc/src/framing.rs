@@ -1,20 +1,30 @@
 //! Newline-delimited JSON frame IO with strict bounded line buffering.
+//!
+//! Transport-agnostic: any `AsyncRead + AsyncWrite` byte stream (Unix domain
+//! socket, loopback TCP for SSH-forwarded remote access) carries the same
+//! frame format and limits.
 
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf},
-    net::UnixStream,
-};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::protocol::{ClientFrame, ServerFrame};
 
-pub type FrameReader = BufReader<ReadHalf<UnixStream>>;
-pub type FrameWriter = BufWriter<WriteHalf<UnixStream>>;
+type DynRead = Box<dyn AsyncRead + Unpin + Send>;
+type DynWrite = Box<dyn AsyncWrite + Unpin + Send>;
+
+pub type FrameReader = BufReader<DynRead>;
+pub type FrameWriter = BufWriter<DynWrite>;
 
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
-pub fn split(stream: UnixStream) -> (FrameReader, FrameWriter) {
+pub fn split<S>(stream: S) -> (FrameReader, FrameWriter)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let (read, write) = tokio::io::split(stream);
-    (BufReader::new(read), BufWriter::new(write))
+    (
+        BufReader::new(Box::new(read) as DynRead),
+        BufWriter::new(Box::new(write) as DynWrite),
+    )
 }
 
 async fn read_bounded_line(
@@ -90,7 +100,7 @@ mod tests {
     use super::*;
     use crate::protocol::{ClientFrame, ServerFrame};
     use serde_json::json;
-    use tokio::net::UnixListener;
+    use tokio::net::{UnixListener, UnixStream};
 
     async fn connected_pair() -> (
         tempfile::TempDir,

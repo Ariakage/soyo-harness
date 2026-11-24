@@ -10,6 +10,7 @@ use soyo_core::{
     contract::BoundaryError,
 };
 use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
@@ -112,6 +113,133 @@ impl HelperTarget {
     /// Exclusive flock path coordinating bind and stale-socket reclamation.
     pub fn lock_path(&self) -> PathBuf {
         self.helper_dir().join(format!("{}.lock", self.fingerprint))
+    }
+
+    /// Resolve the endpoint clients should dial / the daemon should bind.
+    ///
+    /// Order: `SOYO_HELPER_LISTEN` environment value, then `[helper] listen` in
+    /// the selected configuration file, then the default Unix socket derived
+    /// from the configuration fingerprint.
+    ///
+    /// `SOYO_HELPER_LISTEN` also reaches a spawned `soyo helper` child through
+    /// normal environment inheritance, keeping client and daemon on the same
+    /// endpoint without extra flags.
+    pub fn listen_endpoint(&self) -> Result<ListenEndpoint, DesktopError> {
+        if let Ok(raw) = std::env::var("SOYO_HELPER_LISTEN")
+            && !raw.trim().is_empty()
+        {
+            return self.resolve_listen(&raw);
+        }
+        if let Some(raw) = config::helper_listen_override(&self.config_path) {
+            return self.resolve_listen(&raw);
+        }
+        Ok(ListenEndpoint::Unix(self.socket_path()))
+    }
+
+    fn resolve_listen(&self, raw: &str) -> Result<ListenEndpoint, DesktopError> {
+        match ListenSpec::parse(raw)? {
+            ListenSpec::Unix(None) => Ok(ListenEndpoint::Unix(self.socket_path())),
+            ListenSpec::Unix(Some(path)) => Ok(ListenEndpoint::Unix(path)),
+            ListenSpec::Tcp(addr) => Ok(ListenEndpoint::Tcp(addr)),
+        }
+    }
+
+    /// Whether the resolved endpoint is TCP (dial-only: never spawns, never
+    /// verifies peer uid). `false` on unresolvable configuration so callers
+    /// keep the Unix path and surface the parse error from `connect_for`.
+    pub fn is_tcp_endpoint(&self) -> bool {
+        matches!(self.listen_endpoint(), Ok(ListenEndpoint::Tcp(_)))
+    }
+}
+
+/// A configured helper endpoint, ready to bind or dial.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenEndpoint {
+    /// Unix domain socket path (fingerprint-derived or explicit `unix:<path>`).
+    Unix(PathBuf),
+    /// Loopback TCP address (`tcp:<host>:<port>`); remote clients reach it
+    /// through SSH local forwarding (`ssh -L`).
+    Tcp(SocketAddr),
+}
+
+/// The endpoint string as configured: `unix`, `unix:<path>`, or
+/// `tcp:<host>:<port>` restricted to loopback addresses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenSpec {
+    /// `unix` (no path → fingerprint-derived socket) or `unix:<path>`.
+    Unix(Option<PathBuf>),
+    /// `tcp:<host>:<port>` already restricted to a loopback `SocketAddr`.
+    Tcp(SocketAddr),
+}
+
+impl ListenSpec {
+    /// Parse an endpoint string; `tcp:` hosts must be a loopback address
+    /// (`127.0.0.1`, `::1`, or `localhost`). Anything routable is refused:
+    /// remote access is intended to arrive via SSH local forwarding, which
+    /// still presents as a loopback connection to the daemon. A bare
+    /// `host:port` (the D-113 shorthand) is accepted as `tcp:host:port`.
+    pub fn parse(raw: &str) -> Result<Self, DesktopError> {
+        let fail = |detail: &str| {
+            DesktopError::new(
+                "invalid_config",
+                format!("invalid helper listen endpoint '{raw}': {detail}"),
+            )
+        };
+        let (scheme, rest) = raw.split_once(':').unwrap_or((raw, ""));
+        match scheme {
+            "unix" => {
+                if rest.is_empty() {
+                    Ok(Self::Unix(None))
+                } else {
+                    Ok(Self::Unix(Some(PathBuf::from(rest))))
+                }
+            }
+            "tcp" => Ok(Self::Tcp(parse_tcp_addr(rest).map_err(|e| fail(&e))?)),
+            _ if looks_like_host_port(raw) => {
+                Ok(Self::Tcp(parse_tcp_addr(raw).map_err(|e| fail(&e))?))
+            }
+            _ => Err(fail(
+                "scheme must be 'unix' or 'tcp' (or a bare 'host:port')",
+            )),
+        }
+    }
+}
+
+/// Recognize the bare `host:port` shorthand without swallowing other schemes
+/// (`http:...`) or relative Unix paths.
+fn looks_like_host_port(raw: &str) -> bool {
+    raw.starts_with('[') || raw.starts_with("localhost:") || raw.parse::<SocketAddr>().is_ok()
+}
+
+fn parse_tcp_addr(host_port: &str) -> Result<SocketAddr, String> {
+    let (host, port) = host_port
+        .rsplit_once(':')
+        .ok_or_else(|| "expected <host>:<port>".to_owned())?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| "port must be a number between 0 and 65535".to_owned())?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip: IpAddr = match host {
+        "localhost" => Ipv4Addr::LOCALHOST.into(),
+        _ => host
+            .parse::<IpAddr>()
+            .map_err(|_| "host must be a loopback IP or 'localhost'".to_owned())?,
+    };
+    if !is_loopback(ip) {
+        return Err("host must be a loopback address (127.0.0.1 or ::1); \
+             remote access is reached via `ssh -L` forwarding"
+            .to_owned());
+    }
+    Ok(SocketAddr::new(ip, port))
+}
+
+fn is_loopback(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
     }
 }
 
@@ -251,5 +379,91 @@ impl HelperEndpoint {
         HelperTarget::from_environment()
             .ok()
             .map(|target| target.socket_path())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn listen_spec_unix_forms() {
+        assert_eq!(ListenSpec::parse("unix").unwrap(), ListenSpec::Unix(None));
+        assert_eq!(ListenSpec::parse("unix:").unwrap(), ListenSpec::Unix(None));
+        assert_eq!(
+            ListenSpec::parse("unix:/tmp/x.sock").unwrap(),
+            ListenSpec::Unix(Some(PathBuf::from("/tmp/x.sock")))
+        );
+        // Relative socket paths pass through unchanged; the daemon anchors them.
+        assert_eq!(
+            ListenSpec::parse("unix:rel/x.sock").unwrap(),
+            ListenSpec::Unix(Some(PathBuf::from("rel/x.sock")))
+        );
+    }
+
+    #[test]
+    fn listen_spec_tcp_loopback_forms() {
+        assert_eq!(
+            ListenSpec::parse("tcp:127.0.0.1:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 7100))
+        );
+        assert_eq!(
+            ListenSpec::parse("tcp:[::1]:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 7100))
+        );
+        assert_eq!(
+            ListenSpec::parse("tcp:::1:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 7100))
+        );
+        assert_eq!(
+            ListenSpec::parse("tcp:localhost:0").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+        );
+        // Bare `host:port` shorthand (the D-113 `--listen 127.0.0.1:PORT` form).
+        assert_eq!(
+            ListenSpec::parse("127.0.0.1:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 7100))
+        );
+        assert_eq!(
+            ListenSpec::parse("localhost:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 7100))
+        );
+        assert_eq!(
+            ListenSpec::parse("[::1]:7100").unwrap(),
+            ListenSpec::Tcp(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 7100))
+        );
+    }
+
+    #[test]
+    fn listen_spec_tcp_rejects_non_loopback() {
+        for raw in [
+            "tcp:0.0.0.0:7100",
+            "tcp:::7100",
+            "tcp:192.168.1.5:80",
+            "tcp:8.8.8.8:443",
+            "tcp:example.com:80",
+            "tcp:::ffff:8.8.8.8:80",
+            "0.0.0.0:7100",
+            "192.168.1.5:80",
+        ] {
+            let err = ListenSpec::parse(raw).unwrap_err();
+            assert_eq!(err.code, "invalid_config", "{raw}");
+        }
+    }
+
+    #[test]
+    fn listen_spec_rejects_malformed() {
+        for raw in [
+            "",
+            "tcp:",
+            "tcp:127.0.0.1",
+            "tcp:127.0.0.1:abc",
+            "tcp:127.0.0.1:99999",
+            "http:127.0.0.1:80",
+            "example.com:80",
+        ] {
+            assert!(ListenSpec::parse(raw).is_err(), "{raw}");
+        }
     }
 }

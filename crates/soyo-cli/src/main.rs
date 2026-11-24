@@ -228,7 +228,12 @@ enum Command {
         strict: bool,
     },
     /// Run the shared backend daemon used by CLI, TUI, and desktop clients.
-    Helper,
+    Helper {
+        /// Endpoint to bind: `unix[:<path>]` (default fingerprint socket) or
+        /// `tcp:<host>:<port>` restricted to loopback for `ssh -L` access.
+        #[arg(long)]
+        listen: Option<String>,
+    },
     /// Stop the running helper daemon.
     Kill,
     /// Serve Soyo as an MCP server over stdio (D-108: run/status/cancel via the helper).
@@ -2074,8 +2079,13 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
                 observe::emit(&config, outcome, "session.diagnose")
             }
         },
-        Some(Command::Helper) => {
-            helper_commands::run_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await
+        Some(Command::Helper { listen }) => {
+            helper_commands::run_helper(
+                cli.config.as_deref(),
+                cli.data_dir.as_deref(),
+                listen.clone(),
+            )
+            .await
         }
         Some(Command::Kill) => {
             helper_commands::kill_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await

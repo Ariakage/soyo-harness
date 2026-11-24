@@ -618,6 +618,25 @@ auto_capture = false
 
 捕获遵守 `CheckpointLimits` 与内容门禁（仅 UTF-8、无 NUL、经 `SecretRegistry` 扫描），在阻塞工作线程上执行且**失败不阻塞工具调用**——capture 失败只影响该次自动快照，不写回工具结果。检查点存储位于 `<data_dir>/checkpoints/`（私有 0700 目录、0600 `O_NOFOLLOW`），与会话绑定；`soyo checkpoint`（`list`/`diff`/`create`/`accept`/`restore`/`recover`）、TUI `/checkpoint` 与桌面端「Checkpoints」设置页提供用户侧查看、比较与恢复，三端共享同一 `checkpoint_admin` 服务与 `restore_authorize` 写根/受保护根判定。restore 在无 TTY 时需 `--yes`、有 TTY 或桌面端时逐文件确认（桌面端经 helper IPC 两段式：先取 bounded review、勾选批准后再单次 confirm），且解析目标必须留在会话工作区内、不得指向受保护宿主存储。PLAN 只读；被中断的 restore 其日志在下次会话恢复时经 `recover` 上浮为 Unknown，绝不自动重放。
 
+## helper 监听端点（F-13／D-113）
+
+`[helper] listen` 选择 `soyo helper` 的监听端点，默认按配置指纹生成 Unix socket。远程接入时改为回环 TCP，由 `ssh -L` 转发；wire 契约不变：
+
+```toml
+[helper]
+# 不设置时使用 <state_dir>/helper/<fingerprint>.sock
+listen = "tcp:127.0.0.1:7100"
+```
+
+| 取值 | 语义 |
+| --- | --- |
+| `unix` | 默认配置指纹 socket（等价于不设置） |
+| `unix:<path>` | 显式 Unix socket 路径 |
+| `tcp:<host>:<port>` | 仅接受回环地址（`127.0.0.1`、`::1`、`localhost`）；其他地址在绑定或拨号时以 `invalid_config` 拒绝。端口 `0` 由系统分配，helper 启动时在标准错误打印实际端口 |
+| `host:port` | 省略 `tcp:` 的简写（D-113 的 `--listen 127.0.0.1:7100` 形式），含义同上 |
+
+优先级：`soyo helper --listen` > 环境变量 `SOYO_HELPER_LISTEN` > `[helper] listen` > 默认 Unix socket。该值在客户端连接与 helper 绑定时解析，`config check` 不单独解析端点语法；端点不在默认 Unix socket 时，客户端解析到 `tcp:` 只拨号、不 spawn helper，`unix:` 仍保留私目录与对端 uid 校验。TCP 传输当前没有 TLS／令牌认证（D-113 第二增量），使用边界与 `ssh -L` 配方见[使用指南](usage.md)。
+
 ## Goal 自动推进链（F-20）
 
 Goal 自动推进链**默认 `auto_chain = false`**；`soyo goal start --auto --chain` 或下面的配置显式开启：

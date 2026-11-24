@@ -8,7 +8,8 @@ use soyo_ipc::{
     framing::{FrameWriter, read_client_frame, split, write_frame},
     protocol::{ClientFrame, PROTOCOL_VERSION, ServerFrame},
     socket::{
-        HelperPidRecord, HelperTarget, process_exe_path, process_started_id, verify_peer_euid,
+        HelperPidRecord, HelperTarget, ListenEndpoint, ListenSpec, process_exe_path,
+        process_started_id, verify_peer_euid,
     },
     types::{DesktopError, DesktopStreamEnvelope, GoalBudgetDto},
 };
@@ -24,7 +25,8 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{UnixListener, UnixStream},
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpListener, UnixListener, UnixStream},
     sync::{Mutex, mpsc},
 };
 
@@ -51,6 +53,8 @@ impl Default for ServerConfig {
 pub struct HelperServer {
     service: Arc<HostService>,
     shutdown: Arc<AtomicBool>,
+    /// Explicit `--listen` endpoint string overriding env/config resolution.
+    listen_override: Option<String>,
 }
 
 impl HelperServer {
@@ -58,7 +62,15 @@ impl HelperServer {
         Self {
             service: Arc::new(service),
             shutdown: Arc::new(AtomicBool::new(false)),
+            listen_override: None,
         }
+    }
+
+    /// Bind the endpoint given on the command line instead of resolving
+    /// `SOYO_HELPER_LISTEN` / `[helper] listen` / the default Unix socket.
+    pub fn with_listen_override(mut self, listen: Option<String>) -> Self {
+        self.listen_override = listen;
+        self
     }
 
     pub fn service(&self) -> Arc<HostService> {
@@ -66,8 +78,14 @@ impl HelperServer {
     }
 
     /// Serve until `ClientFrame::Shutdown`, `service.shutdown()`, or listener error.
+    ///
+    /// Endpoint resolution: `--listen` flag > `SOYO_HELPER_LISTEN` env >
+    /// `[helper] listen` in config > the fingerprint Unix socket. A `tcp:`
+    /// endpoint binds loopback only (D-113: remote access arrives via
+    /// `ssh -L`, so no TLS/auth layer exists on this transport yet).
     pub async fn run(&self) -> Result<(), DesktopError> {
         let target = self.service.helper_target().await;
+        let endpoint = self.resolve_endpoint(&target)?;
         crate::envfile::migrate_legacy_env(&target.state_dir);
 
         if !HelperTarget::uses_env_helper_dir() {
@@ -89,8 +107,35 @@ impl HelperServer {
         )
         .map_err(|err| DesktopError::new(err.code(), err.message().to_owned()))?;
 
-        let socket_path = target.socket_path();
-        match fs::symlink_metadata(&socket_path) {
+        match endpoint {
+            ListenEndpoint::Unix(socket_path) => self.run_unix(&target, &socket_path).await,
+            ListenEndpoint::Tcp(addr) => self.run_tcp(&target, addr).await,
+        }
+    }
+
+    /// Resolve the endpoint this server binds: explicit `--listen` flag first,
+    /// then the target's env/config/default resolution.
+    fn resolve_endpoint(&self, target: &HelperTarget) -> Result<ListenEndpoint, DesktopError> {
+        if let Some(raw) = self
+            .listen_override
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            return match ListenSpec::parse(raw)? {
+                ListenSpec::Unix(None) => Ok(ListenEndpoint::Unix(target.socket_path())),
+                ListenSpec::Unix(Some(path)) => Ok(ListenEndpoint::Unix(path)),
+                ListenSpec::Tcp(addr) => Ok(ListenEndpoint::Tcp(addr)),
+            };
+        }
+        target.listen_endpoint()
+    }
+
+    async fn run_unix(
+        &self,
+        target: &HelperTarget,
+        socket_path: &Path,
+    ) -> Result<(), DesktopError> {
+        match fs::symlink_metadata(socket_path) {
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
                     return Err(DesktopError::new(
@@ -101,7 +146,7 @@ impl HelperServer {
                 // Check whether a live helper is already serving on this socket before unlinking.
                 if let Ok(Ok(stream)) = tokio::time::timeout(
                     Duration::from_millis(200),
-                    UnixStream::connect(&socket_path),
+                    UnixStream::connect(socket_path),
                 )
                 .await
                     && verify_peer_euid(&stream).is_ok()
@@ -111,7 +156,7 @@ impl HelperServer {
                         "Another helper for this configuration is already running",
                     ));
                 }
-                let _ = fs::remove_file(&socket_path);
+                let _ = fs::remove_file(socket_path);
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
@@ -122,19 +167,21 @@ impl HelperServer {
             }
         }
 
-        let listener = UnixListener::bind(&socket_path).map_err(|err| {
+        let listener = UnixListener::bind(socket_path).map_err(|err| {
             DesktopError::new("helper_bind", format!("Cannot bind helper socket: {err}"))
         })?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)).map_err(|err| {
-            let _ = fs::remove_file(&socket_path);
+        fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600)).map_err(|err| {
+            let _ = fs::remove_file(socket_path);
             DesktopError::new(
                 "helper_bind",
                 format!("Cannot set 0600 permissions on helper socket: {err}"),
             )
         })?;
 
+        // Only a helper that owns the bound endpoint writes the pid record:
+        // a rival rejected with `helper_already_running` must not clobber it.
         let pid_record = if self.manage_pid() {
-            write_pid_file(&target)
+            write_pid_file(target)
         } else {
             None
         };
@@ -143,9 +190,9 @@ impl HelperServer {
         // is unlinked (tempdir cleanup, `soyo kill` racing a stale bind) or
         // rebound by another helper, this instance can never be reached again
         // and must exit instead of leaking as an orphan.
-        let bound_identity = socket_file_identity(&socket_path);
+        let bound_identity = socket_file_identity(socket_path);
         if let Some(bound) = bound_identity {
-            let watch_path = socket_path.clone();
+            let watch_path = socket_path.to_path_buf();
             let shutdown = Arc::clone(&self.shutdown);
             tokio::spawn(async move {
                 loop {
@@ -158,7 +205,6 @@ impl HelperServer {
             });
         }
 
-        let service = Arc::clone(&self.service);
         while !self.shutdown.load(Ordering::Relaxed) {
             let accept = tokio::select! {
                 accept = listener.accept() => accept,
@@ -170,13 +216,7 @@ impl HelperServer {
                         eprintln!("soyo helper: rejected client: {}", err.message);
                         continue;
                     }
-                    let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-                    let svc = Arc::clone(&service);
-                    let shutdown = Arc::clone(&self.shutdown);
-                    svc.active_clients.fetch_add(1, Ordering::AcqRel);
-                    tokio::spawn(async move {
-                        handle_client(conn_id, stream, svc, shutdown).await;
-                    });
+                    self.spawn_client(stream);
                 }
                 Err(err) => {
                     if self.shutdown.load(Ordering::Relaxed) {
@@ -191,10 +231,80 @@ impl HelperServer {
         if let Some(record) = pid_record {
             remove_pid_file_if_owned(&target.pid_path(), &record);
         }
-        if bound_identity.is_some() && socket_file_identity(&socket_path) == bound_identity {
-            let _ = fs::remove_file(&socket_path);
+        if bound_identity.is_some() && socket_file_identity(socket_path) == bound_identity {
+            let _ = fs::remove_file(socket_path);
         }
         Ok(())
+    }
+
+    /// Bind a loopback TCP listener for SSH-forwarded remote access (D-113).
+    /// No socket-file watchdog exists here — reachability is the address, not
+    /// a filesystem path — and no peer-uid check is possible, so access control
+    /// rests entirely on the loopback bind plus SSH's own authentication.
+    async fn run_tcp(
+        &self,
+        target: &HelperTarget,
+        addr: std::net::SocketAddr,
+    ) -> Result<(), DesktopError> {
+        let listener = TcpListener::bind(addr).await.map_err(|err| {
+            DesktopError::new(
+                "helper_bind",
+                format!("Cannot bind helper TCP listener at {addr}: {err}"),
+            )
+        })?;
+        let bound = listener
+            .local_addr()
+            .map_err(|err| DesktopError::new("helper_bind", format!("TCP local addr: {err}")))?;
+        eprintln!(
+            "soyo helper: listening on tcp://{bound} (loopback only; remote clients reach this via `ssh -L`)"
+        );
+        // Only a helper that owns the bound endpoint writes the pid record.
+        let pid_record = if self.manage_pid() {
+            write_pid_file(target)
+        } else {
+            None
+        };
+
+        while !self.shutdown.load(Ordering::Relaxed) {
+            let accept = tokio::select! {
+                accept = listener.accept() => accept,
+                _ = tokio::time::sleep(Duration::from_millis(200)) => continue,
+            };
+            match accept {
+                Ok((stream, peer)) => {
+                    if !peer.ip().is_loopback() {
+                        eprintln!("soyo helper: rejected non-loopback TCP peer {peer}");
+                        continue;
+                    }
+                    self.spawn_client(stream);
+                }
+                Err(err) => {
+                    if self.shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    eprintln!("soyo helper: TCP accept failed: {err}");
+                }
+            }
+        }
+
+        self.service.shutdown().await;
+        if let Some(record) = pid_record {
+            remove_pid_file_if_owned(&target.pid_path(), &record);
+        }
+        Ok(())
+    }
+
+    fn spawn_client<S>(&self, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let conn_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+        let svc = Arc::clone(&self.service);
+        let shutdown = Arc::clone(&self.shutdown);
+        svc.active_clients.fetch_add(1, Ordering::AcqRel);
+        tokio::spawn(async move {
+            handle_client(conn_id, stream, svc, shutdown).await;
+        });
     }
 
     fn manage_pid(&self) -> bool {
@@ -265,12 +375,14 @@ fn socket_file_identity(path: &Path) -> Option<(u64, u64)> {
     Some((meta.dev(), meta.ino()))
 }
 
-async fn handle_client(
+async fn handle_client<S>(
     conn_id: u64,
-    stream: UnixStream,
+    stream: S,
     service: Arc<HostService>,
     shutdown: Arc<AtomicBool>,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let (mut reader, writer) = split(stream);
     let writer = Arc::new(Mutex::new(writer));
     let hello = ServerFrame::Hello {

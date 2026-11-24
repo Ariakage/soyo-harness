@@ -125,6 +125,33 @@ soyo --config /path/to/config.toml module vm enable
 
 登录在宿主交互终端中完成，运行期缺失授权时返回 `needs_auth`。凭据引用绑定服务器、精确 endpoint、批准 scope 以及 OAuth 的 issuer／canonical resource，令牌刷新与撤销由宿主处理。工具已执行但无法确认完成时保留 `unknown`，恢复与重连继续遵守执行记录，原始工具调用保持单次派发。
 
+## 远程接入（SSH 隧道）
+
+`soyo helper` 默认只监听当前配置指纹对应的 Unix socket。远程场景可显式让 helper 监听回环 TCP 端口，再经 SSH 本地转发接入；NDJSON 帧格式、协议版本握手与全部已发布方法保持不变，SSH 隧道只替换承载的字节流。该路径不引入 TLS 或令牌认证（见[决策记录](decisions.md) D-113；HTTP+Token 属于后续增量）。
+
+在运行 helper 的机器上（示例端口 7100）：
+
+```sh
+soyo --config /path/to/config.toml helper --listen tcp:127.0.0.1:7100
+```
+
+`--listen` 接受 `unix[:<path>]`（默认，配置指纹 socket）或 `tcp:<host>:<port>`（也可省略 `tcp:` 直接写 `host:port`，即 D-113 的 `--listen 127.0.0.1:7100` 形式）；TCP 只接受回环地址（`127.0.0.1`、`::1`、`localhost`），`0.0.0.0` 等可路由地址会被拒绝。也可在配置中设置 `[helper] listen`（见[配置](configuration.md)），或用环境变量 `SOYO_HELPER_LISTEN` 临时覆盖；优先级为 `--listen` > 环境变量 > 配置 > 默认 Unix socket。
+
+在客户端机器上建立转发并连接（转发目标始终是本机回环）：
+
+```sh
+ssh -N -L 7100:127.0.0.1:7100 user@helper-host
+SOYO_HELPER_LISTEN=tcp:127.0.0.1:7100 soyo --config /path/to/config.toml run '...'
+```
+
+客户端解析到 `tcp:` 端点时只拨号，绝不在本机拉起 helper；`unix:` 端点保持原有的私目录与对端 uid 校验，TCP 传输不具备这两项，访问控制由回环绑定与 SSH 自身认证承担。
+
+限制与安全说明：
+
+- TCP 监听仅限回环地址；隧道远端流量经 `ssh -L` 到达 helper 时呈现为回环连接。不要通过端口转发或防火墙把该端口暴露到非回环地址。
+- 当前 TCP 传输没有认证层：能连接到该回环端口的进程，其权限等同本机用户。在 D-113 第二增量（HTTPS + bearer token）落地前，仅应面向自己的工作站使用。
+- helper 仍按配置指纹独占（flock）：同一配置的 Unix 与 TCP 实例不能同时运行；`soyo kill` 在客户端解析到同一端点时照常生效。
+
 ## 项目上下文、持久化与用量
 
 Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工作区同名项优先；加载范围及信任边界见[项目上下文](project-context.md)。`--preferences-file PATH`、`--memory-file PATH` 可显式提供本次调用的 UTF-8 偏好和记忆文本，各限 64 KiB；内容会发送给模型，不会自动发现或作为持久记忆维护。文件含当前配置的已知凭据时，在模型请求前拒绝，检测包括完整 JSON、Markdown 围栏和普通正文中的嵌套 JSON 转义与 Unicode 转义。检测视图最多解码256层，累计扫描上限64 MiB，超限沿用失败关闭边界。通过检测的个人文本按原文发送给模型。

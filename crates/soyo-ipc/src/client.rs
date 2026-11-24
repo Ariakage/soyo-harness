@@ -14,14 +14,15 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::UnixStream,
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpStream, UnixStream},
     sync::{Mutex, mpsc, oneshot},
 };
 
 use crate::{
     framing::{FrameWriter, read_server_frame, split, write_frame},
     protocol::{ClientFrame, PROTOCOL_VERSION, ServerFrame},
-    socket::{HelperTarget, verify_peer_euid},
+    socket::{HelperTarget, ListenEndpoint, verify_peer_euid},
     types::{DesktopError, DesktopStreamEnvelope, HelperInfoDto},
 };
 
@@ -68,10 +69,21 @@ impl HelperClient {
     }
 
     /// Connect to the helper matching `target`, spawning `soyo helper` if needed.
+    ///
+    /// A `tcp:` endpoint only dials: the daemon lives on the other side of an
+    /// SSH forward (or another machine), so spawning a local process here would
+    /// be meaningless. Spawning stays Unix-socket-only.
     pub async fn connect_or_spawn_for(target: &HelperTarget) -> Result<Arc<Self>, DesktopError> {
         match Self::connect_for(target).await {
             Ok(client) => Ok(client),
             Err(first_err) => {
+                // A `tcp:` endpoint only dials — the daemon is expected to be
+                // reachable already (e.g. through `ssh -L`), never spawned.
+                // An unresolvable endpoint is a hard configuration error too:
+                // a spawned helper would hit the same failure.
+                if first_err.code == "invalid_config" || target.is_tcp_endpoint() {
+                    return Err(first_err);
+                }
                 spawn_helper_process(target)?;
                 // Wait briefly for the daemon to bind its socket.
                 for _ in 0..50 {
@@ -92,35 +104,66 @@ impl HelperClient {
         Self::connect_for(&target).await
     }
 
-    /// Connect once to the helper matching `target`; verifies private directory and peer UID.
+    /// Connect once to the helper matching `target`; on Unix endpoints verifies
+    /// private directory and peer UID. `tcp:` endpoints dial the loopback
+    /// address directly — peer credentials do not exist there, so security
+    /// rests on the loopback bind plus the SSH forward delivering traffic.
     pub async fn connect_for(target: &HelperTarget) -> Result<Arc<Self>, DesktopError> {
-        let helper_dir = target.helper_dir();
-        if helper_dir.exists() {
-            soyo_fs::open_existing_private_dir(&helper_dir, "helper_unauthorized", "helper")
-                .map_err(|err| {
-                    DesktopError::new("helper_unauthorized", err.message().to_owned())
+        match target
+            .listen_endpoint()
+            .map_err(|err| DesktopError::new("invalid_config", err.message.to_owned()))?
+        {
+            ListenEndpoint::Tcp(addr) => {
+                let stream = TcpStream::connect(addr).await.map_err(|err| {
+                    DesktopError::new(
+                        "helper_unavailable",
+                        format!(
+                            "Cannot connect to soyo helper at tcp://{addr} \
+                             (is `ssh -L` forwarding active?): {err}"
+                        ),
+                    )
                 })?;
+                Self::from_stream_with_target(stream, Some(target.clone())).await
+            }
+            ListenEndpoint::Unix(socket_path) => {
+                let helper_dir = target.helper_dir();
+                if helper_dir.exists() {
+                    soyo_fs::open_existing_private_dir(
+                        &helper_dir,
+                        "helper_unauthorized",
+                        "helper",
+                    )
+                    .map_err(|err| {
+                        DesktopError::new("helper_unauthorized", err.message().to_owned())
+                    })?;
+                }
+                let stream = UnixStream::connect(&socket_path).await.map_err(|err| {
+                    DesktopError::new(
+                        "helper_unavailable",
+                        format!("Cannot connect to soyo helper: {err}"),
+                    )
+                })?;
+                verify_peer_euid(&stream)?;
+                Self::from_stream_with_target(stream, Some(target.clone())).await
+            }
         }
-        let socket_path = target.socket_path();
-        let stream = UnixStream::connect(&socket_path).await.map_err(|err| {
-            DesktopError::new(
-                "helper_unavailable",
-                format!("Cannot connect to soyo helper: {err}"),
-            )
-        })?;
-        verify_peer_euid(&stream)?;
-        Self::from_stream_with_target(stream, Some(target.clone())).await
     }
 
     /// Build a client over an already-connected stream (used by tests).
-    pub async fn from_stream(stream: UnixStream) -> Result<Arc<Self>, DesktopError> {
+    pub async fn from_stream<S>(stream: S) -> Result<Arc<Self>, DesktopError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         Self::from_stream_with_target(stream, None).await
     }
 
-    async fn from_stream_with_target(
-        stream: UnixStream,
+    async fn from_stream_with_target<S>(
+        stream: S,
         target: Option<HelperTarget>,
-    ) -> Result<Arc<Self>, DesktopError> {
+    ) -> Result<Arc<Self>, DesktopError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let (mut reader, writer) = split(stream);
         let client = Arc::new(Self {
             writer: Mutex::new(writer),
@@ -397,15 +440,25 @@ impl HelperClient {
 
     /// Shut down the connected helper and establish a fresh connection for the
     /// same configuration target. Fails if the daemon does not exit or cannot serve.
+    ///
+    /// TCP endpoints are refused up front: this side can shut the daemon down
+    /// but cannot spawn its replacement across an SSH forward, and killing a
+    /// healthy remote daemon would leave nothing to reconnect to.
     pub async fn restart(&self) -> Result<Arc<Self>, DesktopError> {
         let target = match &self.target {
             Some(target) => target.clone(),
             None => HelperTarget::from_environment()
                 .map_err(|err| DesktopError::new("invalid_config", err.message().to_owned()))?,
         };
+        if target.is_tcp_endpoint() {
+            return Err(DesktopError::new(
+                "helper_restart",
+                "Cannot restart a helper reached over TCP; restart it on its host",
+            ));
+        }
         self.shutdown_daemon().await;
         for _ in 0..50 {
-            if UnixStream::connect(target.socket_path()).await.is_err() {
+            if Self::connect_for(&target).await.is_err() {
                 return Self::connect_or_spawn_for(&target).await;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;

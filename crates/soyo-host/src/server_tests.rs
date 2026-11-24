@@ -69,6 +69,117 @@ mod tests {
         assert!(!helper_pid_path().exists());
     }
 
+    fn free_tcp_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    /// D-113 path (a): the same NDJSON wire contract over loopback TCP — the
+    /// transport an `ssh -L` forward delivers traffic over. Published methods
+    /// must behave byte-identically to the Unix socket path.
+    #[tokio::test]
+    async fn tcp_loopback_round_trip_and_shutdown() {
+        let _guard = serial().await;
+        let _dir = use_temp_helper_dir();
+        let port = free_tcp_port();
+        let listen = format!("127.0.0.1:{port}");
+        let _env = EnvGuard::set(&[("SOYO_HELPER_LISTEN", &format!("tcp:{listen}"))]);
+        let server = HelperServer::new(HostService::from_environment());
+        let handle = tokio::spawn(async move {
+            if let Err(err) = server.run().await {
+                eprintln!("test helper server error: {}: {}", err.code, err.message);
+            }
+        });
+        // Wait for the TCP listener to accept.
+        let mut client = None;
+        for _ in 0..100 {
+            if let Ok(c) = HelperClient::connect().await {
+                client = Some(c);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let client = client.expect("tcp helper server did not start listening");
+        // Both sides resolved the same `tcp:` endpoint (no Unix socket involved).
+        assert!(matches!(
+            soyo_ipc::HelperTarget::from_environment()
+                .unwrap()
+                .listen_endpoint()
+                .unwrap(),
+            soyo_ipc::ListenEndpoint::Tcp(_)
+        ));
+
+        // Identity + bootstrap over TCP.
+        let info: serde_json::Value = client
+            .call_typed("helper_info", &json!({}))
+            .await
+            .expect("helper_info over tcp");
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+
+        let bootstrap: serde_json::Value = client
+            .call_typed("get_bootstrap_state", &json!({}))
+            .await
+            .expect("bootstrap over tcp");
+        assert!(bootstrap.get("config_ready").is_some());
+
+        // A second method round-trips too (desktop prefs are config-independent,
+        // so they work in this fixture).
+        let prefs: serde_json::Value = client
+            .call_typed("get_desktop_prefs", &json!({}))
+            .await
+            .expect("get_desktop_prefs over tcp");
+        assert!(prefs.is_object(), "{prefs}");
+
+        // Unknown methods still fail as a clean error frame, not a hang.
+        let err = client.call("no_such_method", json!({})).await.unwrap_err();
+        assert_eq!(err.code, "unknown_method");
+
+        client.shutdown_daemon().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        // The listener must stop accepting after shutdown.
+        assert!(HelperClient::connect().await.is_err());
+    }
+
+    /// A `tcp:` endpoint only dials: `connect_or_spawn_for` must never run
+    /// `spawn_helper_process` (nothing to spawn on the far side of a tunnel).
+    #[tokio::test]
+    async fn tcp_endpoint_does_not_spawn() {
+        let _guard = serial().await;
+        let dir = use_temp_helper_dir();
+        let marker = dir.path().join("spawned");
+        let script = dir.path().join("fake-soyo");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let port = free_tcp_port();
+        let _env = EnvGuard::set(&[
+            ("SOYO_HELPER_LISTEN", &format!("tcp:127.0.0.1:{port}")),
+            ("SOYO_HELPER_BIN", script.to_str().unwrap()),
+        ]);
+
+        let target = soyo_ipc::HelperTarget::from_environment().unwrap();
+        let err = match HelperClient::connect_or_spawn_for(&target).await {
+            Ok(_) => panic!("nothing should listen on the chosen port"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code, "helper_unavailable", "{}", err.message);
+        // Give any (incorrectly) spawned process time to touch the marker.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            !marker.exists(),
+            "tcp endpoints must never spawn a local helper"
+        );
+    }
+
     #[tokio::test]
     async fn stale_socket_is_reclaimed_on_bind() {
         let _guard = serial().await;

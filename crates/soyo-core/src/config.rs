@@ -653,6 +653,15 @@ pub struct GoalSettings {
     /// the chain; nothing is auto-replayed.
     pub auto_chain: bool,
 }
+/// Helper daemon transport selection (`F-13` D-113). `listen` accepts
+/// `unix[:<path>]` (default fingerprint socket) or `tcp:<host>:<port>`
+/// restricted to loopback addresses for SSH-forwarded remote access;
+/// endpoint syntax is enforced by `soyo-ipc` when the endpoint resolves.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct HelperSettings {
+    pub listen: Option<String>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -704,6 +713,8 @@ struct Document {
     #[serde(default)]
     credentials: crate::credentials::settings::CredentialSettings,
     #[serde(default)]
+    helper: HelperSettings,
+    #[serde(default)]
     goal: GoalSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
@@ -750,6 +761,9 @@ pub struct Config {
     /// Credential backend selection + host-authored scoped grants (`F-18`).
     /// Defaults to the private `file` backend with no grants — zero drift.
     pub credentials: crate::credentials::settings::CredentialSettings,
+    /// Helper daemon transport selection (`F-13` D-113); `listen` defaults to
+    /// the fingerprint Unix socket.
+    pub helper: HelperSettings,
     /// Goal orchestration toggles (`F-20`, `D-111`); `auto_chain` defaults to `false`.
     pub goal: GoalSettings,
     env: Environment,
@@ -1234,7 +1248,53 @@ pub fn load(
         file_text: doc.file_text,
         checkpoint: doc.checkpoint,
         credentials: doc.credentials,
+        helper: doc.helper,
         goal: doc.goal,
         env,
     })
+}
+
+/// Read `[helper].listen` from a configuration file without full validation.
+/// Returns `None` when the file is missing, unreadable, unparseable, or the
+/// key is absent — callers fall back to the default Unix socket, and a broken
+/// configuration still surfaces through the normal load path elsewhere.
+pub fn helper_listen_override(config_path: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct HelperOnly {
+        helper: Option<HelperSection>,
+    }
+    #[derive(Deserialize)]
+    struct HelperSection {
+        listen: Option<String>,
+    }
+    let text = std::fs::read_to_string(config_path).ok()?;
+    let doc: HelperOnly = toml::from_str(&text).ok()?;
+    doc.helper.and_then(|section| section.listen)
+}
+
+#[cfg(test)]
+mod helper_listen_tests {
+    use super::helper_listen_override;
+
+    #[test]
+    fn reads_helper_listen_override_leniently() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "schema_version = 1\n[helper]\nlisten = \"tcp:127.0.0.1:7100\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            helper_listen_override(&path).as_deref(),
+            Some("tcp:127.0.0.1:7100")
+        );
+        // No `[helper]` key and a missing file both fall back to the default.
+        std::fs::write(&path, "schema_version = 1\n").unwrap();
+        assert_eq!(helper_listen_override(&path), None);
+        assert_eq!(
+            helper_listen_override(&dir.path().join("missing.toml")),
+            None
+        );
+    }
 }

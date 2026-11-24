@@ -22,9 +22,15 @@ fn resolve_target(config: Option<&Path>, data_dir: Option<&Path>) -> HelperTarge
 }
 
 /// Run the helper daemon in the foreground (clients spawn it detached).
-pub async fn run_helper(config: Option<&Path>, data_dir: Option<&Path>) -> u8 {
+/// `listen` is the optional `--listen` endpoint (`unix[:<path>]` or
+/// `tcp:<host>:<port>`, loopback only); `None` resolves env/config/default.
+pub async fn run_helper(
+    config: Option<&Path>,
+    data_dir: Option<&Path>,
+    listen: Option<String>,
+) -> u8 {
     let service = HostService::from_overrides(config, data_dir);
-    let server = HelperServer::new(service);
+    let server = HelperServer::new(service).with_listen_override(listen);
     match server.run().await {
         Ok(()) => 0,
         Err(err) => {
