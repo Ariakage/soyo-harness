@@ -171,25 +171,6 @@ SOYO_HELPER_LISTEN=tcp:127.0.0.1:7100 soyo --config /path/to/config.toml run '..
 - 当前 TCP 传输没有认证层：能连接到该回环端口的进程，其权限等同本机用户。需要认证时改用 HTTP(S) + bearer token 传输（见下节）。
 - helper 仍按配置指纹独占（flock）：同一配置的 Unix 与 TCP 实例不能同时运行；`soyo kill` 在客户端解析到同一端点时照常生效。
 
-## 项目上下文、持久化与用量
-
-Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工作区同名项优先；加载范围及信任边界见[项目上下文](project-context.md)。`--preferences-file PATH`、`--memory-file PATH` 可显式提供本次调用的 UTF-8 偏好和记忆文本，各限 64 KiB；内容会发送给模型，不会自动发现或作为持久记忆维护。文件含当前配置的已知凭据时，在模型请求前拒绝，检测包括完整 JSON、Markdown 围栏和普通正文中的嵌套 JSON 转义与 Unicode 转义。检测视图最多解码256层，累计扫描上限64 MiB，超限沿用失败关闭边界。通过检测的个人文本按原文发送给模型。
-
-会话数据库默认在 `$XDG_DATA_HOME/soyo/sessions.sqlite3`，未设置时在 `~/.local/share/soyo/sessions.sqlite3`；`--data-dir` 可选择数据目录。警告和错误日志默认在 `$XDG_STATE_HOME/soyo/soyo.log` 或 `~/.local/state/soyo/soyo.log`，按 10 MiB 轮转并保留 5 个备份。PLAN 要求数据、状态及缓存目录不落在工作区内；相关 XDG 变量须为绝对路径。[存储说明](storage.md)介绍锁、WAL、迁移备份与故障恢复。
-
-恢复会话沿用历史和工作模式，`run --session` 和 `resume` 均可通过显式 `--mode` 覆盖并保存工作模式；切入 PLAN 前先检查存储目录边界。恢复重新读取项目上下文，采用本次启动的权限；不恢复历史授权或自动重放。模型／协议改变需要新会话，其他配置变化需显式 `--accept-config-change`；工作区迁移可通过 `--cwd` 指定。运行详情中的 `run_metrics` 区分执行及审核用量，服务未报告时为 null。只有显式配置费率且用量完整才估算成本，结果不是账单；`artifacts` 仅列出已确认成功的 Soyo 文件写入。
-
-已知配置凭据会在相关输出、记录和日志中遮蔽；不能安全修改的不透明签名内容会使保存失败。未知秘密不会被保证识别，使用者仍应避免把敏感信息放入任务和项目文件。
-
-## 故障处理
-
-- **配置校验失败**：检查默认 profile、协议、API 根地址、模型、上下文窗口和全部引用的环境变量；不要在求助信息中附上密钥。`config check` 成功不证明网络或鉴权成功。
-- **连接或协议失败**：检查服务是否运行、根地址及接口是否支持所选协议；查看脱敏后的 CLI 错误和本地日志。示例服务地址本身只是占位。
-- **需要确认或澄清**：交互环境可使用 `run --interactive`；脚本可按需提供精确预授权文件，或处理退出码 3／4。预授权不放宽规则或 PLAN 限制。
-- **PLAN 存储路径冲突**：将数据、状态和缓存目录放在工作区之外后重试，包括通过 XDG 变量选择的目录。
-- **会话正在使用、配置改变或恢复失败**：先确认是否有另一 Soyo 进程持有会话锁；核对 profile 和工作区。不要删除数据库或 WAL 来强行解锁；涉及损坏时先保留原文件及备份，再调查错误。
-- **日志不可写**：检查状态目录权限与剩余空间；日志路径不应指向不安全的符号链接。
-- **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵（含各目标平台定制遮蔽 `headless_shell` 分发覆盖：仅 `linux-arm64` 已分发，`linux-x86_64` 待构建，macOS 双架构因引擎为 Linux ELF 显式不覆盖）；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
 ## 远程接入（HTTP(S) + bearer token）
 
 D-113 的第二条增量：helper 额外暴露一个 opt-in 的 HTTP(S) 监听，同一条 NDJSON wire 契约（`PROTOCOL_VERSION`、已发布方法、事件流、取消帧）原样承载在一条长连接 `POST /rpc` 里。请求体是客户端帧流、响应体是服务端帧流，两端均为 `Transfer-Encoding: chunked`，因此流式事件、请求多路复用与「断线≠取消」语义不变——关闭连接不会取消 Run，重连后按 session 重新订阅。本地 Unix socket / TCP 端点继续可用。
@@ -252,6 +233,25 @@ soyo --config /path/to/config.toml run '...'
 - token 明文只在签发时显示一次；helper 收到的 token 会注册进脱敏集合，不进入日志或事件。
 - 传输依赖 HTTP/1.1 chunked；中间代理若终结或重写 chunked 会破坏隧道，客户端会以 `helper_protocol` 明确失败。
 
+## 项目上下文、持久化与用量
+
+Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工作区同名项优先；加载范围及信任边界见[项目上下文](project-context.md)。`--preferences-file PATH`、`--memory-file PATH` 可显式提供本次调用的 UTF-8 偏好和记忆文本，各限 64 KiB；内容会发送给模型，不会自动发现或作为持久记忆维护。文件含当前配置的已知凭据时，在模型请求前拒绝，检测包括完整 JSON、Markdown 围栏和普通正文中的嵌套 JSON 转义与 Unicode 转义。检测视图最多解码256层，累计扫描上限64 MiB，超限沿用失败关闭边界。通过检测的个人文本按原文发送给模型。
+
+会话数据库默认在 `$XDG_DATA_HOME/soyo/sessions.sqlite3`，未设置时在 `~/.local/share/soyo/sessions.sqlite3`；`--data-dir` 可选择数据目录。警告和错误日志默认在 `$XDG_STATE_HOME/soyo/soyo.log` 或 `~/.local/state/soyo/soyo.log`，按 10 MiB 轮转并保留 5 个备份。PLAN 要求数据、状态及缓存目录不落在工作区内；相关 XDG 变量须为绝对路径。[存储说明](storage.md)介绍锁、WAL、迁移备份与故障恢复。
+
+恢复会话沿用历史和工作模式，`run --session` 和 `resume` 均可通过显式 `--mode` 覆盖并保存工作模式；切入 PLAN 前先检查存储目录边界。恢复重新读取项目上下文，采用本次启动的权限；不恢复历史授权或自动重放。模型／协议改变需要新会话，其他配置变化需显式 `--accept-config-change`；工作区迁移可通过 `--cwd` 指定。运行详情中的 `run_metrics` 区分执行及审核用量，服务未报告时为 null。只有显式配置费率且用量完整才估算成本，结果不是账单；`artifacts` 仅列出已确认成功的 Soyo 文件写入。
+
+已知配置凭据会在相关输出、记录和日志中遮蔽；不能安全修改的不透明签名内容会使保存失败。未知秘密不会被保证识别，使用者仍应避免把敏感信息放入任务和项目文件。
+
+## 故障处理
+
+- **配置校验失败**：检查默认 profile、协议、API 根地址、模型、上下文窗口和全部引用的环境变量；不要在求助信息中附上密钥。`config check` 成功不证明网络或鉴权成功。
+- **连接或协议失败**：检查服务是否运行、根地址及接口是否支持所选协议；查看脱敏后的 CLI 错误和本地日志。示例服务地址本身只是占位。
+- **需要确认或澄清**：交互环境可使用 `run --interactive`；脚本可按需提供精确预授权文件，或处理退出码 3／4。预授权不放宽规则或 PLAN 限制。
+- **PLAN 存储路径冲突**：将数据、状态和缓存目录放在工作区之外后重试，包括通过 XDG 变量选择的目录。
+- **会话正在使用、配置改变或恢复失败**：先确认是否有另一 Soyo 进程持有会话锁；核对 profile 和工作区。不要删除数据库或 WAL 来强行解锁；涉及损坏时先保留原文件及备份，再调查错误。
+- **日志不可写**：检查状态目录权限与剩余空间；日志路径不应指向不安全的符号链接。
+- **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵（含各目标平台定制遮蔽 `headless_shell` 分发覆盖：仅 `linux-arm64` 已分发，`linux-x86_64` 待构建，macOS 双架构因引擎为 Linux ELF 显式不覆盖）；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
 
 ```sh
 ./target/release/soyo --config "$config_path" doctor
