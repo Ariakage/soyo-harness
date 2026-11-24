@@ -267,6 +267,8 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 
 - 先收敛嵌入式 SDK 的运行、控制、事件、错误与兼容策略，区别于 MVP 开发期可调整的内部 Rust API（D-105：socket 客户端 SDK；D-106：冻结 wire 契约）。
 - 再做本地服务与任务查询，支持客户端断开后可理解的任务生命周期（D-107：断线≠取消 + attach/detach）。
+
+> **实现状态（D-105、D-106）**：首批已落地冻结面与 SDK crate。`soyo-ipc::protocol::PUBLISHED_METHODS` 声明对外 16 个 method（helper 握手 2、会话 6、运行 4、压缩 1、任务 3），`soyo-host` dispatch 测试保证表内方法不被改名成 `unknown_method`；冻结面与版本规则、D-107 断线语义见 [SDK 文档](sdk.md)。`crates/soyo-sdk` 为新 default-member：`SoyoClient` 收敛 `connect_or_spawn`/`connect`＋`helper_compat` 探测，`new_session`/`resume_session`/`attach`/`detach` 携带 D-107 语义（detach 不取消、attach 重绑会话），`submit_prompt`/`run_prompt`/`compact_session` 返回 `RunEventStream`＋`RunHandle`，`run_events` 经 `read_session_snapshot` 按 `run_id` 过滤持久事件；错误收敛为 `SdkError`（`Helper`/`Disconnected`/`IncompatibleHelper`/`InvalidInput`）。stdio 版 Soyo-as-MCP-Server（D-108）与远程增量仍属后续批次。
 - 按需求增加远程 worker、工作区／产物同步、执行身份、凭据与配额隔离（待决策：传输形态、身份模型、同步协议）。
 - Soyo 作为 MCP Server 对外提供任务能力属于这一层的可选入口，不能通过暴露接口绕开原权限与 sandbox（D-108：stdio 版先行）。
 

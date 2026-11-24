@@ -5136,6 +5136,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "soyo-sdk"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soyo-ipc",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "soyo-tui"
 version = "0.3.0"
 dependencies = [
