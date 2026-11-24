@@ -37,6 +37,8 @@ pub struct McpServerCapabilities {
     pub resources_list_changed: bool,
     pub prompts: bool,
     pub prompts_list_changed: bool,
+    /// SEP-2663 `io.modelcontextprotocol/tasks` extension advertisement.
+    pub tasks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,6 +398,7 @@ impl McpClient {
                 .prompts
                 .as_ref()
                 .is_some_and(|p| p.list_changed == Some(true)),
+            tasks: caps.supports_tasks(),
         }
     }
 

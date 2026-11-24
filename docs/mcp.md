@@ -53,6 +53,20 @@ invoice_export = [
 - **双协议版本订阅**：针对 `2026-07-28` 协议使用 `subscriptions/listen`、针对 `2025-11-25` 使用 `resources/subscribe` 建立并管理订阅；收到 `notifications/resources/list_changed`、`notifications/resources/updated` 或 `notifications/prompts/list_changed` 时使本地缓存目录失效并触发后续读取刷新。
 - **Elicitation 失败关闭**：`ClientHandler::create_elicitation` 在无宿主交互处理器（或非交互运行）时默认返回 `Decline`（`needs_input` 兼容，不自动放行或提升权限）。
 
+## SEP-2663 长异步任务（D-104）
+
+基于同一 `rmcp = 3.9.0`，`McpClient` 接入 `io.modelcontextprotocol/tasks` 扩展的服务器端长异步任务（`tasks/get`／`tasks/cancel`／`tasks/update`）：
+
+- **opt-in 门控**：`[mcp.tasks] enabled = false` 为默认。仅在开启后客户端于 `initialize` 的 `capabilities.extensions` 中通告该扩展；关闭时即使 server 通告支持，`tools/call` 返回的 `CreateTaskResult` 仍按 `outcome_unknown` 失败关闭，工具目录不变。
+- **宿主工具零漂移**：`mcp_get_task`、`mcp_cancel_task`、`mcp_respond_task` 仅当 opt-in 开启**且**至少一个已连接 server 通告 `io.modelcontextprotocol/tasks` 时才注册；`get` 为 `ExternalReadOnly`（PLAN 只读可见），`cancel`／`respond` 会改变 server 端状态、为 `ExternalUnknown`（PLAN 不可用）。
+- **状态投影**：`tasks/get` 投影为 `run_state`（`working→running`、`input_required→needs_input`、`completed→done`、`failed→failed`、`cancelled→cancelled`，未知 terminal variant 归 `unknown`）；`input_requests` 封顶 64 条并仅接受 server 列出的 outstanding keys。
+- **边界沿用**：`mcp_respond_task` 拒绝空集合；`mcp_cancel_task` ack 不代表已终止（须再 `mcp_get_task` 观察终态）；所有 `tasks/*` 调用复用 `McpLimits.request_timeout` 与取消语义；任务内部任何 `tools/call` 继续走既有权限与 sandbox，宿主不自动续跑。
+
+```toml
+[mcp.tasks]
+enabled = false   # SEP-2663 tasks/*，默认关闭
+```
+
 ## stdio 服务
 
 ```toml

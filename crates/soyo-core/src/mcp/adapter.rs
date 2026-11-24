@@ -65,12 +65,12 @@ impl Tool for McpToolAdapter {
                     },
                 )
             });
-            let (result, outputs, capture_errors) = self
+            let (outcome, outputs, capture_errors) = self
                 .client
                 .call_tool_captured(&call.name, arguments, self.generation, cancel, capture)
                 .await?;
-            Ok(crate::output_store::CapturedToolResult {
-                result: ToolResult {
+            let result = match outcome {
+                super::CallOutcome::Complete(result) => ToolResult {
                     ok: !result.is_error,
                     data: Some(serde_json::to_value(&result).map_err(|_| {
                         error("mcp_protocol", "MCP projected output cannot be encoded")
@@ -82,6 +82,19 @@ impl Tool for McpToolAdapter {
                     truncated: result.truncated,
                     media_refs: Vec::new(),
                 },
+                super::CallOutcome::Task(handle) => ToolResult {
+                    ok: true,
+                    data: Some(serde_json::json!({
+                        "mcp_task": handle,
+                        "note": "The server materialized a long-running task. Poll mcp_get_task for status/result; send mcp_cancel_task to request cancellation; mcp_respond_task answers input_required requests. No reply was replayed.",
+                    })),
+                    error: None,
+                    truncated: false,
+                    media_refs: Vec::new(),
+                },
+            };
+            Ok(crate::output_store::CapturedToolResult {
+                result,
                 outputs,
                 media: Vec::new(),
                 capture_errors,

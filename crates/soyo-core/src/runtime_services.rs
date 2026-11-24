@@ -93,6 +93,7 @@ struct State {
     registered_resource_tools: bool,
     registered_subscribe_tool: bool,
     registered_prompt_tools: bool,
+    registered_task_tools: bool,
 }
 
 pub(crate) struct RuntimeServices {
@@ -947,11 +948,13 @@ impl RuntimeServices {
                         let client = Arc::new(
                             runtime
                                 .bounded(
-                                    McpClient::connect_http_with_client(
+                                    McpClient::connect_http_with_options(
                                         id,
                                         client,
                                         config,
                                         limits,
+                                        None,
+                                        registered.tasks.enabled,
                                         runtime.cancel.as_ref(),
                                     ),
                                     connect_timeout,
@@ -1228,11 +1231,13 @@ impl RuntimeServices {
             let client = Arc::new(
                 runtime
                     .bounded(
-                        McpClient::connect_stdio(
+                        McpClient::connect_stdio_with_options(
                             id,
                             output,
                             input,
                             limits.clone(),
+                            None,
+                            settings.mcp.tasks.enabled,
                             &startup_cancel,
                         ),
                         limits.connect_timeout,
@@ -1441,9 +1446,17 @@ impl RuntimeServices {
         runtime: &AgentRuntime,
         state: &mut State,
     ) -> Result<(), BoundaryError> {
+        let tasks_opt_in = self
+            .settings
+            .lock()
+            .map_err(|_| error("runtime_services", "Service settings lock failed"))?
+            .mcp
+            .tasks
+            .enabled;
         let mut any_resources = false;
         let mut any_subscribe = false;
         let mut any_prompts = false;
+        let mut any_tasks = false;
         for server in state.servers.values() {
             if !server.client.is_connected() {
                 continue;
@@ -1452,6 +1465,7 @@ impl RuntimeServices {
             any_resources |= caps.resources;
             any_subscribe |= caps.resources_subscribe;
             any_prompts |= caps.prompts;
+            any_tasks |= caps.tasks && server.client.tasks_enabled();
         }
         let register = |kind: mcp_tools::McpCapabilityToolKind| -> Result<(), BoundaryError> {
             let tool = Arc::new(mcp_tools::McpCapabilityTool::new(
@@ -1476,6 +1490,12 @@ impl RuntimeServices {
             register(mcp_tools::McpCapabilityToolKind::ListPrompts)?;
             register(mcp_tools::McpCapabilityToolKind::GetPrompt)?;
             state.registered_prompt_tools = true;
+        }
+        if tasks_opt_in && any_tasks && !state.registered_task_tools {
+            register(mcp_tools::McpCapabilityToolKind::GetTask)?;
+            register(mcp_tools::McpCapabilityToolKind::CancelTask)?;
+            register(mcp_tools::McpCapabilityToolKind::RespondTask)?;
+            state.registered_task_tools = true;
         }
         Ok(())
     }

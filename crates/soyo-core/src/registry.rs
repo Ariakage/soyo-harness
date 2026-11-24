@@ -520,7 +520,11 @@ pub fn builtin_effect(name: &str) -> Option<ToolEffect> {
         | "mcp_read_resource"
         | "mcp_subscribe_resource"
         | "mcp_list_prompts"
-        | "mcp_get_prompt" => ToolEffect::ExternalReadOnly,
+        | "mcp_get_prompt"
+        | "mcp_get_task" => ToolEffect::ExternalReadOnly,
+        // `tasks/cancel` and `tasks/update` mutate server-side task state —
+        // they are not read-only and must not run under PLAN.
+        "mcp_cancel_task" | "mcp_respond_task" => ToolEffect::ExternalUnknown,
         _ => return None,
     })
 }

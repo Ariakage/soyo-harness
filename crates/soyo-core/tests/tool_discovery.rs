@@ -458,6 +458,7 @@ async fn mcp_defer_overrides_and_eager_tools_are_respected()
     let mut settings = McpSettings {
         defer_loading: McpDeferMode::Never,
         defer_threshold: 8,
+        tasks: soyo_core::mcp::config::McpTasksSettings::default(),
         servers: BTreeMap::from([("billing".into(), dummy_server_settings(BTreeSet::new()))]),
     };
     let runtime = build_runtime(temp.path(), run, model.clone(), PermissionConfig::default())?

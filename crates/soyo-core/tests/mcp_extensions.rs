@@ -56,6 +56,17 @@ struct ServerCfg {
     advertise_subscribe: bool,
     advertise_prompts: bool,
     repeat_cursor: bool,
+    /// Advertise the SEP-2663 `io.modelcontextprotocol/tasks` extension and
+    /// serve the `tasks/*` lifecycle methods below.
+    advertise_tasks: bool,
+    /// Fixed task id this mock returns for `tools/call` -> CreateTaskResult
+    /// and recognizes in `tasks/get`/`tasks/cancel`/`tasks/update`.
+    tasks_id: String,
+    /// Task status served by `tasks/get` (`working`, `input_required`,
+    /// `completed`, `failed`, `cancelled`).
+    tasks_status: String,
+    /// Hang without replying to `tasks/get` (timeout test).
+    tasks_get_hangs: bool,
 }
 
 impl Default for ServerCfg {
@@ -66,6 +77,10 @@ impl Default for ServerCfg {
             advertise_subscribe: true,
             advertise_prompts: true,
             repeat_cursor: false,
+            advertise_tasks: false,
+            tasks_id: "task-abc".into(),
+            tasks_status: "working".into(),
+            tasks_get_hangs: false,
         }
     }
 }
@@ -82,13 +97,22 @@ impl Drop for MockStdio {
 }
 
 async fn spawn_mock(cfg: ServerCfg, limits: McpLimits) -> (McpClient, MockStdio) {
-    spawn_mock_with_elicit(cfg, limits, None).await
+    spawn_mock_with_options(cfg, limits, None, false).await
 }
 
 async fn spawn_mock_with_elicit(
     cfg: ServerCfg,
     limits: McpLimits,
     elicit: Option<Arc<dyn McpElicitationHandler>>,
+) -> (McpClient, MockStdio) {
+    spawn_mock_with_options(cfg, limits, elicit, false).await
+}
+
+async fn spawn_mock_with_options(
+    cfg: ServerCfg,
+    limits: McpLimits,
+    elicit: Option<Arc<dyn McpElicitationHandler>>,
+    tasks_enabled: bool,
 ) -> (McpClient, MockStdio) {
     let (client, server) = tokio::io::duplex(2 * 1024 * 1024);
     let (cr, cw) = tokio::io::split(client);
@@ -110,8 +134,15 @@ async fn spawn_mock_with_elicit(
             if cfg.advertise_prompts {
                 caps["prompts"] = json!({"listChanged": cfg.modern});
             }
+            if cfg.advertise_tasks {
+                caps["extensions"] = json!({
+                    "io.modelcontextprotocol/tasks": {}
+                });
+            }
             caps
         };
+        let tasks_id = cfg.tasks_id.clone();
+        let tasks_status = cfg.tasks_status.clone();
         loop {
             let out: Option<Value> = tokio::select! {
                 line = lines.next_line() => {
@@ -279,7 +310,78 @@ async fn spawn_mock_with_elicit(
                             }))
                         }
                         "tools/list" => {
-                            Some(json!({"jsonrpc":"2.0","id":id,"result":{"tools":[]}}))
+                            let tools = if cfg.advertise_tasks {
+                                json!([{
+                                    "name": "create_report",
+                                    "description": "start a long-running report task",
+                                    "inputSchema": {"type": "object", "properties": {}}
+                                }])
+                            } else {
+                                json!([])
+                            };
+                            Some(json!({"jsonrpc":"2.0","id":id,"result":{"tools": tools}}))
+                        }
+                        "tools/call" if cfg.advertise_tasks => {
+                            // Server materializes a SEP-2663 task instead of a final result.
+                            Some(json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": {
+                                    "resultType": "task",
+                                    "taskId": tasks_id,
+                                    "status": "working",
+                                    "createdAt": "2026-11-24T00:00:00Z",
+                                    "lastUpdatedAt": "2026-11-24T00:00:00Z",
+                                    "ttlMs": 300000,
+                                    "pollIntervalMs": 1000
+                                }
+                            }))
+                        }
+                        "tasks/get" if cfg.advertise_tasks && !cfg.tasks_get_hangs => {
+                            let status = tasks_status.as_str();
+                            let mut body = json!({
+                                "resultType": "complete",
+                                "taskId": req["params"]["taskId"].clone(),
+                                "status": status,
+                                "createdAt": "2026-11-24T00:00:00Z",
+                                "lastUpdatedAt": "2026-11-24T00:00:01Z",
+                                "ttlMs": 300000,
+                                "pollIntervalMs": 1000
+                            });
+                            match status {
+                                "input_required" => {
+                                    body["inputRequests"] = json!({
+                                        "elic-1": {
+                                            "method": "roots/list"
+                                        }
+                                    });
+                                }
+                                "completed" => {
+                                    body["result"] = json!({
+                                        "content": [{"type": "text", "text": "task finished"}],
+                                        "isError": false
+                                    });
+                                }
+                                "failed" => {
+                                    body["error"] = json!({
+                                        "code": -32603,
+                                        "message": "task blew up"
+                                    });
+                                }
+                                _ => {}
+                            }
+                            Some(json!({"jsonrpc": "2.0", "id": id, "result": body}))
+                        }
+                        "tasks/get" if cfg.advertise_tasks && cfg.tasks_get_hangs => {
+                            // No reply: the client-side timeout is under test.
+                            None
+                        }
+                        "tasks/cancel" | "tasks/update" if cfg.advertise_tasks => {
+                            Some(json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": {"resultType": "complete"}
+                            }))
                         }
                         _ => Some(json!({"jsonrpc":"2.0","id":id,"result":{}})),
                     }
@@ -319,10 +421,17 @@ async fn spawn_mock_with_elicit(
         }
     });
 
-    let client =
-        McpClient::connect_stdio_with_elicitation("ext-srv", cr, cw, limits, elicit, &Never)
-            .await
-            .unwrap();
+    let client = McpClient::connect_stdio_with_options(
+        "ext-srv",
+        cr,
+        cw,
+        limits,
+        elicit,
+        tasks_enabled,
+        &Never,
+    )
+    .await
+    .unwrap();
     (
         client,
         MockStdio {
@@ -984,3 +1093,368 @@ async fn runtime_exposes_and_redacts_mcp_resources_and_prompts_only_when_adverti
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// SEP-2663 MCP Tasks (opt-in)
+// ---------------------------------------------------------------------------
+
+/// `tasks/get` on a client that did NOT opt in stays fail-closed even when the
+/// server advertises the extension — the tool never reaches the wire.
+#[tokio::test]
+async fn tasks_get_rejects_without_opt_in() {
+    let (client, mut srv) = spawn_mock(
+        ServerCfg {
+            advertise_tasks: true,
+            ..ServerCfg::default()
+        },
+        McpLimits::default(),
+    )
+    .await;
+    assert!(client.server_capabilities().tasks);
+    assert!(!client.tasks_enabled());
+    let err = client.get_task("task-abc", &Never).await.unwrap_err();
+    assert_eq!(err.code(), "mcp_unsupported");
+    // The wire saw no tasks/get request.
+    while let Ok(req) = srv.requests.try_recv() {
+        assert_ne!(req["method"], "tasks/get");
+    }
+}
+
+/// `tasks/get` on a server that does NOT advertise the extension fails closed
+/// even when the client opted in.
+#[tokio::test]
+async fn tasks_get_rejects_when_server_lacks_capability() {
+    let (client, _srv) = spawn_mock_with_options(
+        ServerCfg {
+            advertise_tasks: false,
+            ..ServerCfg::default()
+        },
+        McpLimits::default(),
+        None,
+        true,
+    )
+    .await;
+    assert!(!client.server_capabilities().tasks);
+    assert!(client.tasks_enabled());
+    let err = client.get_task("task-abc", &Never).await.unwrap_err();
+    assert_eq!(err.code(), "mcp_unsupported");
+}
+
+/// Working / input_required / completed / failed status projection and the
+/// `needs_input`/`done`/`failed` run-state mapping.
+#[tokio::test]
+async fn tasks_get_projects_status_and_input_requests() {
+    for (status, run_state) in [
+        ("working", "running"),
+        ("input_required", "needs_input"),
+        ("completed", "done"),
+        ("failed", "failed"),
+        ("cancelled", "cancelled"),
+    ] {
+        let (client, _srv) = spawn_mock_with_options(
+            ServerCfg {
+                advertise_tasks: true,
+                tasks_status: status.into(),
+                ..ServerCfg::default()
+            },
+            McpLimits::default(),
+            None,
+            true,
+        )
+        .await;
+        let proj = client.get_task("task-abc", &Never).await.unwrap();
+        assert_eq!(proj.info.status, status, "status for {status}");
+        assert_eq!(proj.info.run_state, run_state, "run_state for {status}");
+        match status {
+            "input_required" => {
+                assert_eq!(proj.answerable_keys, vec!["elic-1".to_string()]);
+                assert_eq!(proj.info.input_requests.len(), 1);
+                assert_eq!(proj.info.input_requests[0].key, "elic-1");
+                assert_eq!(proj.info.input_requests[0].method, "roots/list");
+            }
+            "completed" => {
+                assert!(proj.info.result.is_some());
+                assert_eq!(proj.info.result.as_ref().unwrap()["isError"], false);
+            }
+            "failed" => {
+                assert!(proj.info.error.is_some());
+            }
+            _ => {
+                assert!(proj.answerable_keys.is_empty());
+            }
+        }
+    }
+}
+
+/// `tools/call` returning a `CreateTaskResult` yields a `mcp_task_created`
+/// error only when both opt-in and server capability are present; a missing
+/// opt-in keeps `outcome_unknown` (fail-closed).
+#[tokio::test]
+async fn call_tool_task_response_needs_opt_in() {
+    // opt-in + advertised server: the task handle surfaces as `mcp_task_created`.
+    let (client, _srv) = spawn_mock_with_options(
+        ServerCfg {
+            advertise_tasks: true,
+            ..ServerCfg::default()
+        },
+        McpLimits::default(),
+        None,
+        true,
+    )
+    .await;
+    let catalog = client.list_tools(&Never).await.unwrap();
+    assert_eq!(catalog.tools.len(), 1);
+    let result = client
+        .call_tool("create_report", json!({}), catalog.generation, &Never)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let handle = &result.structured_content.unwrap()["mcp_task"];
+    assert_eq!(handle["taskId"], "task-abc");
+    assert_eq!(handle["status"], "working");
+
+    // Server advertises but the client did NOT opt in: still fail-closed.
+    let (closed, _srv2) = spawn_mock(
+        ServerCfg {
+            advertise_tasks: true,
+            ..ServerCfg::default()
+        },
+        McpLimits::default(),
+    )
+    .await;
+    let catalog2 = closed.list_tools(&Never).await.unwrap();
+    let err2 = closed
+        .call_tool("create_report", json!({}), catalog2.generation, &Never)
+        .await
+        .unwrap_err();
+    assert_eq!(err2.code(), "outcome_unknown", "err2: {err2:?}");
+}
+
+/// `tasks/cancel` and `tasks/update` reach the wire and are acknowledged.
+#[tokio::test]
+async fn tasks_cancel_and_update_complete() {
+    let (client, mut srv) = spawn_mock_with_options(
+        ServerCfg {
+            advertise_tasks: true,
+            ..ServerCfg::default()
+        },
+        McpLimits::default(),
+        None,
+        true,
+    )
+    .await;
+    client.cancel_task("task-abc", &Never).await.unwrap();
+    client
+        .respond_task(
+            "task-abc",
+            BTreeMap::from([(
+                "elic-1".into(),
+                json!({"action": "accept", "content": {"name": "soyo"}}),
+            )]),
+            &Never,
+        )
+        .await
+        .unwrap();
+    let mut saw_cancel = false;
+    let mut saw_update = false;
+    while let Ok(req) = srv.requests.try_recv() {
+        match req["method"].as_str() {
+            Some("tasks/cancel") => saw_cancel = true,
+            Some("tasks/update") => {
+                saw_update = true;
+                assert_eq!(req["params"]["taskId"], "task-abc");
+                assert!(req["params"]["inputResponses"]["elic-1"].is_object());
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_cancel && saw_update);
+
+    // An empty response set is rejected before any wire call.
+    let err = client
+        .respond_task("task-abc", BTreeMap::new(), &Never)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "invalid_args");
+}
+
+/// A hanging `tasks/get` maps to `mcp_timeout`, not an unbounded wait.
+#[tokio::test]
+async fn tasks_get_timeout_is_bounded() {
+    let (client, _srv) = spawn_mock_with_options(
+        ServerCfg {
+            advertise_tasks: true,
+            tasks_get_hangs: true,
+            ..ServerCfg::default()
+        },
+        McpLimits {
+            request_timeout: Duration::from_millis(50),
+            ..McpLimits::default()
+        },
+        None,
+        true,
+    )
+    .await;
+    let err = client.get_task("task-abc", &Never).await.unwrap_err();
+    assert_eq!(err.code(), "mcp_timeout");
+}
+
+/// `mcp_get_task`/`mcp_cancel_task`/`mcp_respond_task` are absent from the
+/// tool directory unless both opt-in and server advertisement are present;
+/// when present they register exactly once.
+#[tokio::test]
+async fn runtime_task_tools_only_register_when_opt_in_and_advertised() {
+    // (a) opt-in + advertised => tools registered
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = std::fs::canonicalize(dir.path()).unwrap();
+    let script = workspace.join("mcp_tasks.py");
+    std::fs::write(&script, RUNTIME_MCP_TASKS_SCRIPT).unwrap();
+    for (tasks_enabled, tasks_advertised, expect_registered) in [
+        (true, true, true),
+        (true, false, false),
+        (false, true, false),
+    ] {
+        let script_text = RUNTIME_MCP_TASKS_SCRIPT.replace(
+            "TASKS_ADVERTISED = True",
+            &format!(
+                "TASKS_ADVERTISED = {}",
+                if tasks_advertised { "True" } else { "False" }
+            ),
+        );
+        std::fs::write(&script, script_text).unwrap();
+        let model = Arc::new(CapModel {
+            seen_tools: Mutex::new(Vec::new()),
+            calls: AtomicUsize::new(usize::MAX - 1),
+        });
+        let session = Session {
+            id: SessionId::new(),
+            workspace: workspace.clone(),
+            work_mode: WorkMode::Work,
+            profile: "fixture".into(),
+            protocol: ModelProtocol::ChatCompletions,
+            model: "fixture".into(),
+            history: Vec::new(),
+        };
+        let setup = RuntimeSetup {
+            run: Run {
+                id: RunId::new(),
+                session_id: session.id,
+                work_mode: WorkMode::Work,
+                permissions: PermissionMode::Auto,
+            },
+            model: model.clone(),
+            store: Arc::new(MemoryStore::default()),
+            policy: Arc::new(Policy::new(&workspace, PermissionConfig::default()).unwrap()),
+            files: Arc::new(ReadTools::new(&workspace, &[], false, ReadLimits::default()).unwrap()),
+            cancellation: Arc::new(Never),
+            review: ReviewConfig::new("fixture".into()),
+            exec: ExecConfig {
+                environment: Environment::from_pairs(std::env::vars_os()),
+                ..ExecConfig::default()
+            },
+            preauthorizations: Preauthorizations::default(),
+            known_secrets: Vec::new(),
+            summary: "mcp-tasks-test".into(),
+            confirmation: Some(Arc::new(ApproveAll)),
+            limits: RuntimeLimits {
+                active_time: Duration::from_secs(30),
+                model_connect: Duration::from_secs(3),
+                model_idle: Duration::from_secs(3),
+                model_total: Duration::from_secs(3),
+                tool_timeout: Duration::from_secs(5),
+                ..RuntimeLimits::default()
+            },
+        };
+        let settings = McpSettings {
+            tasks: soyo_core::mcp::config::McpTasksSettings {
+                enabled: tasks_enabled,
+            },
+            servers: BTreeMap::from([(
+                "tasksrv".into(),
+                McpServerSettings {
+                    enabled: true,
+                    transport: McpTransportSettings::Stdio(StdioMcpSettings {
+                        argv: vec![
+                            "python3".into(),
+                            "-u".into(),
+                            script.to_string_lossy().into(),
+                        ],
+                        cwd: None,
+                        env: BTreeMap::new(),
+                        env_credential_refs: BTreeMap::new(),
+                    }),
+                    read_only_tools: BTreeSet::new(),
+                    eager_tools: BTreeSet::new(),
+                    tool_examples: BTreeMap::new(),
+                    limits: McpLimitSettings::default(),
+                },
+            )]),
+            ..McpSettings::default()
+        };
+        let mut sandbox = SandboxPolicy::workspace(workspace.clone());
+        sandbox.backend = BackendKind::Host;
+        sandbox.protected_paths.clear();
+        let mut runtime = AgentRuntime::new(setup)
+            .unwrap()
+            .with_execution_settings(sandbox, None)
+            .unwrap()
+            .with_mcp_settings(
+                settings,
+                Environment::from_pairs(std::env::vars_os()),
+                None,
+                Arc::new(SecretRegistry::default()),
+                None,
+            )
+            .unwrap();
+        let mut session_mut = session;
+        runtime.run(&mut session_mut).await.unwrap();
+        let seen = &model.seen_tools.lock().unwrap()[0];
+        for name in ["mcp_get_task", "mcp_cancel_task", "mcp_respond_task"] {
+            assert_eq!(
+                seen.iter().any(|t| t == name),
+                expect_registered,
+                "opt_in={tasks_enabled} advertised={tasks_advertised} tool={name} seen={seen:?}"
+            );
+        }
+    }
+}
+
+const RUNTIME_MCP_TASKS_SCRIPT: &str = r#"#!/usr/bin/env python3
+import json, sys
+
+TASKS_ADVERTISED = True
+
+CAPS = {"tools": {"listChanged": False}}
+if TASKS_ADVERTISED:
+    CAPS["extensions"] = {"io.modelcontextprotocol/tasks": {}}
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    if "id" not in req:
+        continue
+    rid = req["id"]
+    m = req.get("method", "")
+    if m == "initialize":
+        res = {
+            "protocolVersion": "2026-07-28",
+            "capabilities": CAPS,
+            "serverInfo": {"name": "py-tasks", "version": "1.0"}
+        }
+    elif m == "server/discover":
+        res = {
+            "resultType": "complete",
+            "supportedVersions": ["2026-07-28"],
+            "capabilities": CAPS,
+            "ttlMs": 0,
+            "cacheScope": "private"
+        }
+    elif m == "tools/list":
+        res = {"resultType": "complete", "tools": [], "ttlMs": 0, "cacheScope": "private"}
+    else:
+        res = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": res}) + "\n")
+    sys.stdout.flush()
+"#;

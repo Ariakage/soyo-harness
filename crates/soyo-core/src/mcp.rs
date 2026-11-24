@@ -8,6 +8,7 @@ pub mod config;
 mod http;
 mod projection;
 mod resources;
+mod tasks;
 mod wire;
 pub use adapter::McpToolAdapter;
 pub use http::McpHttpClient;
@@ -17,6 +18,7 @@ pub use resources::{
     McpResourceCatalog, McpResourceContent, McpResourceReadResult, McpResourceTemplate,
     McpServerCapabilities,
 };
+pub use tasks::{McpTaskInfo, McpTaskProjection, McpToolTaskHandle};
 
 use crate::boundary::Cancellation;
 use crate::contract::{BoundaryError, ErrorInfo};
@@ -171,6 +173,15 @@ pub struct McpToolResult {
     pub truncated: bool,
 }
 
+/// Internal `tools/call` outcome. `Complete` is the common path; `Task`
+/// carries a SEP-2663 handle when the server materialized long-running work
+/// and both the client opt-in and the server capability are present.
+#[derive(Debug)]
+pub(crate) enum CallOutcome {
+    Complete(McpToolResult),
+    Task(McpToolTaskHandle),
+}
+
 struct Handler {
     server_id: String,
     generation: Arc<AtomicU64>,
@@ -178,6 +189,7 @@ struct Handler {
     prompt_generation: Arc<AtomicU64>,
     updated_resources: Arc<std::sync::Mutex<Vec<String>>>,
     elicitation: Option<Arc<dyn McpElicitationHandler>>,
+    tasks_enabled: bool,
 }
 
 struct ValidatedCatalog {
@@ -196,6 +208,15 @@ impl ClientHandler for Handler {
         let mut capabilities = ClientCapabilities::default();
         if self.elicitation.is_some() {
             capabilities.elicitation = Some(rmcp::model::ElicitationCapability::default());
+        }
+        if self.tasks_enabled {
+            capabilities
+                .extensions
+                .get_or_insert_with(rmcp::model::ExtensionCapabilities::new)
+                .insert(
+                    rmcp::model::TASKS_EXTENSION_ID.to_string(),
+                    rmcp::model::JsonObject::new(),
+                );
         }
         ClientConfig::new(
             capabilities,
@@ -251,6 +272,9 @@ pub struct McpClient {
     notifications_alive: Arc<AtomicBool>,
     limits: McpLimits,
     notifications: Option<NotificationTask>,
+    /// SEP-2663 tasks extension opt-in. Only when `true` does the client
+    /// advertise the extension and accept task-shaped responses.
+    tasks_enabled: bool,
 }
 
 struct NotificationTask(JoinHandle<()>);
@@ -323,10 +347,46 @@ impl McpClient {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        Self::connect_stdio_with_options(
+            server_id,
+            reader,
+            writer,
+            limits,
+            elicitation,
+            false,
+            cancel,
+        )
+        .await
+    }
+
+    /// Connect to pipes with the SEP-2663 tasks extension opt-in bound.
+    /// `tasks_enabled` advertises `io.modelcontextprotocol/tasks` and accepts
+    /// task-shaped tool responses; `false` keeps the existing fail-closed path.
+    pub async fn connect_stdio_with_options<R, W>(
+        server_id: impl Into<String>,
+        reader: R,
+        writer: W,
+        limits: McpLimits,
+        elicitation: Option<Arc<dyn McpElicitationHandler>>,
+        tasks_enabled: bool,
+        cancel: &dyn Cancellation,
+    ) -> Result<Self, BoundaryError>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let writer = wire::WireWriter::new(writer, limits.max_wire_bytes);
         let transport = AsyncRwTransport::<RoleClient, _, _>::new(reader, writer)
             .with_max_line_length(limits.max_wire_bytes);
-        Self::connect(server_id.into(), transport, limits, elicitation, cancel).await
+        Self::connect(
+            server_id.into(),
+            transport,
+            limits,
+            elicitation,
+            tasks_enabled,
+            cancel,
+        )
+        .await
     }
 
     /// Connect to a configured endpoint with an isolated HTTP client and disabled redirects.
@@ -371,9 +431,42 @@ impl McpClient {
     where
         C: StreamableHttpClient,
     {
+        Self::connect_http_with_options(
+            server_id,
+            client,
+            config,
+            limits,
+            elicitation,
+            false,
+            cancel,
+        )
+        .await
+    }
+
+    /// Accept a host transport with the SEP-2663 tasks extension opt-in bound.
+    pub async fn connect_http_with_options<C>(
+        server_id: impl Into<String>,
+        client: C,
+        config: McpHttpConfig,
+        limits: McpLimits,
+        elicitation: Option<Arc<dyn McpElicitationHandler>>,
+        tasks_enabled: bool,
+        cancel: &dyn Cancellation,
+    ) -> Result<Self, BoundaryError>
+    where
+        C: StreamableHttpClient,
+    {
         let transport_config = http_transport_config(config, &limits)?;
         let transport = StreamableHttpClientTransport::with_client(client, transport_config);
-        Self::connect(server_id.into(), transport, limits, elicitation, cancel).await
+        Self::connect(
+            server_id.into(),
+            transport,
+            limits,
+            elicitation,
+            tasks_enabled,
+            cancel,
+        )
+        .await
     }
 
     async fn connect<T, E, A>(
@@ -381,6 +474,7 @@ impl McpClient {
         transport: T,
         limits: McpLimits,
         elicitation: Option<Arc<dyn McpElicitationHandler>>,
+        tasks_enabled: bool,
         cancel: &dyn Cancellation,
     ) -> Result<Self, BoundaryError>
     where
@@ -402,6 +496,7 @@ impl McpClient {
             prompt_generation: prompt_generation.clone(),
             updated_resources: updated_resources.clone(),
             elicitation,
+            tasks_enabled,
         };
         let service = bounded(
             handler.serve_with_lifecycle(
@@ -430,6 +525,7 @@ impl McpClient {
             notifications_alive: Arc::new(AtomicBool::new(true)),
             limits,
             notifications: None,
+            tasks_enabled,
         };
         client.start_notifications(cancel).await?;
         Ok(client)
@@ -810,9 +906,28 @@ impl McpClient {
     ) -> Result<McpToolResult, BoundaryError> {
         self.call_tool_captured(name, arguments, expected_generation, cancel, None)
             .await
-            .map(|value| value.0)
+            .and_then(|value| match value.0 {
+                CallOutcome::Complete(result) => Ok(result),
+                CallOutcome::Task(handle) => {
+                    let handle = serde_json::to_value(&handle).map_err(|_| {
+                        error("mcp_protocol", "MCP task handle cannot be encoded")
+                    })?;
+                    Ok(McpToolResult {
+                        content: Vec::new(),
+                        structured_content: Some(serde_json::json!({
+                            "mcp_task": handle,
+                            "note": "The server materialized a long-running task. Poll mcp_get_task for status/result; send mcp_cancel_task to request cancellation; mcp_respond_task answers input_required requests."
+                        })),
+                        is_error: false,
+                        truncated: false,
+                    })
+                }
+            })
     }
 
+    /// Result of `call_tool_captured`: either a completed tool result or, when
+    /// the server opted into SEP-2663 and returned `CreateTaskResult`, a task
+    /// handle the caller can drive via `get_task`/`cancel_task`.
     pub(crate) async fn call_tool_captured(
         &self,
         name: &str,
@@ -825,7 +940,7 @@ impl McpClient {
         )>,
     ) -> Result<
         (
-            McpToolResult,
+            CallOutcome,
             Vec<crate::output_store::SealedOutput>,
             Vec<crate::contract::ErrorInfo>,
         ),
@@ -891,6 +1006,33 @@ impl McpClient {
             .map_err(|failure| tool_failure(failure, attempted.load(Ordering::Acquire)))?
             .map_err(|failure| tool_failure(service_error(failure), true))?;
         match response {
+            CallToolResponse::Task(created) if self.tasks_enabled => {
+                // SEP-2663: server materialized a task instead of a final
+                // result. Surface a bounded handle; completion is observed
+                // via tasks/get, not by replaying the tool call.
+                let task = created.task;
+                Ok((
+                    CallOutcome::Task(McpToolTaskHandle {
+                        task_id: task.task_id,
+                        status: match task.status {
+                            rmcp::model::TaskStatus::Working => "working",
+                            rmcp::model::TaskStatus::InputRequired => "input_required",
+                            rmcp::model::TaskStatus::Completed => "completed",
+                            rmcp::model::TaskStatus::Failed => "failed",
+                            rmcp::model::TaskStatus::Cancelled => "cancelled",
+                            _ => "unknown",
+                        }
+                        .to_owned(),
+                        poll_interval_ms: task.poll_interval_ms,
+                    }),
+                    Vec::new(),
+                    Vec::new(),
+                ))
+            }
+            CallToolResponse::Task(_) => Err(error(
+                "outcome_unknown",
+                "MCP server started an unadvertised task. Its completion is unknown",
+            )),
             CallToolResponse::Complete(result) => {
                 let accepted = (|| {
                     if !result.is_error.unwrap_or(false)
@@ -919,7 +1061,7 @@ impl McpClient {
                         None => (Vec::new(), Vec::new()),
                     };
                     projection::project_result(result, &self.limits)
-                        .map(|result| (result, outputs, capture_errors))
+                        .map(|result| (CallOutcome::Complete(result), outputs, capture_errors))
                 })();
                 accepted.map_err(|failure|error("outcome_unknown",match failure.0.code.as_str(){
                     "mcp_schema"=>"MCP tool returned an invalid output schema. Its result cannot be accepted and the call was not replayed",
@@ -930,10 +1072,6 @@ impl McpClient {
             CallToolResponse::InputRequired(_) => Err(error(
                 "needs_input",
                 "MCP tool requires additional user input",
-            )),
-            CallToolResponse::Task(_) => Err(error(
-                "outcome_unknown",
-                "MCP server started an unadvertised task. Its completion is unknown",
             )),
             _ => Err(error(
                 "outcome_unknown",

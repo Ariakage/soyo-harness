@@ -107,7 +107,7 @@ N2 已实现以下范围，平台保证以实际验收证据为准。
 
 1. 已实现本地 stdio 的显式配置、受控启动与关闭、能力协商、工具发现和调用。
 2. 已实现远程 Streamable HTTP、OAuth 发现与登录、令牌续期／撤销、取消与有界错误处理。
-3. **本批已扩展（D-089）**：已接入 MCP Resources（列出、分页与读取）、Resource Templates、Prompts（列出、参数校验与读取）、协议版本协商订阅（`2025-11-25` `resources/subscribe` 与 `2026-07-28` `subscriptions/listen`）及通知目录失效；新增仅在连接服务通告对应能力时动态注册的只读宿主工具 `mcp_list_resources`、`mcp_read_resource`、`mcp_subscribe_resource`、`mcp_list_prompts`、`mcp_get_prompt`，以及 `ClientHandler::create_elicitation`（无交互处理器时默认 `Decline` 失败关闭）；MCP Tasks（长异步任务）继续按后续需求扩展。
+3. **本批已扩展（D-089／D-104）**：已接入 MCP Resources（列出、分页与读取）、Resource Templates、Prompts（列出、参数校验与读取）、协议版本协商订阅（`2025-11-25` `resources/subscribe` 与 `2026-07-28` `subscriptions/listen`）及通知目录失效；新增仅在连接服务通告对应能力时动态注册的只读宿主工具 `mcp_list_resources`、`mcp_read_resource`、`mcp_subscribe_resource`、`mcp_list_prompts`、`mcp_get_prompt`，以及 `ClientHandler::create_elicitation`（无交互处理器时默认 `Decline` 失败关闭）。已接入 SEP-2663 `tasks/*` 长异步任务（D-104）：`[mcp.tasks] enabled = false` 默认关闭；opt-in 开启且 server 通告 `io.modelcontextprotocol/tasks` 时注册 `mcp_get_task`（`ExternalReadOnly`）／`mcp_cancel_task`／`mcp_respond_task`（均 `ExternalUnknown`，PLAN 不可用），`tasks/get` 投影 `working→running`/`input_required→needs_input`/`completed→done`/`failed`/`cancelled`，`tools/call` 接受 `CreateTaskResult` 句柄，未 opt-in 或未通告时保持 `outcome_unknown` 失败关闭与目录零漂移。
 4. **N6 已实现（`D-079`/`D-081`）**：S2（`DEV-090`）在已发现 MCP 工具总数超过阈值（默认 `> 8`）时自动启用延迟加载，提供 `tool_search`／`tool_describe` 按需展开并保持首部缓存前缀逐字节稳定；S5（`DEV-093`）新增 `ToolDefinition.examples` 及 `jsonschema`/脱敏校验。详见[N6 规划](n6-plan.md)与[N6 验收](n6-validation.md)。
 
 服务器管理、稳定工具命名、schema 校验、输出大小／内容类型、权限判断、执行记录、取消及非交互终止已接入共享运行时。本地 MCP 服务启动和生命周期使用执行后端与独立启动授权，HTTP 服务由宿主管理，具体配置与限制见[MCP 与凭据](mcp.md)。

@@ -202,6 +202,13 @@ argv = ["/absolute/path/to/server", "--stdio"]
 
 按 D-081，每个服务可选 `[mcp.servers.NAME.tool_examples]` 按远端工具名提供 1–5 条真实调用样例（服务级最多 256 项）：加载期校验结构与占位符，注册期再经该工具的离线 input schema 与 `SecretRegistry` 脱敏校验；延迟加载工具经 `tool_describe` 返回样例，常驻工具将样例投影到三协议描述文本（不进入 schema，兼容 `strict_tools`）。详见[工具注册](tool-registry.md#调用样例d-081)。
 
+按 D-104，`[mcp.tasks] enabled = false`（默认关闭）控制 SEP-2663 `tasks/*` 长异步任务：仅当开启且 server 在能力协商中通告 `io.modelcontextprotocol/tasks` 时才注册 `mcp_get_task`／`mcp_cancel_task`／`mcp_respond_task` 宿主工具；任一条件不满足时 `tools/call` 返回的 `CreateTaskResult` 按 `outcome_unknown` 失败关闭、目录零漂移。`mcp_get_task` 为只读（PLAN 可见），`mcp_cancel_task`／`mcp_respond_task` 会修改 server 端任务状态（PLAN 不可用）。
+
+```toml
+[mcp.tasks]
+enabled = false   # 默认；开启后客户端通告 io.modelcontextprotocol/tasks
+```
+
 HTTP 配置使用 `[mcp.servers.NAME.transport]`，设置 `type = "http"` 与完整 `endpoint`。默认要求 HTTPS。明确设置 `allow_insecure_http = true` 可选择明文测试端点。凭据通过 `bearer_env`、`headers_env` 或私有存储的 `credential_ref` 选择，`bearer_env` 与 `credential_ref` 互斥。`scopes` 绑定凭据授权范围。登录、撤销、作用域及完整示例见[MCP 使用说明](mcp.md)。
 
 ## 凭据后端与授权（F-18）
