@@ -104,6 +104,25 @@ Thinking与长工具卡片支持点击标题或Ctrl+O展开，鼠标滚轮控制
 
 模型可显式启动运行内后台工具；交互期间 `/jobs`、`/job ID`、`/cancel-job ID` 可查询和取消。运行结束会清理未完成任务。Soyo 被强制终止后，失去管理的进程可能仍在运行；恢复时不重放工具，结果未知不等于已停止。
 
+## 持久任务与持久子 Agent
+
+跨运行持久能力默认关闭。启用 `[tasks] enabled = true` 后，`soyo task submit|list|status|pause|resume|cancel|resolve|continue|recover` 驱动普通后台任务；启用 `[subagents] enabled = true` 后，模型可用 `subagent_spawn persistent = true` 把子 Agent 落库为持久作业。两者共用 `<data_dir>/tasks/tasks.sqlite3`，但各自只管理自己的行。
+
+持久子 Agent 的常用命令：
+
+```sh
+soyo --config /path/to/config.toml subagent list
+soyo --config /path/to/config.toml subagent status SUBAGENT_ID
+soyo --config /path/to/config.toml subagent diff SUBAGENT_ID --no-patch
+soyo --config /path/to/config.toml subagent continue SUBAGENT_ID
+soyo --config /path/to/config.toml subagent merge SUBAGENT_ID
+soyo --config /path/to/config.toml subagent cancel SUBAGENT_ID --discard
+soyo --config /path/to/config.toml subagent resolve SUBAGENT_ID --retry
+soyo --config /path/to/config.toml subagent recover
+```
+
+`continue` 在持租约的 worker 中执行一次尝试（lease 心跳、pause/cancel 轮询）并把 summary、变更文件清单与冲突清单写回作业；同一作业的再次 `continue` 只有在显式 `resolve --retry` 重新排队后才可行。`merge` 始终以当前父工作区做三方 SHA-256 检测：父工作区在 fork 后改动过目标文件时整次合并零写入失败并列出冲突，默认成功后删除隔离工作区（`--keep-workspace` 保留）。`cancel --discard` 取消并清理；`resolve` 只处理 `waiting_unknown` 的作业，省略 `--retry` 时挂起等待外部输入——崩溃恢复绝不自动重放。完整边界见[受控子 Agent](subagents.md#持久子-agentd-110)。
+
 ## 原生隔离与 MCP
 
 默认 Auto 在 macOS 选择 Seatbelt，在 Linux 选择 Bubblewrap 与 Seccomp。Linux 代理网络使用 socat 与宿主 NetworkBroker。缺少依赖或必需能力时，Run 返回明确启动错误。`config check` 验证配置，实际隔离能力在 Run 开始时探测。

@@ -603,6 +603,8 @@ enabled = false
 # max_running = 1         # 单 worker 并发驱动上限；缺省 1
 ```
 
+同一存储也承载 `F-09` 持久子 Agent（D-110）：`[subagents] enabled = true` 且 `[tasks] enabled = true` 时 `subagent_spawn persistent = true` 才可用；关闭 `[tasks]` 时持久 spawn 以 `task_queue_disabled` 失败，普通 run-scoped 子 Agent 不受影响。`soyo task` 只列出普通任务，持久子 Agent 用 `soyo subagent` 管理。
+
 `TaskStore` 位于 `<data_dir>/tasks/tasks.sqlite3`（0700 目录、0600 文件、`O_NOFOLLOW`、canonicalize＋symlink 拒绝、`busy_timeout`、`foreign_keys`、`synchronous=FULL`、`application_id=0x5354_5131`、`user_version=1`、WAL），含 `tasks`／`task_leases`／`task_dispatches`（`(task_id, attempt)` 主键）三表；多个任务可共享一个工作区，故无 `workspace_leases`。
 
 生命周期 `queued→running→paused/blocked/completed/failed/cancelled`，另有 `waiting_unknown`：派发意图在 `Run` 启动前单事务落库，崩溃后由 `recover_unknown` 将在飞 dispatch 标记为 `waiting_unknown`，**绝不自动重放**——只有显式 `resolve`（`retry` 重新排队或置 `blocked`）或 `transition` 才能继续。`run_task_once` 复用同一 `Session` 驱动单个 `Run`，带租约心跳与 pause/cancel 轮询，结果按 `persistence_saved` 映射 `completed`/`failed`/`waiting_unknown`。

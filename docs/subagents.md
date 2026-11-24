@@ -1,6 +1,6 @@
-# 受控子 Agent 协作（F-09，D-085／D-109）
+# 受控子 Agent 协作（F-09，D-085／D-109／D-110）
 
-**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。深度由 `[subagents] max_depth` 控制（默认 `1`，允许 `1..=3`）；跨进程分布式子 Agent 与持久子 Agent（D-110）仍属后续范围。**
+**状态：已在 `soyo-contract`、`soyo-core`、`soyo-app`、`soyo-cli`、`soyo-tui`、`soyo-ipc`、`soyo-host` 与 `desktop` 实现，当前为严格默认关闭（opt-in，`[subagents].enabled = false`）。深度由 `[subagents] max_depth` 控制（默认 `1`，允许 `1..=3`）；持久子 Agent（D-110）复用 `[tasks]` 队列，可跨父 run 由后台 worker 续跑。跨进程分布式子 Agent 仍属后续范围。**
 
 ## 定位与开关边界
 
@@ -38,7 +38,7 @@
 
 | 工具名 | 副作用分类（`ToolEffect`） | 核心输入参数 | 说明 |
 | --- | --- | --- | --- |
-| `subagent_spawn` | `Control` | `label`、`task`、可选 `mode`/`workspace_isolation`/`allow_exec`/`allowed_paths`/`background`/`timeout_seconds` | 创建子 Agent；`background = false` 同步等待完成并返回快照，`true` 立即返回 `running` 状态 |
+| `subagent_spawn` | `Control` | `label`、`task`、可选 `mode`/`workspace_isolation`/`allow_exec`/`allowed_paths`/`background`/`persistent`/`timeout_seconds` | 创建子 Agent；`background = false` 同步等待完成并返回快照，`true` 立即返回 `running` 状态；`persistent = true` 时落库为持久作业并立即返回（见下节） |
 | `subagent_status` | `Control` | `subagent_id` | 读取脱敏后的子 Agent 当前快照（状态、步痕 `step_traces`、变更文件、合并回执） |
 | `subagent_wait` | `Control` | `subagent_ids`、`wait_all`（默认 `true`）、可选 `timeout_seconds` | 等待一个或全部子 Agent 终态或超时 |
 | `subagent_message` | `Control` | `subagent_id`、`message`、可选 `timeout_seconds` | 向已终止但未合并／丢弃且未耗尽预算的子 Agent 发送后续指示 |
@@ -79,6 +79,19 @@
    - 未冲突变更经临时文件 + `fsync` 原子写入父工作区，逐文件记录 `SubagentMergeReceipt`（`operation`、`pre_parent_sha256`、`post_parent_sha256`），并在 parent `RunMetrics` 的 artifacts 列表中留下可审计追踪记录。
    - 支持 `paths` 选择性合并跳过冲突文件；合并后默认 `discard_after = true` 或通过 `subagent_cancel(discard = true)`／父 Run `shutdown()` 自动卸载临时 worktree 与清理临时目录，不残留孤儿目录或 `.git/worktrees/*` 条目。
 
+## 持久子 Agent（D-110）
+
+`subagent_spawn` 的 `persistent` 默认为 `false`（零漂移）。显式 `persistent = true` 时，子 Agent 不再绑定父 Run 的生命周期：
+
+- **开关与存储**：要求 `[subagents] enabled = true` 与 `[tasks] enabled = true`；任一关闭时 spawn 以 `task_queue_disabled` fail-closed。作业以 `run_kind = "subagent"` 的 `TaskRecord` 写入同一 `<data_dir>/tasks/tasks.sqlite3`，记录父会话 id、标签、task 文本、`mode`／`workspace_isolation`／`allow_exec`／`allowed_paths`／`timeout`、委派深度、隔离工作区根与 fork 基线清单路径。工作区仍是私有临时目录（0700），基线清单写入 `<data_dir>/subagents/<task-id>/baseline.json`（0600），避免把工作区放进宿主受保护的数据目录。
+- **立即返回**：spawn 立即返回 `state = running` 与持久 id（即 task id），父 Run 不等待；持久作业不计入父 Run 的 `max_concurrent`／`max_total`，也不进入内存 child 表，因此父 Run 结束、helper 断线或切换到 PLAN 之外的正常退出都不会取消它。
+- **后台 worker**：`soyo subagent continue <id>` 使用与 `run_task_once` 同型的 lease 心跳与 intent→running→完成/失败/unknown 流程；完成时把子 Agent 的 summary、changed-file manifest 与三方冲突清单写回 task 行。worker 以存储的配置重建同一收紧边界（`derive_for_subagent`、exec 默认拒绝、沙箱 `derive_child_sandbox`），并在 `max_depth` 允许时给子级保留继续委派能力。
+- **未知结果绝不重放**：worker 在记录结果前崩溃或失联时，dispatch 标 `unknown`、任务转 `waiting_unknown`；只有显式 `soyo subagent resolve <id> --retry` 才重新排队，省略 `--retry` 则挂起等待外部输入。`soyo subagent continue` 只接受 `queued` 作业。
+- **状态、差异与合回**：`subagent_status`／`subagent_diff` 对持久 id 从存储读取；父会话可在后续 Run 中直接调用 `subagent_merge`，也可用 CLI。merge 始终以**当前**父工作区执行三方 SHA-256 检测：若父工作区在 fork 后修改或删除了目标文件，整次 merge 零写入失败并返回结构化冲突清单；父工作区身份变化或基线失效同样 fail-closed，绝不强制合并。
+- **PLAN 取消**：父级切换到 PLAN 时，`cancel_mutating` 同时把父会话名下 queued/running/paused 的 mutating 持久作业转 `Cancelled`；worker 每 250 ms 轮询任务状态并在下一个模型或工具边界前停止。
+- **清理**：成功 merge 默认删除隔离工作区（`discard_after = true`）并移除基线目录；`soyo subagent cancel <id> --discard` 立即清理；未合并的已完成作业保留工作区供检查，由操作者显式丢弃。
+- **非提权不变**：持久化不放宽任何规则——子级仍由 `derive_for_subagent` 从父策略逐级收紧，不继承父级一次性授权，PLAN/只读父级仍不能创建可写持久作业。
+
 ## 共享预算、Metrics 与 Goal 集成
 
 - **共享时间与调用上限**：子 Agent 接收从父 `SharedBudget` 派生的受限预算（同时受子级 `timeout_seconds`、父级剩余活跃时间与共享父 `model_requests` 计数约束），并共享原子父工具调用计数器，防止通过并行扇出突破父级 Run 预算。多层委派下每层都以同一方式串联：孙代请求同样逐级扣减至顶层父 Run 的 `SharedBudget` 与工具计数器，任一层都不会获得新的独立额度。
@@ -89,7 +102,7 @@
 
 ## CLI、TUI 与桌面端呈现
 
-- **CLI**：工具事件流正常发出 `tool.requested`/`tool.finished`，审批交互隐藏原始 `task`/`message` 正文。
+- **CLI**：工具事件流正常发出 `tool.requested`/`tool.finished`，审批交互隐藏原始 `task`/`message` 正文。持久作业由 `soyo subagent list|status|diff|merge|cancel|resolve|continue|recover` 单独管理；它复用 `[tasks]` 存储，但 `soyo task list`／`soyo task continue` 只处理普通 task，`soyo subagent` 只处理 `run_kind = "subagent"`。
 - **TUI**（[tool_summary.rs](../crates/soyo-tui/src/tool_summary.rs)、[tool_render.rs](../crates/soyo-tui/src/tool_render.rs)）：单行摘要呈现动作、标签、状态、`wait` 完成状态（`completed` / `timed out`）与变更文件数；详情折叠展示 `Mode`、`Isolation`、摘要、嵌套 `step_traces`、变更文件状态（冲突标红）与合并结果。
 - **Desktop GUI**：
   - `soyo-ipc::tool_format` 为 `subagent_*` 生成摘要与结构化列表详情（步痕、变更文件、`Merged` / `Conflicts`）。

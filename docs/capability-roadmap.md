@@ -205,14 +205,14 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 
 **价值**：将大任务分成可独立执行和核验的子任务。
 
-> **实现状态（D-085、D-109）**：受控父子委派已按默认关闭（`[subagents] enabled = false`）实现，涵盖 7 个 `subagent_*` 工具、非提权规则与 `PLAN` 整棵子树取消、Git Worktree / 有界目录拷贝隔离、三方 SHA-256 冲突检测合并、共享预算与单源 Metrics 汇总、取消清理、Goal 配置指纹及 CLI／TUI／桌面端呈现（`Settings › Experimental`）。委派深度由 `[subagents] max_depth` 控制（默认 `1` 即单层，允许 `1..=3`）：超过 `1` 时子代在同一套收紧规则与共享预算／并发计数下继续委派。跨运行持久子 Agent（D-110）与远程协同仍属后续扩展。详见[受控子 Agent](subagents.md)与[F-09 说明](releases/release-notes-f09.md)。
+> **实现状态（D-085、D-109、D-110）**：受控父子委派已按默认关闭（`[subagents] enabled = false`）实现，涵盖 7 个 `subagent_*` 工具、非提权规则与 `PLAN` 整棵子树取消、Git Worktree / 有界目录拷贝隔离、三方 SHA-256 冲突检测合并、共享预算与单源 Metrics 汇总、取消清理、Goal 配置指纹及 CLI／TUI／桌面端呈现（`Settings › Experimental`）。委派深度由 `[subagents] max_depth` 控制（默认 `1` 即单层，允许 `1..=3`）：超过 `1` 时子代在同一套收紧规则与共享预算／并发计数下继续委派。持久子 Agent（D-110）复用 `[tasks]` 队列：`subagent_spawn persistent: true` 落库 `run_kind = "subagent"` 作业，父 run 结束后由 `soyo subagent continue` 的 lease worker 续跑，结果、变更清单与冲突清单入库，CLI 与模型侧 `subagent_merge` 均按当前父工作区做三方检测，`waiting_unknown` 绝不自动重放。远程协同仍属后续扩展。详见[受控子 Agent](subagents.md)与[F-09 说明](releases/release-notes-f09.md)。
 
 - 父子任务、分工、消息、结果汇总、独立上下文与预算；对子任务数量和并发设上限。
 - 子 Agent 的权限、网络、凭据与可访问文件不能自动高于父任务的授权范围。
 - 独立 worktree／sandbox 与合并流程，避免多个 Agent 同时覆盖同一文件。
 - 取消、失败、超时和资源预算向子任务传递，汇总结果仍需实际验证。
 
-**增量状态**：(1) **多层委派（D-109，已实现）**——`[subagents] max_depth` 可配置（默认 1，上限 3），子孙代经 `derive_for_subagent` 逐级收紧、预算与并发／总数计数沿链向顶层汇总、`PLAN` 切态沿整棵子树取消；(2) **持久子 Agent（D-110，方向定案，依赖多层先行）**——`subagent_spawn persistent: true` 落库 `TaskStore`（`run_kind = "subagent"`），父 run detach 后由后台 worker 续跑，`subagent_merge` 按既有冲突检测合回，绝不自动重放未确认副作用。
+**增量状态**：(1) **多层委派（D-109，已实现）**——`[subagents] max_depth` 可配置（默认 1，上限 3），子孙代经 `derive_for_subagent` 逐级收紧、预算与并发／总数计数沿链向顶层汇总、`PLAN` 切态沿整棵子树取消；(2) **持久子 Agent（D-110，已实现）**——`subagent_spawn persistent: true` 落库 `TaskStore`（`run_kind = "subagent"`，要求 `[tasks] enabled = true`），父 run 结束后由 `soyo subagent continue` 的 lease worker 续跑并把 summary／变更清单／冲突清单写回作业；`subagent_status`／`subagent_diff` 从存储读取，`subagent_merge`（模型工具或 CLI）按当前父工作区做三方检测并零写入失败于冲突；`waiting_unknown` 只经显式 `resolve --retry` 重新排队，绝不自动重放；父级切 `PLAN` 时同步取消其 mutating 持久作业。
 
 先做受控父子任务，再考虑多层委派与更复杂协作。验收包含两个独立改动的隔离、冲突处理、总预算与取消；子任务需要有可核验的产物与合并结果。
 
