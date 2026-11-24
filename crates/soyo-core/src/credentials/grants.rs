@@ -303,7 +303,7 @@ impl GrantStore {
     /// List all stored grants, validating each record.
     pub fn list(&self) -> Result<Vec<CredentialGrant>, BoundaryError> {
         let mut grants = self.list_raw()?;
-        grants.sort_by(|a, b| a.grant_id.cmp(&b.grant_id));
+        grants.sort_by_key(|grant| grant.grant_id);
         Ok(grants)
     }
 

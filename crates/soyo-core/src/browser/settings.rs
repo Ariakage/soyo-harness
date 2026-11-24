@@ -416,21 +416,12 @@ pub struct BrowserDevServiceForward {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrowserDevServiceSettings {
     pub enabled: bool,
     /// Exact loopback forward entries. Bounded; duplicates are refused.
     pub forwards: Vec<BrowserDevServiceForward>,
-}
-
-impl Default for BrowserDevServiceSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            forwards: Vec::new(),
-        }
-    }
 }
 
 impl Default for BrowserRemoteSettings {
@@ -632,23 +623,24 @@ mod tests {
     fn base_vm() -> crate::browser::vm::BrowserVmSettings {
         // A syntactically valid enabled VM block. Existence/permission checks
         // are the separate preflight step, not validate().
-        let mut vm = crate::browser::vm::BrowserVmSettings::default();
-        vm.enabled = true;
-        vm.colima = Some(std::path::PathBuf::from("/opt/homebrew/bin/colima"));
-        vm.ssh = Some(std::path::PathBuf::from("/usr/bin/ssh"));
-        vm.profile = Some("soyo".into());
-        vm.host = Some("127.0.0.1".into());
-        vm.user = Some("soyo".into());
-        vm.port = Some(49222);
-        vm.identity_file = Some(std::path::PathBuf::from("/tmp/soyo-vm/id_ed25519"));
-        vm.known_hosts = Some(std::path::PathBuf::from("/tmp/soyo-vm/known_hosts"));
-        vm.node = Some("/opt/soyo/node/bin/node".into());
-        vm.worker_root = Some("/opt/soyo/worker".into());
-        vm.chromium = Some("/opt/soyo/chromium/headless_shell".into());
-        vm.identity_manifest = Some("/opt/soyo/identity.json".into());
-        vm.identity_sha256 = Some("a".repeat(64));
-        vm.remote_temp_root = Some("/tmp/soyo".into());
-        vm
+        crate::browser::vm::BrowserVmSettings {
+            enabled: true,
+            colima: Some(std::path::PathBuf::from("/opt/homebrew/bin/colima")),
+            ssh: Some(std::path::PathBuf::from("/usr/bin/ssh")),
+            profile: Some("soyo".into()),
+            host: Some("127.0.0.1".into()),
+            user: Some("soyo".into()),
+            port: Some(49222),
+            identity_file: Some(std::path::PathBuf::from("/tmp/soyo-vm/id_ed25519")),
+            known_hosts: Some(std::path::PathBuf::from("/tmp/soyo-vm/known_hosts")),
+            node: Some("/opt/soyo/node/bin/node".into()),
+            worker_root: Some("/opt/soyo/worker".into()),
+            chromium: Some("/opt/soyo/chromium/headless_shell".into()),
+            identity_manifest: Some("/opt/soyo/identity.json".into()),
+            identity_sha256: Some("a".repeat(64)),
+            remote_temp_root: Some("/tmp/soyo".into()),
+            ..Default::default()
+        }
     }
 
     fn full() -> crate::browser::BrowserSettings {
