@@ -103,6 +103,7 @@ soyo --config /path/to/config.toml remote apply TASK_ID
 - 三方判定：本地摘要 == 新摘要 → `unchanged`；本地摘要 != base 且 != 新摘要 → 冲突；否则写入或删除。
 - **全有或全无**：任一冲突则不写任何文件，返回冲突清单；成功时返回逐文件 receipt（`created`/`modified`/`deleted`/`unchanged`）。重复 apply 幂等。
 - 可用 `--path` 只合入选定的文件；未出现在结果中的路径会报 `invalid_args`。
+- 合入只保留可执行位：写入文件权限归一为 0755（可执行）或 0644，其他权限位不随远端传播。
 
 ## 已知限制
 
