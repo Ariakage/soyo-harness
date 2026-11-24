@@ -872,14 +872,21 @@ mod tests {
             .await
             .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
-        let recovered: Vec<serde_json::Value> =
-            local.call_typed("task_recover", &json!({})).await.unwrap();
-        let record = recovered
-            .iter()
-            .find(|record| record["task_id"] == task_id.as_str())
-            .expect("recovered record");
+        // The next claim recovers this worker's own expired dispatch first: a
+        // confirmed start must never be replayed.
+        let none: Option<serde_json::Value> = worker
+            .call_typed::<_, Option<serde_json::Value>>(
+                "remote_task_claim",
+                &json!({"worker_id": "worker-1"}),
+            )
+            .await
+            .unwrap();
+        assert!(none.is_none());
+        let record: serde_json::Value = local
+            .call_typed("task_status", &json!({"task_id": task_id}))
+            .await
+            .unwrap();
         assert_eq!(record["status"], "waiting_unknown", "{record}");
-        // Never replayed without an explicit resolution.
         let none: Option<serde_json::Value> = worker
             .call_typed("remote_task_claim", &json!({"worker_id": "worker-1"}))
             .await

@@ -320,6 +320,14 @@ impl HostService {
         self.touch_worker(worker_id)?;
         let (config, store) = Self::open_remote(self).await?;
         let secrets = self.current_secrets();
+        // Recover this worker's own abandoned dispatches first: an unconfirmed
+        // intent becomes claimable again, while a confirmed start stays
+        // `waiting_unknown` for an explicit resolution.
+        let now = timestamp().map_err(|error| boundary_error(self, error))?;
+        store
+            .recover_unknown_for(Some(worker_id), now_ms(), now)
+            .await
+            .map_err(|error| DesktopError::from_boundary(&error, &secrets))?;
         let sync_store = RemoteSyncStore::open(&config.data_dir)
             .map_err(|error| DesktopError::from_boundary(&error, &secrets))?;
         let limits = RemoteSyncLimits::default();

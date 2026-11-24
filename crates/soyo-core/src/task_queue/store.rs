@@ -1029,6 +1029,19 @@ impl TaskStore {
         now_ms: u64,
         now: String,
     ) -> Result<Vec<TaskRecord>, BoundaryError> {
+        self.recover_unknown_for(None, now_ms, now).await
+    }
+
+    /// Recovery restricted to one remote worker's assigned tasks. The worker
+    /// claim calls this before scanning candidates so its own abandoned intent
+    /// is requeued without touching any other task.
+    pub async fn recover_unknown_for(
+        &self,
+        worker_id: Option<&str>,
+        now_ms: u64,
+        now: String,
+    ) -> Result<Vec<TaskRecord>, BoundaryError> {
+        let worker_id = worker_id.map(str::to_owned);
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         tokio::task::spawn_blocking(move || {
@@ -1068,6 +1081,11 @@ impl TaskStore {
                     .map(RunId)
                     .map_err(|_| storage("task_corrupt", "Task Run ID is invalid"))?;
                 let mut record = load_connection(&transaction, task_id)?;
+                if let Some(worker_id) = worker_id.as_deref()
+                    && record.remote_worker.as_deref() != Some(worker_id)
+                {
+                    continue;
+                }
                 // A remote dispatch that never reached `remote_task_start` is
                 // provably side-effect free: the worker confirms the start
                 // before executing anything. Such an attempt returns to the
