@@ -175,7 +175,7 @@
 
 ### 7.2 桌面 UI 实机渲染截图（`docs/design/screenshots/desktop/`）
 
-以下 12 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查；`Settings › Experimental` 两张截图已随 F-16/F-17 开关重拍覆盖 4 项开关布局：
+以下 12 张 PNG 均在无头 Chromium CDP 中以 Vite 预览服务（`?preview=1&chrome=clean`）按 `deviceScaleFactor=2` 实际渲染并完成控制台零错误、零横向溢出、Composer 工具栏零折行／零裁切检查；`Settings › Experimental` 两张截图已随 F-16/F-17 开关重拍覆盖 4 项开关布局。F-12 追加 5 张 `Settings › Observe` 截图（用量深浅两主题 + 时间线／诊断／报告深色），同样经该无头渲染流程生成：
 
 | 场景与断点 | Soyo Dark | Soyo Light |
 | :--- | :--- | :--- |
@@ -186,6 +186,10 @@
 | Settings › Appearance（`1280×840`） | [settings-appearance-dark-1280x840.png](screenshots/desktop/settings-appearance-dark-1280x840.png) | [settings-appearance-light-1280x840.png](screenshots/desktop/settings-appearance-light-1280x840.png) |
 | Settings › Usage（`1280×840`） | [settings-usage-dark-1280x840.png](screenshots/desktop/settings-usage-dark-1280x840.png) | — |
 | Settings › Experimental（`1280×840`） | [settings-experimental-dark-1280x840.png](screenshots/desktop/settings-experimental-dark-1280x840.png) | [settings-experimental-light-1280x840.png](screenshots/desktop/settings-experimental-light-1280x840.png) |
+| Settings › Observe · 用量（`1280×840`） | [settings-observe-dark-1280x840.png](screenshots/desktop/settings-observe-dark-1280x840.png) | [settings-observe-light-1280x840.png](screenshots/desktop/settings-observe-light-1280x840.png) |
+| Settings › Observe · 时间线（`1280×840`） | [settings-observe-timeline-dark-1280x840.png](screenshots/desktop/settings-observe-timeline-dark-1280x840.png) | — |
+| Settings › Observe · 诊断（`1280×840`） | [settings-observe-diagnose-dark-1280x840.png](screenshots/desktop/settings-observe-diagnose-dark-1280x840.png) | — |
+| Settings › Observe · 报告（`1280×840`） | [settings-observe-report-dark-1280x840.png](screenshots/desktop/settings-observe-report-dark-1280x840.png) | — |
 
 ---
 

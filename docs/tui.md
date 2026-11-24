@@ -207,3 +207,15 @@ Ctrl+P打开居中的浮层命令面板，方向键选择、Enter执行选中项
 `/export json|markdown PATH` 导出对话，`/export full json|markdown PATH` 显式包含完整范围、工具记录及持久化的供应商思考／签名状态；`/export-full` 保留为兼容别名。路径支持空格，相对路径基于当前工作区。Full 与其他导出一样在输出前脱敏当前配置凭据和持久遮蔽标记。导出复用安全文件发布、已有文件保护和 PLAN 路径检查，回执带持久化水位。已完成发布的文件即使随后取消，界面仍报告实际回执。
 
 会话初始化、恢复和快照／导出通过独立 UI 任务执行。Ctrl+C 可请求取消，退出时等待任务收尾。UI 任务结束后才能应用排队的模式变化，权限修改要求运行与 UI 任务均空闲。读取到的正文沿用脱敏与有限显示缓存。
+
+## F-12 观测模态
+
+`/usage`、`/replay [RUN]`、`/diagnose [RUN]`、`/session-report [RUN]` 打开只读观测模态，与 Memory／Checkpoint 管理共用同一弹窗外壳（设置行、帮助行、命令输入、PgUp／PgDn 或滚轮滚动、Esc 关闭并保留未发送草稿），只是换成观测文案与只读投影。模态内命令：
+
+- `usage`——聚合当前会话 run_metrics 的请求数、token 与按币种费用，按 run 与 profile 分组；
+- `replay [RUN]`——把 events（按 seq）与 history（按 ordinal）投影为有序时间线，显示步骤序号、状态、类别、标签与错误码；
+- `step N`——输出第 N 步完整的 input／output 详情；
+- `diagnose [RUN]`——定位第一个 failed／denied／cancelled 步骤，给出最近健康步骤、错误码与 run 终态；
+- `report [RUN]`——显示 run 元数据、结果、指标、时间线与诊断，并渲染与 `soyo session report` 相同的 Markdown 报告。
+
+本地后端经 `SqliteStore::read_snapshot` 读取不可变快照，远程（helper）后端经 `read_session_snapshot` IPC，投影直接调用 `soyo_app::observe`。四者均不派发模型请求、不执行工具、不访问网络、不写入文件；未指定 `RUN` 时与 CLI 一致（replay 全量、diagnose 最近 finished run、report 最近 finished run 或最后一个持久化 run）。

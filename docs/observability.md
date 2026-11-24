@@ -85,6 +85,40 @@ F-12 的投影层在已持久化采集底座（sessions／runs／events／change
 
 输出与其他查询一致：text 为终端安全文本，JSON 使用 `{schema_version:1,data}` 信封，JSONL 附加 `type`；取消退出130，其余错误退出2。
 
+## TUI 与桌面端观测面板
+
+F-12 把同一投影层接到两端，全部只读，不派发模型请求、不执行工具、不访问网络、不写入文件。
+
+- **TUI**：`/usage`、`/replay [RUN]`、`/diagnose [RUN]`、`/session-report [RUN]` 打开观测模态（复用 Memory／Checkpoint 弹窗外壳）；模态内另有 `step N` 单步钻取与 `help`／`close`。本地后端经 `read_snapshot`，helper 后端经 `read_session_snapshot`，投影调用 `soyo_app::observe`。详见 [TUI](tui.md#f-12-观测模态)。
+- **桌面端**：`soyo-host` 新增 `observe_usage`／`observe_timeline`／`observe_diagnose`／`observe_report` 四个内部 IPC method（`session_id` 缺省时复用检查点的会话解析：绑定会话→工作区最新会话），返回 bounded 且脱敏的 JSON，report 另附渲染后的 Markdown。桌面端 Settings 新增「Observe」设置页与侧栏入口：用量表（run／profile 分组）、可展开的时间线（单步 input／output）、诊断摘要与 Markdown 运行报告。详见[桌面端](desktop.md)。
+
+`soyo_app::observe::metrics_records` 统一把快照 `run_metrics` 行解码为 `RunMetricsRecord`，CLI、TUI、helper 与评估共用同一解码。
+
+## 固定任务集回归评估
+
+`soyo eval FIXTURE_DIR` 对固定、已录制的会话快照集合运行与 `session report` 相同的投影，并按记录逐项比对期望结果，用于两个版本之间的回归比较。全程离线：fixture 是合成的持久化快照，没有真实模型请求、网络或付费额度依赖。
+
+fixture 为目录下的 `*.json` 文件，按文件名排序读取，每个文件一个用例：
+
+```json
+{
+  "name": "failed-tool",
+  "description": "optional one-line context",
+  "run": "optional run id; defaults to the latest finished run",
+  "expect": {
+    "steps": 5,
+    "failed_step": 3,
+    "error_code": "tool_error",
+    "run_status": "failed"
+  },
+  "snapshot": { "created_at": "...", "session": { "...": "..." }, "runs": [], "events": [] }
+}
+```
+
+`expect` 四项为必填的完整期望：`steps` 为所选 run 的投影步骤总数；`failed_step`／`error_code` 为 `null` 表示期望无失败；`run_status` 为 `null` 表示 fixture 中 run 未结束。`evaluate_case` 复用 `run_report`，输出与 `session report` 相同的 `run`／`result`／`metrics`／`timeline`／`diagnosis` 字段，另附 `expected`、逐项 `checks`（expected／actual／passed）与 `passed`。`eval_report` 汇总通过／失败数，`eval_markdown` 输出确定性 Markdown。
+
+任一 fixture 不匹配时退出码为 2（投影错误同样为 2，取消为 130），便于 CI 以非零退出捕获版本回归；`--output json` 的信封可直接 diff。样例 fixture 位于 `fixtures/observe-eval/`：失败工具、干净完成与权限拒绝三个用例。
+
 ## 验收
 
 DEV-040 验证全部级别、旧行读取、字段白名单、深层编码秘密、权限、符号链接和跨进程轮转。DEV-041 验证并发模型／核查／工具／后台任务的 span 归属，以及队列过载、慢磁盘与退出排空。DEV-042 验证筛选、跟随、取消和 JSON／JSONL stdout。

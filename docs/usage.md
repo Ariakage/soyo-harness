@@ -223,6 +223,15 @@ soyo session report SESSION_ID --run RUN_ID --file ./run-report.md
 
 `usage` 聚合 run_metrics 的 token、费用与 profile 归因，`--by` 选 run／profile／day 分组（day 按 UTC 日界，仅跨会话路径可用），`--since` 限制近 N 天（默认30）。`replay` 按事件序与 history 序重建时间线，`--step` 输出该步完整输入输出。`diagnose` 定位第一个 failed／denied／cancelled 步骤并给出最近健康步骤与错误码。`session report` 把指定 run 的元数据、结果、metrics、时间线与诊断发布为 Markdown 或 JSON 文件（独占创建、0600，与 `session export` 同约定）。四者均支持 text／json／jsonl，取消退出130、其他错误退出2，细节见[日志说明](observability.md)。
 
+固定任务集版本回归评估读取目录下的录制快照 fixture，离线投影并与期望逐项比对；任一用例不匹配时退出码 2，便于 CI 捕获版本回归：
+
+```sh
+soyo eval fixtures/observe-eval
+soyo --output json eval fixtures/observe-eval > eval-report.json
+```
+
+fixture 格式（`name`／可选 `description`／可选 `run`／`expect`／内嵌 `snapshot`）与样例见[日志说明](observability.md#固定任务集回归评估)；样例目录 `fixtures/observe-eval/` 覆盖失败工具、干净完成与权限拒绝三例。TUI 等价入口为 `/usage`、`/replay`、`/diagnose`、`/session-report` 观测模态，桌面端为 Settings「Observe」页。
+
 ### 凭据检测边界
 
 已知凭据按原文及逐字符JSON／Unicode混合转义检测。无法安全清除的残留正文整体扣留。重复键或超范围数字构成的无凭据JSON文本保持原文，含凭据且无法无损处理时失败关闭。无反斜杠纯文本不占用转义解码预算。
