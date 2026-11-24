@@ -826,6 +826,7 @@ async fn js_repl_bridged_calls_pass_check_hooks_individually() {
             soyo_core::config::Environment::from_pairs([]),
             None,
             hooks.secrets.clone(),
+            None,
         )
         .unwrap();
     let mut runtime = native_environment(runtime, workspace.path());

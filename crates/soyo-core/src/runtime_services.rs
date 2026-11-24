@@ -28,6 +28,7 @@ use crate::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
+    path::Path,
     pin::Pin,
     sync::{
         Arc, Mutex, Weak,
@@ -55,6 +56,9 @@ struct Settings {
     environment: Environment,
     authorizer: Option<Arc<dyn McpHttpAuthorizer>>,
     registry: Option<Arc<SecretRegistry>>,
+    /// Opened when any configured credential reference (HTTP `credential_ref`
+    /// or stdio `env_credential_refs`) needs resolving; also scopes grants.
+    credentials: Option<crate::credentials::CredentialStore>,
     plugins: Option<plugins::PluginConfiguration>,
     host_hooks: Option<plugins::HostHookConfiguration>,
 }
@@ -313,6 +317,7 @@ impl RuntimeServices {
         environment: Environment,
         authorizer: Option<Arc<dyn McpHttpAuthorizer>>,
         registry: Arc<SecretRegistry>,
+        credentials: Option<crate::credentials::CredentialStore>,
     ) -> Result<(), BoundaryError> {
         mcp.validate()?;
         if self.begun.load(Ordering::Acquire) {
@@ -336,6 +341,7 @@ impl RuntimeServices {
         settings.environment = environment;
         settings.authorizer = authorizer;
         settings.registry = Some(registry);
+        settings.credentials = credentials;
         Ok(())
     }
     pub(crate) fn tool_budget_handle(&self) -> Arc<AtomicUsize> {
@@ -1054,7 +1060,7 @@ impl RuntimeServices {
             Some(plugins) => Some(plugins.environment(id).await?),
             None => None,
         };
-        let launch = match (&plugin, &native) {
+        let mut launch = match (&plugin, &native) {
             (Some(plugins), Some(native)) => plugins.scoped_plan(
                 id,
                 &context,
@@ -1067,6 +1073,13 @@ impl RuntimeServices {
                 .prepare_mcp_launch(&call, &context, &references)?,
         };
         if plugin.is_none() {
+            inject_credential_env(
+                settings,
+                local,
+                id,
+                &session.workspace,
+                &mut launch.environment,
+            )?;
             register_launch_secrets(settings, local, &launch.environment)?;
         }
         let summary = format!("Start configured MCP server {id}");
@@ -1143,7 +1156,7 @@ impl RuntimeServices {
             }])
             .await?;
         let outcome = async {
-            let launch = match (&plugin, &native) {
+            let mut launch = match (&plugin, &native) {
                 (Some(plugins), Some(native)) => plugins.scoped_plan(
                     id,
                     &context,
@@ -1156,6 +1169,13 @@ impl RuntimeServices {
                     .prepare_mcp_launch(&call, &context, &references)?,
             };
             if plugin.is_none() {
+                inject_credential_env(
+                    settings,
+                    local,
+                    id,
+                    &session.workspace,
+                    &mut launch.environment,
+                )?;
                 register_launch_secrets(settings, local, &launch.environment)?;
             }
             if !permit.authorize_managed(&call, &context, &launch.operation)? {
@@ -1770,6 +1790,65 @@ fn env_reference(environment: &Environment, name: &str) -> Result<String, Bounda
             )
         })
 }
+/// Resolve `env_credential_refs` into the prepared launch environment. Each
+/// destination variable gets exactly its granted reference's secret — never the
+/// host credential set. Resolution goes through the grant gate (`GrantRunKind::
+/// Tool`, the MCP server's tool scope, the run's workspace identity) so a
+/// revoked or non-granted reference fails the launch explicitly.
+fn inject_credential_env(
+    settings: &Settings,
+    local: &StdioMcpSettings,
+    server_id: &str,
+    workspace: &Path,
+    environment: &mut BTreeMap<std::ffi::OsString, std::ffi::OsString>,
+) -> Result<(), BoundaryError> {
+    if local.env_credential_refs.is_empty() {
+        return Ok(());
+    }
+    let store = settings.credentials.as_ref().ok_or_else(|| {
+        error(
+            "invalid_config",
+            "MCP env_credential_refs requires a configured credential store",
+        )
+    })?;
+    let grants = crate::credentials::GrantStore::open(store.protected_path())?;
+    let workspace_id = crate::global_memory::WorkspaceIdentity::from_path(workspace)
+        .map(|identity| identity.id)
+        .ok();
+    // The scope binds the grant to this server's identity. There is no remote
+    // endpoint, so the audience is a fixed loopback marker that can never
+    // collide with a real HTTP scope; the meaningful filter is the grant's
+    // `server_id`, `tool` and `workspace` sets.
+    let scope = crate::credentials::CredentialScope::for_mcp(
+        server_id,
+        "http://localhost/__soyo_stdio_credential__",
+        Default::default(),
+    )?;
+    for (destination, reference) in &local.env_credential_refs {
+        let resolved = store.resolve_granted_sync(
+            *reference,
+            &scope,
+            &grants,
+            crate::credentials::GrantRunKind::Tool,
+            Some(server_id),
+            workspace_id.as_deref(),
+        )?;
+        let secret = match resolved.value {
+            crate::credentials::CredentialValue::Secret(value) => value.expose().to_owned(),
+            crate::credentials::CredentialValue::OAuth(_) => {
+                return Err(error(
+                    "credential_kind",
+                    "MCP env injection requires a secret credential",
+                ));
+            }
+        };
+        environment.insert(
+            std::ffi::OsString::from(destination),
+            std::ffi::OsString::from(secret),
+        );
+    }
+    Ok(())
+}
 fn register_launch_secrets(
     settings: &Settings,
     local: &StdioMcpSettings,
@@ -1782,6 +1861,7 @@ fn register_launch_secrets(
     let values = local
         .env
         .keys()
+        .chain(local.env_credential_refs.keys())
         .map(|name| {
             environment
                 .get(std::ffi::OsStr::new(name))

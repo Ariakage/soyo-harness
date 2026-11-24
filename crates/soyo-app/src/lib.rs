@@ -149,16 +149,8 @@ fn model(
 ) -> Result<Arc<dyn Model>, BoundaryError> {
     let auth = match p.auth {
         Auth::None => Authentication::None,
-        Auth::Bearer => Authentication::Bearer(
-            config
-                .secret(p.api_key_env.as_deref().unwrap_or_default())?
-                .to_owned(),
-        ),
-        Auth::ApiKey => Authentication::ApiKey(
-            config
-                .secret(p.api_key_env.as_deref().unwrap_or_default())?
-                .to_owned(),
-        ),
+        Auth::Bearer => Authentication::Bearer(profile_api_key(config, name, p)?),
+        Auth::ApiKey => Authentication::ApiKey(profile_api_key(config, name, p)?),
     };
     let t = Arc::new(HttpTransport::new_with_environment(
         HttpConfig {
@@ -172,6 +164,57 @@ fn model(
         },
         config.environment(),
     )?);
+    /// Resolve a profile's API key: `api_key_env` reads the captured
+    /// environment; `api_key_ref` resolves through the credential store (scope
+    /// bound to `server_id = "profile.<name>"` and the exact `base_url`), so a
+    /// revoked/rotated reference fails the *next* resolve immediately.
+    fn profile_api_key(
+        config: &Config,
+        name: &str,
+        p: &Profile,
+    ) -> Result<String, BoundaryError> {
+        if let Some(reference) = &p.api_key_ref {
+            let reference = reference
+                .parse::<soyo_core::credentials::CredentialRef>()
+                .map_err(|_| {
+                    BoundaryError::new(
+                        "invalid_credential_ref",
+                        "Profile api_key_ref is not a valid credential reference",
+                    )
+                })?;
+            let scope = soyo_core::credentials::CredentialScope::for_mcp(
+                format!("profile.{name}"),
+                &p.base_url,
+                Default::default(),
+            )?;
+            let registry = Arc::new(soyo_core::credentials::SecretRegistry::default());
+            registry.register(
+                &config
+                    .secret_env_names()
+                    .iter()
+                    .map(|n| config.secret(n).map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )?;
+            let store = soyo_core::credentials::CredentialStore::open_backend(
+                config.credentials.backend,
+                &config.state_dir,
+                registry,
+            )?;
+            let resolved = store.resolve_sync(reference, &scope)?;
+            return match resolved.value {
+                soyo_core::credentials::CredentialValue::Secret(value) => {
+                    Ok(value.expose().to_owned())
+                }
+                _ => Err(BoundaryError::new(
+                    "credential_kind",
+                    "Profile api_key_ref must reference a secret credential",
+                )),
+            };
+        }
+        Ok(config
+            .secret(p.api_key_env.as_deref().unwrap_or_default())?
+            .to_owned())
+    }
     let settings = ModelSettings {
         profile: name.into(),
         model: p.model.clone(),
@@ -497,32 +540,48 @@ pub fn build_runtime_with_health(
             .extend(js_repl.read_roots.iter().cloned());
     }
     let mut private_paths = configure_host_sandbox(config, &session.workspace, &mut sandbox)?;
-    let credential_path = config.state_dir.join("credentials");
-    let credential_backed = config.mcp.servers.values().any(|server| {
+    let http_credential = |server: &soyo_core::mcp::config::McpServerSettings| {
         server.enabled
             && matches!(
                 &server.transport,
                 soyo_core::mcp::config::McpTransportSettings::Http(settings)
                     if settings.credential_ref.is_some()
             )
-    });
+    };
+    let stdio_credential = |server: &soyo_core::mcp::config::McpServerSettings| {
+        server.enabled
+            && matches!(
+                &server.transport,
+                soyo_core::mcp::config::McpTransportSettings::Stdio(settings)
+                    if !settings.env_credential_refs.is_empty()
+            )
+    };
+    let credential_backed = config.mcp.servers.values().any(http_credential);
+    let any_credential = credential_backed || config.mcp.servers.values().any(stdio_credential);
     let home = std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    let authorizer: Option<Arc<dyn soyo_core::mcp::config::McpHttpAuthorizer>> =
-        if credential_backed {
-            std::fs::create_dir_all(&config.state_dir)?;
-            let credentials = soyo_core::credentials::FileCredentialStore::open(
-                &credential_path,
-                registry.clone(),
-            )?;
-            let protected = credentials.protected_path().to_owned();
-            sandbox.protected_paths.push(protected.clone());
-            private_paths.push(protected);
-            Some(Arc::new(mcp::StoredMcpAuthorizer::new(credentials)))
-        } else {
-            None
-        };
+    // Open the store once for either credential-bearing transport. The backend
+    // follows `[credentials] backend`; the file backend is the default and the
+    // authorizer keeps using it for zero drift on existing configs.
+    let credential_store: Option<soyo_core::credentials::CredentialStore> = if any_credential {
+        std::fs::create_dir_all(&config.state_dir)?;
+        let store = soyo_core::credentials::CredentialStore::open_backend(
+            config.credentials.backend,
+            &config.state_dir,
+            registry.clone(),
+        )?;
+        let protected = store.protected_path().to_owned();
+        sandbox.protected_paths.push(protected.clone());
+        private_paths.push(protected);
+        Some(store)
+    } else {
+        None
+    };
+    let authorizer: Option<Arc<dyn soyo_core::mcp::config::McpHttpAuthorizer>> = credential_store
+        .clone()
+        .filter(|_| credential_backed)
+        .map(|store| Arc::new(mcp::StoredMcpAuthorizer::new(store)) as _);
     let outputs = Arc::new(soyo_core::output_store::OutputStore::open(
         config.data_dir.join("outputs"),
         config.output_capture.limits,
@@ -609,6 +668,7 @@ pub fn build_runtime_with_health(
             config.environment().clone(),
             authorizer,
             registry.clone(),
+            credential_store.clone(),
         )?;
     } else {
         runtime = runtime.with_secret_registry(registry.clone())?;
@@ -729,11 +789,14 @@ pub(crate) fn configure_host_sandbox(
     let legacy_secrets_env_path = home.as_ref().map(|h| h.join(".soyo/env"));
     let credential_backed = config.mcp.servers.values().any(|server| {
         server.enabled
-            && matches!(
-                &server.transport,
-                soyo_core::mcp::config::McpTransportSettings::Http(settings)
-                    if settings.credential_ref.is_some()
-            )
+            && match &server.transport {
+                soyo_core::mcp::config::McpTransportSettings::Http(settings) => {
+                    settings.credential_ref.is_some()
+                }
+                soyo_core::mcp::config::McpTransportSettings::Stdio(settings) => {
+                    !settings.env_credential_refs.is_empty()
+                }
+            }
     });
     if sandbox.backend != soyo_core::execution::BackendKind::Host {
         for path in [

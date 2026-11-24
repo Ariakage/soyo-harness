@@ -204,6 +204,43 @@ argv = ["/absolute/path/to/server", "--stdio"]
 
 HTTP 配置使用 `[mcp.servers.NAME.transport]`，设置 `type = "http"` 与完整 `endpoint`。默认要求 HTTPS。明确设置 `allow_insecure_http = true` 可选择明文测试端点。凭据通过 `bearer_env`、`headers_env` 或私有存储的 `credential_ref` 选择，`bearer_env` 与 `credential_ref` 互斥。`scopes` 绑定凭据授权范围。登录、撤销、作用域及完整示例见[MCP 使用说明](mcp.md)。
 
+## 凭据后端与授权（F-18）
+
+`[credentials]` 选择凭据存储后端并声明宿主授予；默认 `file` 保持既有 0700／0600 私有文件行为、零漂移。
+
+```toml
+[credentials]
+backend = "file"   # 默认；可选 "system"（仅 macOS 启用 security-framework feature）
+
+# 宿主授予：stdio MCP env_credential_refs 注入前必须命中的 grant
+[[credentials.grants]]
+reference = "00000000-0000-0000-0000-000000000001"  # CredentialRef UUID
+server_id = "local"
+run_kinds = ["tool"]            # 必填：tool|subagent|profile
+# workspaces = ["ws_<digest>"] # 可选：限定工作区身份
+# tools = ["some_tool"]        # 可选：限定工具名集合
+# expires_at = "2030-01-01T00:00:00Z" # 可选：RFC 3339 UTC 过期
+```
+
+- `backend = "system"` 是显式选择；当前仅在编译启用 `security-framework` feature 的 macOS 上可用，其它平台在配置加载与 `CredentialStore::open_backend` 两处都返回 `credential_backend_unavailable`、绝不静默回退到明文文件。
+- `[[credentials.grants]]` 是宿主授权，与 `soyo credentials grant` 写入的持久 grant 记录合并；`run_kinds` 必填、不得为空。重复的 grant（同 reference＋server_id＋过滤集合）在配置校验即报错。
+- `Grant` 与 `CredentialScope` 分治：scope 保持 URL 绑定（`for_mcp`/`for_browser`），grant 绑定 `{workspace identity, run kind, tool name set, expiry}`；`resolve_granted` 要求两者同时满足。
+
+### stdio MCP 受控注入
+
+stdio transport 在 `env`（宿主环境引用）之外新增 `env_credential_refs`（目标环境名→凭据引用 UUID）。注入在 `prepare_mcp_launch` 后、`ManagedProcess::spawn` 前执行：每个引用经 `resolve_granted` 走 grant 门（`GrantRunKind::Tool`＋`server_id`＋当前工作区身份 `ws_<digest>`），只把该引用对应的 secret 写入子进程环境——绝不把整套宿主凭据交给 MCP 子进程，注入值随即注册进 `SecretRegistry` 以进入运行时脱敏集。`env_credential_refs` 与 `env` 目标名不得冲突，最多 32 项。
+
+```toml
+[mcp.servers.local.transport]
+type = "stdio"
+argv = ["/absolute/path/to/server", "--stdio"]
+env_credential_refs = { SERVICE_TOKEN = "00000000-0000-0000-0000-000000000001" }
+```
+
+### 凭据管理命令
+
+`soyo credentials list|import|revoke|rotate|grant|grant-revoke|grant-list|login` 统一管理凭据，不要求启用的 MCP server（`import`/`login` 仍需一个已配置的 HTTP server 名来绑定 scope）；`soyo mcp credentials` 委托同一实现。`list` 显示当前 backend 与全部 grant。`import`/`revoke`/`rotate`/`grant`/`login` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`。`rotate` 仅适用于 secret 类凭据：原地替换 material、`metadata.revision` 自增、`CredentialRef` 保持稳定（OAuth 凭据经刷新或重新 `login` 轮换）。
+
 每个服务可设置 `[mcp.servers.NAME.limits]`。默认连接超时 20 秒，请求／目录发现超时 120 秒，单个 wire 消息和完整工具目录各 1 MiB，最多 32 页、256 个工具，结果投影 256 KiB、128 个内容块。运行时同时执行共享活跃时间与工具预算，人工确认期间暂停活跃计时，收尾独立完成。
 
 ## Web 与 Browser（DEV-079／DEV-080）

@@ -50,3 +50,16 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 tree-sitter = "=0.27.1"
 tree-sitter-bash = "=0.25.1"
+security-framework = { version = "3.7.0", optional = true, default-features = false }
+core-foundation = { version = "0.10.1", optional = true }
+security-framework-sys = { version = "2.17.0", optional = true }
+
+[features]
+## Opt-in `[credentials] backend = "system"` support on macOS via Security
+## framework. Off by default; enabling on non-macOS compiles to an explicit
+## `credential_backend_unavailable` error at open.
+security-framework = [
+    "dep:security-framework",
+    "dep:core-foundation",
+    "dep:security-framework-sys",
+]

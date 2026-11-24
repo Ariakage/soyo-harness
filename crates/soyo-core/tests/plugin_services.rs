@@ -736,6 +736,7 @@ requested=[{}]
             environment,
             None,
             self.secrets.clone(),
+            None,
         )
         .unwrap()
         .with_context_budget(ContextBudget::new(128_000, 4096, 4096))

@@ -3,10 +3,7 @@ use clap::{Args, Subcommand};
 use soyo_core::{
     config::{Config, Output},
     contract::BoundaryError,
-    credentials::{
-        CredentialRef, CredentialScope, CredentialValue, FileCredentialStore, SecretRegistry,
-        SecretValue,
-    },
+    credentials::{CredentialScope, FileCredentialStore, SecretRegistry},
     mcp::config::{HttpMcpSettings, McpTransportSettings},
 };
 use std::{
@@ -199,47 +196,31 @@ async fn perform(config: &Config, action: &McpAction) -> Result<serde_json::Valu
     let _listener = super::signals::CancellationListener::start(cancel.clone())
         .map_err(|_| failure("signal_error", "Signal handlers could not be installed"))?;
     match action {
-        McpAction::Credentials {
-            action: CredentialAction::List,
-        } => serde_json::to_value(open_store(config)?.list().await?)
-            .map_err(|_| failure("output_error", "Credential metadata could not be encoded")),
-        McpAction::Credentials {
-            action: CredentialAction::Revoke { reference },
-        } => {
-            let reference: CredentialRef = reference.parse()?;
-            let store = open_store(config)?;
-            let metadata = store
-                .list()
-                .await?
-                .into_iter()
-                .find(|record| record.reference == reference)
-                .ok_or_else(|| {
-                    failure(
-                        "invalid_credential_ref",
-                        "Credential reference was not found",
-                    )
-                })?;
-            store.revoke(reference, &metadata.scope).await?;
-            Ok(serde_json::json!({"reference":reference,"revoked":true}))
-        }
-        McpAction::Credentials {
-            action:
+        // `mcp credentials` delegates to the unified `credentials` group so both
+        // surfaces share backend selection, grant handling and audit emission.
+        McpAction::Credentials { action } => {
+            let delegated = match action {
+                CredentialAction::List => super::credentials_commands::CredentialsAction::List,
+                CredentialAction::Revoke { reference } => {
+                    super::credentials_commands::CredentialsAction::Revoke {
+                        reference: reference.clone(),
+                    }
+                }
                 CredentialAction::Import {
                     server,
                     from_env,
-                    scope: extra,
+                    scope,
                     approve_scopes,
-                },
-        } => {
-            let value = SecretValue::new(config.secret(from_env)?.to_owned())?;
-            let mut secrets = known_credentials(config)?;
-            secrets.push(value.expose().to_owned());
-            let scope = scope(config, server, extra, &secrets)?;
-            approve(&scope, *approve_scopes, &secrets, cancel.as_ref()).await?;
-            let reference = open_store(config)?
-                .create(scope, CredentialValue::Secret(value))
-                .await?;
-            Ok(serde_json::json!({"reference":reference,"server":server}))
+                } => super::credentials_commands::CredentialsAction::Import(
+                    super::credentials_commands::ImportArgs {
+                        server: server.clone(),
+                        from_env: from_env.clone(),
+                        scope: scope.clone(),
+                        approve_scopes: *approve_scopes,
+                    },
+                ),
+            };
+            super::credentials_commands::perform(config, &delegated).await
         }
         McpAction::Login(args) => {
             let secrets = known_credentials(config)?;

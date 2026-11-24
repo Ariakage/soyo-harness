@@ -5006,6 +5006,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5025,6 +5026,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cap-std",
+ "core-foundation 0.10.1",
  "diffy",
  "flate2",
  "futures",
@@ -5043,6 +5045,8 @@ dependencies = [
  "rmcp",
  "rquickjs",
  "rusqlite",
+ "security-framework",
+ "security-framework-sys",
  "semver",
  "serde",
  "serde_json",

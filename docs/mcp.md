@@ -129,15 +129,24 @@ scopes = ["files:read"]
 
 运行中的 MCP 客户端在每次新 HTTP 请求前重新解析引用。OAuth 刷新采用跨进程刷新锁，并重新核对 scope、client 与 issuer，令牌轮换持续加入共享脱敏集合。撤销使引用永久失效，旧刷新结果不能恢复该引用。需要新授权时创建新的 reference。
 
+`soyo credentials` 是统一管理入口，除 `list`/`import`/`revoke` 外新增 `rotate`（secret 类原地换值、`revision` 自增、引用不变）、`grant`/`grant-revoke`/`grant-list`（scoped 授予管理）与 `login`（不要求启用 server，但仍需一个已配置的 HTTP server 名绑定 scope）；`soyo mcp credentials` 委托同一实现。`import`/`revoke`/`rotate`/`grant`/`login` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`（0600 append-only、写前校验不含已知 secret）。
+
 ```sh
-soyo --config /path/to/config.toml mcp credentials revoke RETURNED_REFERENCE
+soyo --config /path/to/config.toml credentials list
+soyo --config /path/to/config.toml credentials revoke RETURNED_REFERENCE
+soyo --config /path/to/config.toml credentials rotate RETURNED_REFERENCE --from-env SOYO_NEW_TOKEN
+soyo --config /path/to/config.toml credentials grant RETURNED_REFERENCE \
+  --run-kind tool --server-id remote --tool fetch --expires-at 2030-01-01T00:00:00Z
+soyo --config /path/to/config.toml credentials grant-list
 ```
 
 管理命令的 stdout 返回 `schema_version = 1` 的单个 `data`／`error` JSON 对象。JSONL 模式增加 `type = "mcp.result"`。成功退出 0，需要交互或重新鉴权退出 4，需要确认退出 3，取消退出 130，配置／引用／scope 错误退出 2，普通操作失败退出 1，达到限制退出 5。人工批准提示与授权 URL 使用 stderr 或控制终端。
 
 ## 私有存储与执行边界
 
-当前凭据后端使用 state 目录下的 `credentials` 明文私有文件，默认位置为 `$XDG_STATE_HOME/soyo/credentials` 或 `~/.local/state/soyo/credentials`。目录采用 0700，记录与锁文件采用 0600，记录使用独占文件与原子替换。已有目录或文件的所有者、权限、符号链接及文件身份按私有存储约束校验。
+凭据后端由 `[credentials] backend` 选择。默认 `file` 使用 state 目录下的 `credentials` 私有文件（`$XDG_STATE_HOME/soyo/credentials` 或 `~/.local/state/soyo/credentials`）：目录 0700、记录与锁文件 0600、独占文件＋原子替换，已有目录或文件的所有者、权限、符号链接及文件身份按私有存储约束校验。`system` 为 opt-in 后端（macOS Keychain，需启用 `security-framework` feature），secret material 由系统钥匙串托管、元数据索引仍走同一文件索引，scope／grant／撤销语义跨后端一致；平台不支持时在配置加载与打开两处都返回 `credential_backend_unavailable`，绝不静默回退到明文。
+
+stdio MCP 可用 `env_credential_refs`（目标环境名→凭据引用）在启动计划后把单个 secret 注入子进程环境；注入必须命中匹配的 scoped grant（`run_kinds` 含 `tool`、server_id／工具名／工作区身份／过期时间全部满足），无适用 grant 时启动返回 `credential_grant_denied`、绝不注入整套宿主凭据。
 
 宿主默认把启动时已存在的配置、data、state、cache 与工作区 `.soyo/local` 加入原生保护集合。为活动凭据引用新建存储后，实际凭据目录也会强制加入保护集合。`host` 兼容模式在启用凭据引用或已有凭据存储目录时拒绝启动。模型使用注册后的 MCP 工具，凭据解析和最终请求注入由宿主处理。
 

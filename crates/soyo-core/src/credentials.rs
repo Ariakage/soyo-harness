@@ -1,11 +1,18 @@
-//! Host-only credential references, a private local file backend, and an MCP OAuth bridge.
-//! Values are resolved explicitly and never returned by metadata or Debug implementations.
+//! Host-only credential references, a private local file backend (default), an
+//! opt-in system backend, scoped grants, and an MCP OAuth bridge. Values are
+//! resolved explicitly and never returned by metadata or Debug implementations.
 
+mod backend;
 mod file;
+mod grants;
 mod login;
 mod oauth;
+pub mod settings;
+#[cfg(all(target_os = "macos", feature = "security-framework"))]
+mod system;
 
-pub use file::FileCredentialStore;
+pub use backend::{CredentialBackend, CredentialStore, FileCredentialStore};
+pub use grants::{CredentialGrant, GrantRunKind, GrantStore, now_rfc3339};
 pub(crate) use login::authorization_resource;
 pub(crate) use login::validate_oauth_metadata;
 pub use login::{McpOAuthLogin, OAuthLoginOptions};
@@ -63,7 +70,7 @@ pub struct CredentialScope {
 }
 
 impl CredentialScope {
-    fn validate_oauth_resource(&self, resource: &str) -> Result<String, BoundaryError> {
+    pub(crate) fn validate_oauth_resource(&self, resource: &str) -> Result<String, BoundaryError> {
         let resource = reqwest::Url::parse(resource)
             .map_err(|_| error("credential_scope", "OAuth resource is invalid"))?;
         let endpoint = reqwest::Url::parse(&self.audience)
@@ -144,7 +151,7 @@ impl CredentialScope {
         Ok(scope)
     }
 
-    fn validate(&self) -> Result<(), BoundaryError> {
+    pub(crate) fn validate(&self) -> Result<(), BoundaryError> {
         if !crate::registry::valid_server_id(&self.server_id)
             || self.audience.len() > 4096
             || self.scopes.len() > 128
@@ -221,7 +228,7 @@ impl CredentialValue {
     pub fn oauth(credentials: StoredCredentials) -> Self {
         Self::OAuth(Box::new(credentials))
     }
-    fn validate_scope(&self, scope: &CredentialScope) -> Result<(), BoundaryError> {
+    pub(crate) fn validate_scope(&self, scope: &CredentialScope) -> Result<(), BoundaryError> {
         let Self::OAuth(credentials) = self else {
             return Ok(());
         };
@@ -255,7 +262,7 @@ impl CredentialValue {
         }
         Ok(())
     }
-    fn secrets(&self) -> Result<Vec<String>, BoundaryError> {
+    pub(crate) fn secrets(&self) -> Result<Vec<String>, BoundaryError> {
         match self {
             Self::Secret(secret) => Ok(vec![secret.expose().to_owned()]),
             Self::OAuth(credentials) => {

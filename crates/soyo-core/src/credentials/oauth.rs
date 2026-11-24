@@ -1,12 +1,12 @@
-use super::{CredentialRef, CredentialScope, FileCredentialStore};
+use super::{CredentialRef, CredentialScope, CredentialStore, backend::worker_error};
 use rmcp::transport::auth::{
-    AuthError, CredentialRefreshGuard, CredentialStore, StoredCredentials,
+    AuthError, CredentialRefreshGuard, CredentialStore as SdkCredentialStore, StoredCredentials,
 };
 
 /// Resource-scoped SDK store. Refreshes use a separate cross-process lock from record I/O.
 #[derive(Clone)]
 pub struct McpCredentialStore {
-    pub(super) store: FileCredentialStore,
+    pub(super) store: CredentialStore,
     pub(super) reference: CredentialRef,
     pub(super) scope: CredentialScope,
 }
@@ -33,34 +33,40 @@ fn auth_error(error: crate::contract::BoundaryError) -> AuthError {
 }
 
 #[async_trait::async_trait]
-impl CredentialStore for McpCredentialStore {
+impl SdkCredentialStore for McpCredentialStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
         let reference = self.reference;
         let scope = self.scope.clone();
-        self.store
-            .run(move |inner| inner.load_oauth(reference, &scope))
+        let inner = self.store.inner().clone();
+        tokio::task::spawn_blocking(move || inner.index.load_oauth(reference, &scope))
             .await
+            .map_err(|_| auth_error(worker_error()))?
             .map_err(auth_error)
     }
     async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
         let reference = self.reference;
         let scope = self.scope.clone();
-        self.store
-            .run(move |inner| inner.save_oauth(reference, &scope, credentials))
-            .await
-            .map_err(auth_error)
+        let inner = self.store.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            inner.index.save_oauth(reference, &scope, credentials)
+        })
+        .await
+        .map_err(|_| auth_error(worker_error()))?
+        .map_err(auth_error)
     }
     async fn clear(&self) -> Result<(), AuthError> {
         self.store
             .revoke(self.reference, &self.scope)
             .await
             .map_err(auth_error)
+            .map(|_| ())
     }
     async fn acquire_refresh_guard(&self) -> Result<Option<CredentialRefreshGuard>, AuthError> {
         let reference = self.reference;
-        self.store
-            .run(move |inner| inner.refresh_lock(reference))
+        let inner = self.store.inner().clone();
+        tokio::task::spawn_blocking(move || inner.index.refresh_lock(reference))
             .await
+            .map_err(|_| auth_error(worker_error()))?
             .map(|guard| Some(CredentialRefreshGuard::new(guard)))
             .map_err(auth_error)
     }
@@ -71,9 +77,12 @@ impl CredentialStore for McpCredentialStore {
         let reference = self.reference;
         let scope = self.scope.clone();
         let credentials = credentials.clone();
-        self.store
-            .run(move |inner| inner.reject_oauth(reference, &scope, &credentials))
-            .await
-            .map_err(auth_error)
+        let inner = self.store.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            inner.index.reject_oauth(reference, &scope, &credentials)
+        })
+        .await
+        .map_err(|_| auth_error(worker_error()))?
+        .map_err(auth_error)
     }
 }

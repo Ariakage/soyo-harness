@@ -334,6 +334,7 @@ fn runtime_with_options(
                             ],
                             cwd: None,
                             env,
+                            env_credential_refs: BTreeMap::new(),
                         })
                     }),
                 read_only_tools: BTreeSet::from(["echo".into()]),
@@ -359,6 +360,7 @@ fn runtime_with_options(
             environment,
             None,
             Arc::new(SecretRegistry::default()),
+            None,
         )
         .unwrap();
     (runtime, store)
