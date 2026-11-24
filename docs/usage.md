@@ -233,6 +233,42 @@ soyo --config /path/to/config.toml run '...'
 - token 明文只在签发时显示一次；helper 收到的 token 会注册进脱敏集合，不进入日志或事件。
 - 传输依赖 HTTP/1.1 chunked；中间代理若终结或重写 chunked 会破坏隧道，客户端会以 `helper_protocol` 明确失败。
 
+## 远程 worker（内容寻址同步）
+
+D-113 的第三条增量：`soyo remote-worker` 在另一台机器执行已派发的任务。worker 经上一节的 HTTPS + bearer token 传输**出站**连接属主 helper，远端不需要开放入站端口；工作区输入以 `(path, sha256, size)` 清单加 blob 同步，产物只在属主侧显式 `apply` 后才会写入本地工作区。完整协议、租约语义与信任模型见[远程 worker](remote-worker.md)（D-117）。
+
+属主侧：
+
+```sh
+# 签发一次远程 token（明文只显示一次，交予 worker 机器）
+soyo --config /path/to/config.toml credentials token issue --ttl-days 30
+# 提交任务并绑定到一个稳定 worker id
+soyo --config /path/to/config.toml task submit '为仓库补齐 CHANGELOG'
+soyo --config /path/to/config.toml remote workers
+soyo --config /path/to/config.toml remote assign TASK_ID build-01
+# 查看暂存结果并显式合入
+soyo --config /path/to/config.toml remote show TASK_ID
+soyo --config /path/to/config.toml remote apply TASK_ID [--path src/lib.rs]
+```
+
+远端机器（需要自己的模型配置、凭据与原生 sandbox；可与属主使用不同 profile）：
+
+```sh
+export SOYO_REMOTE_TOKEN=soyo_rt_...
+export SOYO_REMOTE_CA=/etc/soyo/server.crt   # 自签或私有 CA 时
+soyo --config /path/to/worker.toml --data-dir /var/lib/soyo-worker \
+  remote-worker --endpoint https://helper.example:8443 \
+  --workspace ~/soyo-worker --worker-id build-01
+```
+
+语义与边界：
+
+- `remote assign` 只接受 `queued` 任务，且拒绝 `Manual Approval`（远端没有交互式审批人）；worker 以自己的模式与权限执行任务，token 只证明可以连接，不改变权限或 sandbox。
+- worker 每 10 秒心跳续租。未确认启动的派发在租约过期后回到 `queued`（无副作用，可安全重派）；已确认启动的尝试过期后进入 `waiting_unknown`，只由 `soyo task resolve TASK_ID --retry` 显式重排，绝不自动重放。
+- 同步上限：10000 文件／64 MiB 总量／单文件 16 MiB、改动 256 文件；遵循 `.gitignore`，不传输 `.git`、符号链接与特殊文件。超限明确失败。
+- 结果只入库：`remote apply` 做三方检查，本地文件在派发后被改动即整体拒绝（退出码 2）并列出冲突；重复 apply 幂等。
+- blob 与派发快照存放在属主 `<data_dir>/remote/`，首版没有自动回收；worker 注册表在 helper 进程内，daemon 重启后 worker 重连即恢复。
+
 ## 项目上下文、持久化与用量
 
 Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工作区同名项优先；加载范围及信任边界见[项目上下文](project-context.md)。`--preferences-file PATH`、`--memory-file PATH` 可显式提供本次调用的 UTF-8 偏好和记忆文本，各限 64 KiB；内容会发送给模型，不会自动发现或作为持久记忆维护。文件含当前配置的已知凭据时，在模型请求前拒绝，检测包括完整 JSON、Markdown 围栏和普通正文中的嵌套 JSON 转义与 Unicode 转义。检测视图最多解码256层，累计扫描上限64 MiB，超限沿用失败关闭边界。通过检测的个人文本按原文发送给模型。

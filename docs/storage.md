@@ -22,6 +22,10 @@ N4 Goal 使用独立 `data_dir/goals/goals.sqlite3`，不改变 Session 数据�
 
 `goals`、`leases`、`workspace_leases` 和 `dispatches` 分别保存目标 revision、Goal worker 租约、同工作区排他租约及 Step 启动 intent。状态改变、Step intent、Run 关联、usage 与 evidence 发布在事务中完成；revision 保存采用 CAS。证据必须匹配验收类型、路径和摘要，文件证据在最终完成前重验，失效时移除旧记录。`token_usage_unknown` 使用 serde 默认值兼容早期记录；成功模型调用缺少完整 token usage 时停止新 Step dispatch。worker 只恢复已过期租约下的 `intent/running` dispatch，终态未知时标记 `unknown_side_effect`，不会重放。数据目录身份、链接拒绝、凭据拒绝、并发冲突、预算与恢复矩阵见[N4验收](n4-validation.md)。
 
+## 远程 worker 同步存储
+
+F-13 远程 worker（D-117）在 `data_dir/remote/` 下维护内容寻址缓存：`blobs/<sha 前两位>/<sha>` 保存 0600 的工作区与产物 blob（写入、分块提交与整读均校验 SHA-256），`manifests/<task_id>.json` 保存派发时的 `(path, sha256, size, executable)` 快照并作为显式 apply 的三方基准。目录为 0700、拒绝符号链接；任务绑定与 worker 上报结果仍保存在 F-08 的 `tasks/tasks.sqlite3`（`TaskRecord.remote_worker` / `remote_result`），不新增表。首版没有自动回收，清理边界见[远程 worker](remote-worker.md)。
+
 ## 只读导出快照
 
 DEV-043 提供 `SqliteStore::read_snapshot`。稳定校验数据库与WAL后在内存image的单只读事务中取得所有集合，读取源文件时使用文件身份与限额校验，查询期间观察取消和期限。实际 MAX(change_log.seq) 与 MAX(events.seq) 作为持久水位，预留事件空洞保持原状。旧 schema 返回显式迁移提示，源文件及 SQLite 附加文件保持只读。

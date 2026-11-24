@@ -29,7 +29,7 @@
 
 实现任务开始时读取[开发进度](docs/progress.md)，按对应版本的任务依赖选择工作。MVP 定义见[实施任务](docs/implementation-plan.md)，后续任务见[后续开发计划](docs/post-mvp-plan.md)。任务完成后同步实际状态与验证证据，完成状态依据实际验收结果维护。
 
-常用文档按主题定位：架构与运行时（[架构](docs/architecture.md)、[运行时](docs/runtime.md)、[存储](docs/storage.md)）；使用与配置（[使用指南](docs/usage.md)、[配置](docs/configuration.md)）；界面（[TUI](docs/tui.md)、[桌面端](docs/desktop.md)、[UI/UX 设计规范](docs/design/desktop-ui.md)）；能力专项（[记忆](docs/memory.md)、[Goal](docs/goal.md)、[会话导出](docs/session-export.md)、[可观测性](docs/observability.md)、[工具注册表](docs/tool-registry.md)、[项目上下文](docs/project-context.md)、[模型协议](docs/model-protocols.md)、[命令分析](docs/command-analysis.md)）；提示词（[提示词定制](docs/prompts.md)）；审查、发行与证据（`docs/reviews/`、`docs/releases/`、`docs/reports/`、`docs/schemas/`）。
+常用文档按主题定位：架构与运行时（[架构](docs/architecture.md)、[运行时](docs/runtime.md)、[存储](docs/storage.md)）；使用与配置（[使用指南](docs/usage.md)、[配置](docs/configuration.md)）；界面（[TUI](docs/tui.md)、[桌面端](docs/desktop.md)、[UI/UX 设计规范](docs/design/desktop-ui.md)）；能力专项（[记忆](docs/memory.md)、[Goal](docs/goal.md)、[会话导出](docs/session-export.md)、[可观测性](docs/observability.md)、[远程 worker](docs/remote-worker.md)、[工具注册表](docs/tool-registry.md)、[项目上下文](docs/project-context.md)、[模型协议](docs/model-protocols.md)、[命令分析](docs/command-analysis.md)）；提示词（[提示词定制](docs/prompts.md)）；审查、发行与证据（`docs/reviews/`、`docs/releases/`、`docs/reports/`、`docs/schemas/`）。
 
 本版 MVP 没有需要重新选择的产品阻塞项。按基线推进，普通内部实现细节自行决定；不要把已确认的决定重新拆成偏好问题询问。
 

@@ -265,7 +265,7 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 
 **价值**：让其他程序能够使用 Soyo，并将执行位置从当前终端扩展出去。
 
-**设计已确认（D-105~D-108，方向定案）**：四个关键决策已拍板——(1) SDK 为 socket 客户端形态，新建 `soyo-sdk` crate 收敛在 `soyo-ipc::HelperClient` 之上，不做进程内嵌入（不冻结内部 Rust API）；(2) 稳定面冻结 wire 契约（`PROTOCOL_VERSION` + 对外 method 名 + DTO JSON schema），首批公布约 15 个 run/session/task 方法，SDK Rust 类型签名在 0.x 内仍可演进；(3) 客户端断线语义为「断线≠取消」——run 归 session 不归 connection，SDK/服务面提供显式 attach/detach 与按 session 重订阅事件；(4) 对外服务面先做 stdio 版 Soyo-as-MCP-Server（`rmcp` server 侧复用 `HostService`，最小工具面 run/status/cancel，不绕开原权限与 sandbox）。远程 worker、工作区／产物同步、HTTP 传输与鉴权模型仍为待实现增量，未决项见下文。
+**设计已确认（D-105~D-108，方向定案）**：四个关键决策已拍板——(1) SDK 为 socket 客户端形态，新建 `soyo-sdk` crate 收敛在 `soyo-ipc::HelperClient` 之上，不做进程内嵌入（不冻结内部 Rust API）；(2) 稳定面冻结 wire 契约（`PROTOCOL_VERSION` + 对外 method 名 + DTO JSON schema），首批公布约 15 个 run/session/task 方法，SDK Rust 类型签名在 0.x 内仍可演进；(3) 客户端断线语义为「断线≠取消」——run 归 session 不归 connection，SDK/服务面提供显式 attach/detach 与按 session 重订阅事件；(4) 对外服务面先做 stdio 版 Soyo-as-MCP-Server（`rmcp` server 侧复用 `HostService`，最小工具面 run/status/cancel，不绕开原权限与 sandbox）。HTTP 传输／鉴权与远程 worker＋工作区同步已按 D-113 递进交付（D-116、D-117）。
 
 - 先收敛嵌入式 SDK 的运行、控制、事件、错误与兼容策略，区别于 MVP 开发期可调整的内部 Rust API（D-105：socket 客户端 SDK；D-106：冻结 wire 契约）。
 - 再做本地服务与任务查询，支持客户端断开后可理解的任务生命周期（D-107：断线≠取消 + attach/detach）。
@@ -276,7 +276,7 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 
 **已确认远程增量（D-113，方向定案）**：三条路径全部采纳、按递进交付——(a) SSH 隧道转发（helper 可配置 TCP 监听 + 文档化 `ssh -L` 用法，零新协议）；(b) HTTP(S)+bearer token transport（`[remote]` opt-in 端点、token 经 F-18 `CredentialStore` 签发为 `run_kinds = "remote"` grant、同一 wire 契约经 HTTPS 承载）；(c) 远程 worker+内容寻址同步（`soyo remote-worker` 独立进程，依赖 D-110 持久子 Agent 的 TaskStore 通道）。三条路径共享「断线≠取消」语义。
 
-> **实现状态（D-113 (a)、(b)）**：(a) 已落地——`soyo helper --listen unix[:<path>]|tcp:<host>:<port>`（TCP 仅回环）、`HelperClient` 对应拨号与文档化 `ssh -L` 用法，wire 契约不变。(b) 已落地——`[remote]` opt-in 监听（非回环强制 TLS，回环允许纯 HTTP 测试）、`soyo credentials token issue` 以 SHA-256 摘要 + `run_kinds = ["remote"]` grant 签发一次性 token、撤销/过期 fail closed、认证事件写脱敏审计、`HelperClient` 经 `https://` 拨号并把同一 NDJSON 会话承载在单条长连接 `POST /rpc` 的 chunked 双向流上；本地端点与远程监听并行服务。远程 worker 与工作区/产物同步 (c) 仍为待实现增量。
+> **实现状态（D-113 (a)、(b)、(c)）**：(a) 已落地——`soyo helper --listen unix[:<path>]|tcp:<host>:<port>`（TCP 仅回环）、`HelperClient` 对应拨号与文档化 `ssh -L` 用法，wire 契约不变。(b) 已落地——`[remote]` opt-in 监听（非回环强制 TLS，回环允许纯 HTTP 测试）、`soyo credentials token issue` 以 SHA-256 摘要 + `run_kinds = ["remote"]` grant 签发一次性 token、撤销/过期 fail closed、认证事件写脱敏审计、`HelperClient` 经 `https://` 拨号并把同一 NDJSON 会话承载在单条长连接 `POST /rpc` 的 chunked 双向流上；本地端点与远程监听并行服务。(c) 已落地——`soyo remote-worker` 出站连接属主 helper（复用同一 bearer token 与 NDJSON 帧），复用 `task_*` 为唯一任务真相并以内部 `remote_*` 方法完成注册、claim/租约、启动确认、心跳、进度、分块 blob 往返、结果接受与显式三方 apply；未确认启动的 intent 过期回 `queued`，已确认启动过期进入 `waiting_unknown` 且不自动重放。实现决策见 D-117，设计与限制见[远程 worker](remote-worker.md)。
 
 验收：一个外部程序能通过 SDK／服务执行和取消任务，断连、重连及远端失败不会丢失状态或重复副作用。
 
