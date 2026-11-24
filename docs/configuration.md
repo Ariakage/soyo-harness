@@ -223,7 +223,7 @@ backend = "file"   # 默认；可选 "system"（仅 macOS 启用 security-framew
 [[credentials.grants]]
 reference = "00000000-0000-0000-0000-000000000001"  # CredentialRef UUID
 server_id = "local"
-run_kinds = ["tool"]            # 必填：tool|subagent|profile
+run_kinds = ["tool"]            # 必填：tool|subagent|profile|remote
 # workspaces = ["ws_<digest>"] # 可选：限定工作区身份
 # tools = ["some_tool"]        # 可选：限定工具名集合
 # expires_at = "2030-01-01T00:00:00Z" # 可选：RFC 3339 UTC 过期
@@ -246,7 +246,7 @@ env_credential_refs = { SERVICE_TOKEN = "00000000-0000-0000-0000-000000000001" }
 
 ### 凭据管理命令
 
-`soyo credentials list|import|revoke|rotate|grant|grant-revoke|grant-list|login` 统一管理凭据，不要求启用的 MCP server（`import`/`login` 仍需一个已配置的 HTTP server 名来绑定 scope）；`soyo mcp credentials` 委托同一实现。`list` 显示当前 backend 与全部 grant。`import`/`revoke`/`rotate`/`grant`/`login` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`。`rotate` 仅适用于 secret 类凭据：原地替换 material、`metadata.revision` 自增、`CredentialRef` 保持稳定（OAuth 凭据经刷新或重新 `login` 轮换）。
+`soyo credentials list|import|revoke|rotate|grant|grant-revoke|grant-list|token|login` 统一管理凭据，不要求启用的 MCP server（`import`/`login` 仍需一个已配置的 HTTP server 名来绑定 scope）；`token issue` 为远程 helper 签发 bearer token（见下文 `[remote]`）；`soyo mcp credentials` 委托同一实现。`list` 显示当前 backend 与全部 grant。`import`/`revoke`/`rotate`/`grant`/`login` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`。`rotate` 仅适用于 secret 类凭据：原地替换 material、`metadata.revision` 自增、`CredentialRef` 保持稳定（OAuth 凭据经刷新或重新 `login` 轮换）。
 
 每个服务可设置 `[mcp.servers.NAME.limits]`。默认连接超时 20 秒，请求／目录发现超时 120 秒，单个 wire 消息和完整工具目录各 1 MiB，最多 32 页、256 个工具，结果投影 256 KiB、128 个内容块。运行时同时执行共享活跃时间与工具预算，人工确认期间暂停活跃计时，收尾独立完成。
 
@@ -635,7 +635,40 @@ listen = "tcp:127.0.0.1:7100"
 | `tcp:<host>:<port>` | 仅接受回环地址（`127.0.0.1`、`::1`、`localhost`）；其他地址在绑定或拨号时以 `invalid_config` 拒绝。端口 `0` 由系统分配，helper 启动时在标准错误打印实际端口 |
 | `host:port` | 省略 `tcp:` 的简写（D-113 的 `--listen 127.0.0.1:7100` 形式），含义同上 |
 
-优先级：`soyo helper --listen` > 环境变量 `SOYO_HELPER_LISTEN` > `[helper] listen` > 默认 Unix socket。该值在客户端连接与 helper 绑定时解析，`config check` 不单独解析端点语法；端点不在默认 Unix socket 时，客户端解析到 `tcp:` 只拨号、不 spawn helper，`unix:` 仍保留私目录与对端 uid 校验。TCP 传输当前没有 TLS／令牌认证（D-113 第二增量），使用边界与 `ssh -L` 配方见[使用指南](usage.md)。
+优先级：`soyo helper --listen` > 环境变量 `SOYO_HELPER_LISTEN` > `[helper] listen` > 默认 Unix socket。该值在客户端连接与 helper 绑定时解析，`config check` 不单独解析端点语法；端点不在默认 Unix socket 时，客户端解析到 `tcp:` 只拨号、不 spawn helper，`unix:` 仍保留私目录与对端 uid 校验。TCP 传输本身没有 TLS／令牌认证，需要认证时使用下面的 `[remote]`；使用边界与 `ssh -L` 配方见[使用指南](usage.md)。
+
+## 远程监听与客户端（F-13／D-113 (b)）
+
+`[remote]` 默认关闭（`enabled = false`），缺少该表时 helper 行为与以前完全一致（零漂移）。开启后 helper 在既有本地端点之外再绑定一个 HTTP(S) 监听，用 bearer token 认证远程客户端；同一 NDJSON wire 契约经单条长连接 `POST /rpc` 承载，请求体与响应体都是 chunked 帧流（方法与边界见[使用指南](usage.md)）。
+
+```toml
+[remote]
+enabled = false
+bind = "127.0.0.1:8443"
+token_ttl_days = 30
+[remote.tls]
+cert_path = "/etc/soyo/server.crt"
+key_path = "/etc/soyo/server.key"
+
+[remote.client]
+endpoint = "https://helper.example:8443"
+token_env = "MY_REMOTE_TOKEN"
+ca_path = "/etc/soyo/ca.pem"
+```
+
+| 键 | 语义 |
+| --- | --- |
+| `enabled` | 是否绑定远程监听；默认 `false` |
+| `bind` | `<ip>:<port>`；`enabled = true` 时必填。端口 `0` 由系统分配，helper 在标准错误打印实际地址 |
+| `token_ttl_days` | `soyo credentials token issue` 的默认 token 生命周期，1..=365，默认 30 |
+| `[remote.tls]` | `cert_path` 与 `key_path`（PEM）。非回环 `bind` 必须配置，否则配置加载即 `invalid_config`；回环允许纯 HTTP，仅用于本机测试 |
+| `[remote.client] endpoint` | 客户端拨号的 `http://`（仅回环）或 `https://` 端点，优先于 `[helper] listen` |
+| `[remote.client] token_env` | 保存 bearer token 的环境变量名；`SOYO_REMOTE_TOKEN` 优先 |
+| `[remote.client] ca_path` | 显式根证书（自签／私有 CA）；`SOYO_REMOTE_CA` 优先，缺省用平台根证书 |
+
+`enabled = false` 时除字段类型与 `token_ttl_days` 范围外不做监听相关校验，因此预写一段禁用配置不会改变现有行为。远程监听绑定失败会让 helper 启动失败（不静默降级为仅本地）；远程端点只拨号，绝不 spawn helper。
+
+远程 token 由凭据层签发：`soyo credentials token issue [--endpoint URL] [--ttl-days N]` 输出一次明文，持久化的是 SHA-256 摘要与一条 `run_kinds = ["remote"]`、带同一过期时间的 grant；`soyo credentials revoke` 同时删除摘要与 grant。撤销后的 token 表现为未知 token（401），过期 grant 返回 `credential_grant_denied`，两者都 fail closed；每次认证成败写入 `<credentials>/audit.log` 脱敏事件。
 
 ## Goal 自动推进链（F-20）
 

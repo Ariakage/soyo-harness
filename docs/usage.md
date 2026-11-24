@@ -127,7 +127,7 @@ soyo --config /path/to/config.toml module vm enable
 
 ## 远程接入（SSH 隧道）
 
-`soyo helper` 默认只监听当前配置指纹对应的 Unix socket。远程场景可显式让 helper 监听回环 TCP 端口，再经 SSH 本地转发接入；NDJSON 帧格式、协议版本握手与全部已发布方法保持不变，SSH 隧道只替换承载的字节流。该路径不引入 TLS 或令牌认证（见[决策记录](decisions.md) D-113；HTTP+Token 属于后续增量）。
+`soyo helper` 默认只监听当前配置指纹对应的 Unix socket。远程场景可显式让 helper 监听回环 TCP 端口，再经 SSH 本地转发接入；NDJSON 帧格式、协议版本握手与全部已发布方法保持不变，SSH 隧道只替换承载的字节流。该路径不引入 TLS 或令牌认证，访问控制完全由 SSH 承担；需要 helper 自己认证远程客户端时使用下一节的 HTTP(S) + bearer token 传输（见[决策记录](decisions.md) D-113）。
 
 在运行 helper 的机器上（示例端口 7100）：
 
@@ -149,7 +149,7 @@ SOYO_HELPER_LISTEN=tcp:127.0.0.1:7100 soyo --config /path/to/config.toml run '..
 限制与安全说明：
 
 - TCP 监听仅限回环地址；隧道远端流量经 `ssh -L` 到达 helper 时呈现为回环连接。不要通过端口转发或防火墙把该端口暴露到非回环地址。
-- 当前 TCP 传输没有认证层：能连接到该回环端口的进程，其权限等同本机用户。在 D-113 第二增量（HTTPS + bearer token）落地前，仅应面向自己的工作站使用。
+- 当前 TCP 传输没有认证层：能连接到该回环端口的进程，其权限等同本机用户。需要认证时改用 HTTP(S) + bearer token 传输（见下节）。
 - helper 仍按配置指纹独占（flock）：同一配置的 Unix 与 TCP 实例不能同时运行；`soyo kill` 在客户端解析到同一端点时照常生效。
 
 ## 项目上下文、持久化与用量
@@ -171,6 +171,68 @@ Soyo 发现用户级及工作区的约定项目指令与 Skill 元数据，工�
 - **会话正在使用、配置改变或恢复失败**：先确认是否有另一 Soyo 进程持有会话锁；核对 profile 和工作区。不要删除数据库或 WAL 来强行解锁；涉及损坏时先保留原文件及备份，再调查错误。
 - **日志不可写**：检查状态目录权限与剩余空间；日志路径不应指向不安全的符号链接。
 - **环境与依赖自检（`soyo doctor`）**：运行 `soyo doctor` 可离线非破坏地检查当前操作系统／架构、`execution::probe_host_environment` 原生沙箱（Seatbelt／Bubblewrap／socat）、配置文件与模型 profile、`.soyo`/`.saya` 与 XDG 私有目录权限（拒绝符号链接与过宽权限）、`git`、`js_repl`、启用状态 LSP（含 `rust-analyzer`）及明确平台支持矩阵（含各目标平台定制遮蔽 `headless_shell` 分发覆盖：仅 `linux-arm64` 已分发，`linux-x86_64` 待构建，macOS 双架构因引擎为 Linux ELF 显式不覆盖）；支持 `--output text|json|jsonl` 与 `--strict`（将告警或未支持项记为退出码 1），输出经过 `SecretRegistry` 脱敏：
+## 远程接入（HTTP(S) + bearer token）
+
+D-113 的第二条增量：helper 额外暴露一个 opt-in 的 HTTP(S) 监听，同一条 NDJSON wire 契约（`PROTOCOL_VERSION`、已发布方法、事件流、取消帧）原样承载在一条长连接 `POST /rpc` 里。请求体是客户端帧流、响应体是服务端帧流，两端均为 `Transfer-Encoding: chunked`，因此流式事件、请求多路复用与「断线≠取消」语义不变——关闭连接不会取消 Run，重连后按 session 重新订阅。本地 Unix socket / TCP 端点继续可用。
+
+### 服务端（helper 主机）
+
+```toml
+[remote]
+enabled = true
+bind = "0.0.0.0:8443"       # 或 127.0.0.1:8443
+token_ttl_days = 30          # 1..=365
+[remote.tls]
+cert_path = "/etc/soyo/server.crt"
+key_path  = "/etc/soyo/server.key"
+```
+
+- 默认 `enabled = false`；没有 `[remote]` 时行为与以前完全一致（零漂移）。
+- 非回环 `bind` 必须配置 `[remote.tls]`（证书与私钥 PEM），否则配置加载即 `invalid_config`；回环地址允许纯 HTTP，仅用于本机测试，helper 启动时在标准错误打印实际监听地址与 scheme。
+- 启用后 helper 同时服务本地端点与远程监听；远程绑定失败会让 helper 启动失败，不会静默降级为仅本地。
+- 自签证书可用：客户端通过 `[remote.client] ca_path` 或 `SOYO_REMOTE_CA` 显式信任该根证书。
+
+### 签发与撤销 token（helper 主机）
+
+```sh
+soyo --config /path/to/config.toml credentials token issue --ttl-days 30
+```
+
+输出一次 `token`（`soyo_rt_…`）、`reference`、`grant_id`、`expires_at` 与 `endpoint`。token 是 256-bit 随机值，凭据层只保存其 SHA-256 摘要（作为 `Secret` 记录的 material）和一条 `run_kinds = ["remote"]`、带同一过期时间的 grant；明文不落盘、不写日志。`--endpoint` 默认取 `[remote] bind`（配置了 TLS 用 `https`，否则 `http`）。撤销走既有路径：
+
+```sh
+soyo --config /path/to/config.toml credentials revoke <reference>
+```
+
+撤销写入 tombstone、删除摘要 material 并删除同名 grant，旧 token 立即失效（之后表现为未知 token，返回 401）。过期由 grant 的 `expires_at` 判定，同样 fail closed。每次远程认证成功或失败都会向 `<credentials>/audit.log` 追加一行脱敏 `credential.event`（`remote_auth_ok`／`remote_auth_denied`，含 peer 与原因码，绝不含 token）。
+
+### 客户端
+
+```toml
+[remote.client]
+endpoint = "https://helper.example:8443"
+token_env = "MY_REMOTE_TOKEN"
+ca_path = "/etc/soyo/server.crt"   # 自签或私有 CA 时
+```
+
+或者不写配置，直接用环境变量：
+
+```sh
+SOYO_HELPER_LISTEN=https://helper.example:8443 \
+SOYO_REMOTE_TOKEN=soyo_rt_... \
+SOYO_REMOTE_CA=/etc/soyo/server.crt \
+soyo --config /path/to/config.toml run '...'
+```
+
+解析顺序：`SOYO_HELPER_LISTEN` > `[remote.client] endpoint` > `[helper] listen` > 默认 Unix socket；token 取 `SOYO_REMOTE_TOKEN`，否则取 `token_env` 命名的环境变量；CA 取 `SOYO_REMOTE_CA`，否则 `[remote.client] ca_path`，都未设置时使用平台根证书。客户端未配置 token 是 `invalid_config`；服务端拒绝（未知／撤销／过期）是 `helper_unauthorized`；连接或 TLS 失败是 `helper_unavailable`；响应不是 chunked 隧道时是 `helper_protocol`。远程端点只拨号，绝不 spawn helper，`restart` 也会拒绝（远程 daemon 只能在其主机上重启）。
+
+### 边界
+
+- 非回环端点强制 TLS；`http://` 只接受回环地址。
+- token 只授予「可以连上这个 helper」这一件事；连上后的权限仍由该 helper 的权限模式、sandbox 与预授权决定，远程 token 不是提权通道。
+- token 明文只在签发时显示一次；helper 收到的 token 会注册进脱敏集合，不进入日志或事件。
+- 传输依赖 HTTP/1.1 chunked；中间代理若终结或重写 chunked 会破坏隧道，客户端会以 `helper_protocol` 明确失败。
+
 
 ```sh
 ./target/release/soyo --config "$config_path" doctor

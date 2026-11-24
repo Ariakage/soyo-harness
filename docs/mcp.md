@@ -143,7 +143,7 @@ scopes = ["files:read"]
 
 运行中的 MCP 客户端在每次新 HTTP 请求前重新解析引用。OAuth 刷新采用跨进程刷新锁，并重新核对 scope、client 与 issuer，令牌轮换持续加入共享脱敏集合。撤销使引用永久失效，旧刷新结果不能恢复该引用。需要新授权时创建新的 reference。
 
-`soyo credentials` 是统一管理入口，除 `list`/`import`/`revoke` 外新增 `rotate`（secret 类原地换值、`revision` 自增、引用不变）、`grant`/`grant-revoke`/`grant-list`（scoped 授予管理）与 `login`（不要求启用 server，但仍需一个已配置的 HTTP server 名绑定 scope）；`soyo mcp credentials` 委托同一实现。`import`/`revoke`/`rotate`/`grant`/`login` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`（0600 append-only、写前校验不含已知 secret）。
+`soyo credentials` 是统一管理入口，除 `list`/`import`/`revoke` 外新增 `token issue`（为远程 helper 签发一次性显示的 bearer token，只持久化 SHA-256 摘要与 `run_kinds = ["remote"]` grant，撤销走同一 `revoke` 路径）、`rotate`（secret 类原地换值、`revision` 自增、引用不变）、`grant`/`grant-revoke`/`grant-list`（scoped 授予管理）与 `login`（不要求启用 server，但仍需一个已配置的 HTTP server 名绑定 scope）；`soyo mcp credentials` 委托同一实现。`import`/`revoke`/`rotate`/`grant`/`login`/`token issue` 各写一行脱敏 `credential.event` 审计到 `<credentials>/audit.log`（0600 append-only、写前校验不含已知 secret）。
 
 ```sh
 soyo --config /path/to/config.toml credentials list

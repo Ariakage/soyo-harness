@@ -276,6 +276,8 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 
 **已确认远程增量（D-113，方向定案）**：三条路径全部采纳、按递进交付——(a) SSH 隧道转发（helper 可配置 TCP 监听 + 文档化 `ssh -L` 用法，零新协议）；(b) HTTP(S)+bearer token transport（`[remote]` opt-in 端点、token 经 F-18 `CredentialStore` 签发为 `run_kinds = "remote"` grant、同一 wire 契约经 HTTPS 承载）；(c) 远程 worker+内容寻址同步（`soyo remote-worker` 独立进程，依赖 D-110 持久子 Agent 的 TaskStore 通道）。三条路径共享「断线≠取消」语义。
 
+> **实现状态（D-113 (a)、(b)）**：(a) 已落地——`soyo helper --listen unix[:<path>]|tcp:<host>:<port>`（TCP 仅回环）、`HelperClient` 对应拨号与文档化 `ssh -L` 用法，wire 契约不变。(b) 已落地——`[remote]` opt-in 监听（非回环强制 TLS，回环允许纯 HTTP 测试）、`soyo credentials token issue` 以 SHA-256 摘要 + `run_kinds = ["remote"]` grant 签发一次性 token、撤销/过期 fail closed、认证事件写脱敏审计、`HelperClient` 经 `https://` 拨号并把同一 NDJSON 会话承载在单条长连接 `POST /rpc` 的 chunked 双向流上；本地端点与远程监听并行服务。远程 worker 与工作区/产物同步 (c) 仍为待实现增量。
+
 验收：一个外部程序能通过 SDK／服务执行和取消任务，断连、重连及远端失败不会丢失状态或重复副作用。
 
 ## F-14 TUI 与 GUI

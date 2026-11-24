@@ -214,4 +214,21 @@ enabled = true
 # extensions = ["rs"]
 # root_markers = ["Cargo.toml"]
 
-
+# Opt-in authenticated HTTP(S) helper transport (`F-13` D-113 (b)).
+# Disabled by default: without this table the helper keeps its Unix socket /
+# loopback TCP endpoint and nothing changes. A non-loopback `bind` requires
+# `[remote.tls]`; loopback may run plain HTTP for local testing. Tokens are
+# issued on the helper host with `soyo credentials token issue`.
+# [remote]
+# enabled = false
+# bind = "127.0.0.1:8443"
+# token_ttl_days = 30
+#
+# [remote.tls]
+# cert_path = "/etc/soyo/server.crt"
+# key_path = "/etc/soyo/server.key"
+#
+# [remote.client]
+# endpoint = "https://helper.example:8443"
+# token_env = "MY_REMOTE_TOKEN"
+# ca_path = "/etc/soyo/ca.pem"
