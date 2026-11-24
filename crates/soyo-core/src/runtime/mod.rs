@@ -3347,6 +3347,9 @@ impl AgentRuntime {
         };
         match authorization {
             Authorization::Permit(permit) => {
+                // Opt-in pre-write checkpoint (`F-05`): capture the exact path
+                // a mutating file tool is about to touch. Never blocks the call.
+                self.auto_capture(session, call).await;
                 self.execute_authorized_tool(session, call, &context, permit, progress)
                     .await
             }

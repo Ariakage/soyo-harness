@@ -1204,6 +1204,9 @@ pub struct RecoverySummary {
     pub interrupted_runs: usize,
     pub unknown_tools: usize,
     pub closed_calls: usize,
+    /// Checkpoint restore journals observed while resuming (`F-05`); their
+    /// outcomes are surfaced to the user and never replayed.
+    pub checkpoint_journals: usize,
 }
 /// Persisted background outcome; these jobs are never restarted on resume.
 #[derive(Debug, Serialize)]

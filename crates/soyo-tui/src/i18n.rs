@@ -72,6 +72,9 @@ pub(crate) mod command {
     pub const TASK_CANCEL: &str = "Cancel a non-terminal Task";
     pub const TASK_RESOLVE: &str = "Resolve a Task waiting on an unknown Run outcome";
     pub const TASK_RECOVER: &str = "Recover in-flight Tasks whose worker lease expired";
+    pub const CHECKPOINT: &str =
+        "List, diff, capture and restore per-session workspace checkpoints";
+    pub const CHECKPOINTS: &str = "List this session's checkpoints";
     pub const THINKING_LEVEL: &str = "Set thinking effort for subsequent requests";
     pub const AUTOCOMPACT_AUTO: &str = "Restore the configured percentage trigger";
     pub const AUTOCOMPACT_OFF: &str = "Disable automatic compaction";
@@ -921,6 +924,70 @@ pub(crate) mod memory {
     }
     pub fn outcome(value: &str) -> String {
         format!("Memory administration outcome — {value}")
+    }
+    pub fn error(value: &str) -> String {
+        format!("Error · {value}")
+    }
+}
+
+/// Checkpoint administration (`F-05`). English-only strings, mirroring the
+/// memory modal; the desktop and site i18n sources carry the other languages.
+pub(crate) mod checkpoint {
+    pub const TITLE: &str = " Checkpoints · per-session workspace snapshots ";
+    pub const HELP: &str = "list · diff · create · accept · restore · recover · next · review";
+    pub const BUSY: &str = "Working · Ctrl+C cancels; waits for the recorded outcome";
+    pub const CONFIRM: &str =
+        "Review the staged operation · confirm OP_ID applies it once · reject discards";
+    pub const COMMANDS: &str =
+        "Enter command · PgUp/PgDn scroll · next continues list · Esc closes · help";
+    pub const DRAFT_RETAINED: &str =
+        "Checkpoints are separate from Agent tool approvals. Message draft is retained.";
+    pub const VIEW_TRUNCATED: &str = "[checkpoint view display truncated]";
+    pub const PENDING_REQUEST: &str =
+        "Answer or dismiss the current Agent request before opening checkpoints";
+    pub const UI_ACTIVE_WAIT: &str = "A UI operation is active; wait for it to finish";
+    pub const UI_ACTIVE_CANCEL: &str = "A UI operation is active; wait or cancel it";
+    pub const WORKER_FAILED: &str = "Checkpoint administration worker failed";
+    pub const COMMAND_TOO_LONG: &str = "Checkpoint command exceeds its byte limit";
+    pub const OPERATION_ACTIVE: &str =
+        "Checkpoint operation is still active; Ctrl+C cancels and waits for its outcome";
+    pub const PENDING_DISCARDED: &str = "Pending checkpoint operation discarded.";
+    pub const PREPARE_BEFORE_REVIEW: &str = "Prepare an operation before review";
+    pub const PUBLICATION_IDLE: &str = "Checkpoint operations require an idle runtime";
+    pub const PREPARE_BEFORE_CONFIRM: &str = "Prepare and review an operation before confirmation";
+    pub const CONFIRMATION_MISMATCH: &str =
+        "Confirmation must match the displayed operation ID";
+    pub const REVIEW_EXPIRED: &str = "Checkpoint review expired";
+    pub const CHANGE_IDLE: &str =
+        "Checkpoint captures and restores can be prepared and confirmed while idle";
+    pub const NO_NEXT_PAGE: &str = "No further checkpoint page is available";
+    pub const UNKNOWN_COMMAND: &str = "Unknown checkpoint command; use help";
+    pub const QUERY_CANCELLED: &str = "Checkpoint query or uncommitted operation cancelled.";
+    pub const OUTCOME_UNKNOWN: &str = "Checkpoint outcome is unknown. Run recover to observe its journals; operations are never replayed.";
+    pub const FINISHED_DURING_CANCEL: &str =
+        "Checkpoint operation finished during cancellation. Review the recorded outcome.";
+    pub const PRESENTATION_TOO_LONG: &str = "Checkpoint presentation exceeds its byte limit";
+    pub const PREPARE_USAGE: &str =
+        "create PATH... · accept ID SHA256 PATH... · restore ID SHA256 PATH...";
+    pub const DIFF_USAGE: &str = "diff ID SHA256";
+    pub const HELP_LINES: &[&str] = &[
+        "list [PAGE] · diff ID SHA256 · next",
+        "create PATH... · accept ID SHA256 PATH... · restore ID SHA256 PATH...",
+        "review · confirm OP_ID · reject",
+        "recover observes interrupted restore journals for this session without replaying",
+        "Checkpoint IDs and digests come from list output. PLAN is read-only.",
+        "Restore writes are journaled and conflict-checked; each file needs an approved path.",
+        "PgUp/PgDn or wheel scroll this modal. Esc preserves your unsent message draft.",
+    ];
+
+    pub fn settings(bound: bool, mode: &str) -> String {
+        format!(
+            "session {} · {mode} · captures are single-use, restores are journaled",
+            if bound { "bound" } else { "auto" },
+        )
+    }
+    pub fn outcome(value: &str) -> String {
+        format!("Checkpoint administration outcome — {value}")
     }
     pub fn error(value: &str) -> String {
         format!("Error · {value}")

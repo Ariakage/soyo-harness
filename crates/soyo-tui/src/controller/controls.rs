@@ -608,6 +608,7 @@ impl App {
                 self.compact().await?;
             }
             "/memory" => self.open_memory(argument).await?,
+            "/checkpoint" | "/checkpoints" => self.open_checkpoint(argument).await?,
             "/mode" => {
                 let target = mode(argument).ok_or(text::MODE_USAGE)?;
                 self.request_mode(target, true).await?;

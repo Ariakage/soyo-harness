@@ -622,6 +622,16 @@ pub struct TaskQueueSettings {
     /// Cap on tasks a single worker drives concurrently (default 1).
     pub max_running: Option<usize>,
 }
+/// Opt-in automatic checkpoint capture (`F-05`). Disabled unless
+/// `auto_capture = true`: before a mutating file tool (`write_file`,
+/// `edit_file`, `apply_patch`) runs, the exact paths it is about to touch are
+/// captured into a checkpoint bound to the current session and run. Capture
+/// failures never block the tool call and are surfaced as warnings only.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct CheckpointSettings {
+    pub auto_capture: bool,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -668,6 +678,8 @@ struct Document {
     tasks: TaskQueueSettings,
     #[serde(default)]
     file_text: FileTextSettings,
+    #[serde(default)]
+    checkpoint: CheckpointSettings,
 }
 /// Effective settings; no model is implicitly selected. Secret values stay in Environment.
 #[derive(Clone)]
@@ -708,6 +720,8 @@ pub struct Config {
     pub tasks: TaskQueueSettings,
     /// Opt-in File-artifact text extraction (`F-11`); `enabled` defaults to `false`.
     pub file_text: FileTextSettings,
+    /// Opt-in automatic pre-write checkpoint capture (`F-05`); `auto_capture` defaults to `false`.
+    pub checkpoint: CheckpointSettings,
     env: Environment,
 }
 impl Config {
@@ -1172,6 +1186,7 @@ pub fn load(
         routing: doc.routing,
         code_intel: doc.code_intel,
         file_text: doc.file_text,
+        checkpoint: doc.checkpoint,
         env,
     })
 }

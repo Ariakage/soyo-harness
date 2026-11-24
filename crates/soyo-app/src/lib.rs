@@ -1,5 +1,6 @@
 //! Shared application assembly and durable session lifecycle for Soyo interfaces.
 //! Runtime policy and execution remain in soyo-core. Callers supply UI adapters.
+pub mod checkpoint_admin;
 pub mod context;
 pub mod events;
 pub mod export;
@@ -569,7 +570,9 @@ pub fn build_runtime_with_health(
             .protected_paths
             .push(checkpoints.protected_path().to_owned());
     }
-    runtime = runtime.with_checkpoints(checkpoints, private_paths, sandbox.write_roots.clone())?;
+    runtime = runtime
+        .with_checkpoints(checkpoints, private_paths, sandbox.write_roots.clone())?
+        .with_checkpoint_auto_capture(config.checkpoint.auto_capture);
     let has_host_hooks = config.hooks.enabled && !config.hooks.rules.is_empty();
     let shared_journal = if plugin_store.is_some() || has_host_hooks {
         Some(extensions::hook_journal(

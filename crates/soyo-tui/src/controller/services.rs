@@ -22,6 +22,7 @@ pub(super) enum UiResult {
     },
     Export(serde_json::Value),
     Memory(super::memory::MemoryUiResult),
+    Checkpoint(super::checkpoint::CheckpointUiResult),
     Picker(crate::view::PickerPanel),
 }
 pub(super) struct UiJob {
@@ -718,6 +719,7 @@ impl App {
         }
         match result {
             Ok(UiResult::Memory(result)) => self.finish_memory(result, cancelled)?,
+            Ok(UiResult::Checkpoint(result)) => self.finish_checkpoint(result, cancelled)?,
             Ok(UiResult::Picker(panel)) => {
                 if cancelled {
                     self.notice(text::SELECTOR_CANCELLED);

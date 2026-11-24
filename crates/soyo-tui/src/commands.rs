@@ -274,6 +274,14 @@ pub const COMMANDS: &[Suggestion] = &[
         text: "/task recover",
         description: text::TASK_RECOVER,
     },
+    Suggestion {
+        text: "/checkpoint",
+        description: text::CHECKPOINT,
+    },
+    Suggestion {
+        text: "/checkpoints",
+        description: text::CHECKPOINTS,
+    },
 ];
 
 /// Completion state for a single editor prefix. Updates perform no I/O.
@@ -422,7 +430,7 @@ mod tests {
 
     #[test]
     fn catalog_preserves_palette_order_and_adds_all_argument_scaffolds() {
-        assert_eq!(COMMANDS.len(), 57);
+        assert_eq!(COMMANDS.len(), 59);
         let expected = [
             "/mode plan",
             "/mode build",
@@ -490,6 +498,8 @@ mod tests {
             "/task cancel ",
             "/task resolve ",
             "/task recover",
+            "/checkpoint",
+            "/checkpoints",
         ];
         assert_eq!(
             COMMANDS.iter().map(|item| item.text).collect::<Vec<_>>(),
