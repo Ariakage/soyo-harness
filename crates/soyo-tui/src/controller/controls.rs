@@ -609,6 +609,10 @@ impl App {
             }
             "/memory" => self.open_memory(argument).await?,
             "/checkpoint" | "/checkpoints" => self.open_checkpoint(argument).await?,
+            "/usage" => self.open_observe("usage", argument).await?,
+            "/replay" => self.open_observe("replay", argument).await?,
+            "/diagnose" => self.open_observe("diagnose", argument).await?,
+            "/session-report" => self.open_observe("report", argument).await?,
             "/mode" => {
                 let target = mode(argument).ok_or(text::MODE_USAGE)?;
                 self.request_mode(target, true).await?;

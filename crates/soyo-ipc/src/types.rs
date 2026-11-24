@@ -1051,6 +1051,35 @@ pub struct CheckpointConfirmResultDto {
     pub result: Value,
 }
 
+/// Read-only per-session usage aggregation (`observe_usage` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ObserveUsageDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Read-only ordered timeline projection (`observe_timeline` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ObserveTimelineDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Read-only first-failure pinpoint (`observe_diagnose` JSON).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ObserveDiagnosisDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+}
+
+/// Read-only run report (`observe_report` JSON plus rendered Markdown).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ObserveReportDto {
+    #[specta(type = Unknown)]
+    pub data: Value,
+    pub markdown: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormatDto {

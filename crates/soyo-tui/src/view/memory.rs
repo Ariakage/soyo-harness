@@ -2,7 +2,7 @@
 //! so browsing and confirmation never alter the unsent chat message. The same
 //! modal also renders checkpoint administration through [`draw_checkpoint`].
 use super::*;
-use crate::i18n::{checkpoint as checkpoint_text, memory as text};
+use crate::i18n::{checkpoint as checkpoint_text, memory as text, observe as observe_text};
 
 /// Labels that distinguish the two administration modals. Rendering is
 /// identical; only the static copy and the addressed panel change.
@@ -33,6 +33,15 @@ const CHECKPOINT: Skin = Skin {
     draft_retained: checkpoint_text::DRAFT_RETAINED,
     view_truncated: checkpoint_text::VIEW_TRUNCATED,
 };
+const OBSERVE: Skin = Skin {
+    title: observe_text::TITLE,
+    help: observe_text::HELP,
+    busy: observe_text::BUSY,
+    confirm: observe_text::CONFIRM,
+    commands: observe_text::COMMANDS,
+    draft_retained: observe_text::DRAFT_RETAINED,
+    view_truncated: observe_text::VIEW_TRUNCATED,
+};
 
 pub(super) fn draw(frame: &mut Frame<'_>, state: &mut State) {
     if state.memory_panel.is_some() {
@@ -44,14 +53,21 @@ pub(super) fn draw_checkpoint(frame: &mut Frame<'_>, state: &mut State) {
         draw_panel(frame, state, &CHECKPOINT, Panel::Checkpoint);
     }
 }
+pub(super) fn draw_observe(frame: &mut Frame<'_>, state: &mut State) {
+    if state.observe_panel.is_some() {
+        draw_panel(frame, state, &OBSERVE, Panel::Observe);
+    }
+}
 enum Panel {
     Memory,
     Checkpoint,
+    Observe,
 }
 fn draw_panel(frame: &mut Frame<'_>, state: &mut State, skin: &Skin, which: Panel) {
     let panel = match which {
         Panel::Memory => state.memory_panel.as_mut(),
         Panel::Checkpoint => state.checkpoint_panel.as_mut(),
+        Panel::Observe => state.observe_panel.as_mut(),
     };
     let Some(panel) = panel else {
         return;

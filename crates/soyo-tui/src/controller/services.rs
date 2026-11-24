@@ -23,6 +23,8 @@ pub(super) enum UiResult {
     Export(serde_json::Value),
     Memory(super::memory::MemoryUiResult),
     Checkpoint(super::checkpoint::CheckpointUiResult),
+    /// Pre-rendered lines for the read-only observe modal.
+    Observe(Vec<String>),
     Picker(crate::view::PickerPanel),
 }
 pub(super) struct UiJob {
@@ -720,6 +722,7 @@ impl App {
         match result {
             Ok(UiResult::Memory(result)) => self.finish_memory(result, cancelled)?,
             Ok(UiResult::Checkpoint(result)) => self.finish_checkpoint(result, cancelled)?,
+            Ok(UiResult::Observe(lines)) => self.finish_observe(lines, cancelled)?,
             Ok(UiResult::Picker(panel)) => {
                 if cancelled {
                     self.notice(text::SELECTOR_CANCELLED);
@@ -794,6 +797,11 @@ impl App {
                     if let Some(operation) = operation {
                         panel.lines.push(operation);
                     }
+                }
+                if let Some(panel) = &mut self.state.observe_panel {
+                    panel.busy = false;
+                    panel.lines = vec![message.clone()];
+                    panel.scroll = 0;
                 }
                 self.notice(&message);
             }

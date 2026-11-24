@@ -10,7 +10,8 @@ use crate::types::{
     DesktopStreamEnvelope, ExperimentalSettingsDto, ExportFormatDto, ExportResultDto,
     ExportScopeDto, ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto,
     GoalReportDto, HelperStatusDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto,
-    ModeStateDto, ModuleStatusDto, PermissionModeDto, PreparedCheckpointReviewDto,
+    ModeStateDto, ModuleStatusDto, ObserveDiagnosisDto, ObserveReportDto, ObserveTimelineDto,
+    ObserveUsageDto, PermissionModeDto, PreparedCheckpointReviewDto,
     PreparedMemoryReviewDto, ResumeSessionResultDto, RunStateDto, SandboxBackendDto,
     SessionPageDto, SetupEnvironmentParams, StagedAttachmentDto, SubmitPromptResultDto, TaskDto,
     TaskJobDto, UpdateDesktopPrefsParams, UsageStatsDto, WorkModeDto,
@@ -744,6 +745,50 @@ impl DesktopState {
         self.call_rpc(
             "confirm_checkpoint_action",
             &json!({ "action_id": action_id, "approved_paths": approved_paths }),
+        )
+        .await
+    }
+
+    pub async fn observe_usage(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<ObserveUsageDto, DesktopError> {
+        self.call_rpc("observe_usage", &json!({ "session_id": session_id }))
+            .await
+    }
+
+    pub async fn observe_timeline(
+        &self,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveTimelineDto, DesktopError> {
+        self.call_rpc(
+            "observe_timeline",
+            &json!({ "session_id": session_id, "run": run }),
+        )
+        .await
+    }
+
+    pub async fn observe_diagnose(
+        &self,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveDiagnosisDto, DesktopError> {
+        self.call_rpc(
+            "observe_diagnose",
+            &json!({ "session_id": session_id, "run": run }),
+        )
+        .await
+    }
+
+    pub async fn observe_report(
+        &self,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveReportDto, DesktopError> {
+        self.call_rpc(
+            "observe_report",
+            &json!({ "session_id": session_id, "run": run }),
         )
         .await
     }

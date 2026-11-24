@@ -52,9 +52,11 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut State) {
     draw_command_palette(frame, state);
     memory::draw(frame, state);
     memory::draw_checkpoint(frame, state);
+    memory::draw_observe(frame, state);
     picker::draw(frame, state);
     let areas = if state.memory_panel.is_some()
         || state.checkpoint_panel.is_some()
+        || state.observe_panel.is_some()
         || state.picker_panel.is_some()
         || state.command_palette.is_some()
         || state.completion_viewport.is_some()

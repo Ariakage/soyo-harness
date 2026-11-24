@@ -209,6 +209,9 @@ pub struct State {
     pub memory_panel: Option<MemoryPanel>,
     /// Checkpoint administration modal; shares the [`MemoryPanel`] shape.
     pub checkpoint_panel: Option<MemoryPanel>,
+    /// Read-only observability modal (usage/replay/diagnose/report); shares the
+    /// [`MemoryPanel`] shape.
+    pub observe_panel: Option<MemoryPanel>,
     pub picker_panel: Option<PickerPanel>,
     pub markdown_display: MarkdownDisplay,
     pub messages: VecDeque<Message>,
@@ -269,6 +272,7 @@ impl Default for State {
             command_palette: None,
             memory_panel: None,
             checkpoint_panel: None,
+            observe_panel: None,
             picker_panel: None,
             markdown_display: MarkdownDisplay::default(),
             messages: VecDeque::new(),

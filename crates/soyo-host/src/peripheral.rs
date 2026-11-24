@@ -33,7 +33,8 @@ use soyo_ipc::{
         CheckpointListDto, CheckpointRecoverDto, CredentialRecordDto, DesktopError,
         ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
         ExtensionItemDto, McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto,
-        ModuleStatusDto, PermissionModeDto, PreparedCheckpointReviewDto, PreparedMemoryReviewDto,
+        ModuleStatusDto, ObserveDiagnosisDto, ObserveReportDto, ObserveTimelineDto,
+        ObserveUsageDto, PermissionModeDto, PreparedCheckpointReviewDto, PreparedMemoryReviewDto,
         SandboxBackendDto, SetupEnvironmentParams, StagedAttachmentDto, WorkModeDto,
     },
 };
@@ -1314,6 +1315,138 @@ impl HostService {
         .await
         .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
         Ok(CheckpointListDto { data })
+    }
+
+    /// Read the immutable snapshot the observe projections run over.
+    async fn observe_snapshot(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+    ) -> Result<
+        (
+            Config,
+            SessionId,
+            soyo_core::sqlite::SessionSnapshot,
+            Vec<String>,
+        ),
+        DesktopError,
+    > {
+        let cfg = require_config_clone(self).await?;
+        let secrets = self.current_secrets();
+        let sid = self
+            .checkpoint_session_id(conn_id, session_id, &cfg)
+            .await?;
+        let snapshot = SqliteStore::read_snapshot(
+            &cfg.data_dir,
+            sid,
+            SnapshotLimits::default(),
+            Arc::new(RunCancellation::new()),
+        )
+        .await
+        .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        Ok((cfg, sid, snapshot, secrets))
+    }
+
+    /// Read-only per-session usage aggregation (`observe_usage`). Projects the
+    /// persisted `run_metrics` rows; never writes or dispatches anything.
+    pub async fn observe_usage(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+    ) -> Result<ObserveUsageDto, DesktopError> {
+        let (_, sid, snapshot, secrets) = self.observe_snapshot(conn_id, session_id).await?;
+        let records = soyo_app::observe::metrics_records(&snapshot);
+        let report = soyo_app::observe::usage_for_session(sid, records);
+        let value = serde_json::to_value(&report).map_err(|err| {
+            DesktopError::new("internal_error", format!("encode usage report: {err}"))
+        })?;
+        Ok(ObserveUsageDto {
+            data: redaction::redact_value(&value, &secrets),
+        })
+    }
+
+    /// Read-only ordered timeline projection (`observe_timeline`).
+    pub async fn observe_timeline(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveTimelineDto, DesktopError> {
+        let (_, _, snapshot, secrets) = self.observe_snapshot(conn_id, session_id).await?;
+        let timeline = soyo_app::observe::project_timeline(&snapshot, run)
+            .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        let value = serde_json::to_value(&timeline).map_err(|err| {
+            DesktopError::new("internal_error", format!("encode timeline: {err}"))
+        })?;
+        Ok(ObserveTimelineDto {
+            data: redaction::redact_value(&value, &secrets),
+        })
+    }
+
+    /// Read-only first-failure pinpoint (`observe_diagnose`).
+    pub async fn observe_diagnose(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveDiagnosisDto, DesktopError> {
+        let (_, _, snapshot, secrets) = self.observe_snapshot(conn_id, session_id).await?;
+        let timeline = soyo_app::observe::project_timeline(&snapshot, run)
+            .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        let result = snapshot
+            .runs
+            .iter()
+            .find(|row| match run {
+                Some(wanted) => row["run_id"].as_str() == Some(wanted),
+                None => !row["finished_at"].is_null(),
+            })
+            .map(|row| row["result"].clone())
+            .filter(|result| !result.is_null());
+        let mut diagnosis = soyo_app::observe::diagnose(&timeline, result);
+        diagnosis.run_id = run.map(str::to_owned);
+        let value = serde_json::to_value(&diagnosis).map_err(|err| {
+            DesktopError::new("internal_error", format!("encode diagnosis: {err}"))
+        })?;
+        Ok(ObserveDiagnosisDto {
+            data: redaction::redact_value(&value, &secrets),
+        })
+    }
+
+    /// Read-only run report (`observe_report`): the projection plus its
+    /// rendered Markdown so the desktop can reuse the Markdown viewer.
+    pub async fn observe_report(
+        &self,
+        conn_id: u64,
+        session_id: Option<&str>,
+        run: Option<&str>,
+    ) -> Result<ObserveReportDto, DesktopError> {
+        let (_, _, snapshot, secrets) = self.observe_snapshot(conn_id, session_id).await?;
+        let run_id = match run {
+            Some(run) => run.to_owned(),
+            None => snapshot
+                .runs
+                .iter()
+                .rev()
+                .find(|row| !row["finished_at"].is_null())
+                .or_else(|| snapshot.runs.last())
+                .and_then(|row| row["run_id"].as_str())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    DesktopError::new("run_not_found", "no run is persisted in this session")
+                })?,
+        };
+        let report = soyo_app::observe::run_report(&snapshot, &run_id)
+            .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        let markdown = soyo_app::observe::report_markdown(&report)
+            .map(|bytes| redaction::redact_str(&String::from_utf8_lossy(&bytes), &secrets))
+            .map_err(|err| DesktopError::from_boundary(&err, &secrets))?;
+        let value = serde_json::to_value(&report).map_err(|err| {
+            DesktopError::new("internal_error", format!("encode run report: {err}"))
+        })?;
+        Ok(ObserveReportDto {
+            data: redaction::redact_value(&value, &secrets),
+            markdown,
+        })
     }
 
     pub async fn checkpoint_diff(

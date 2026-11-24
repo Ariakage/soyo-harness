@@ -274,6 +274,7 @@ pub(super) fn draw_editor(frame: &mut Frame<'_>, state: &State, area: Rect) {
     if state.command_palette.is_none()
         && state.picker_panel.is_none()
         && state.memory_panel.is_none()
+        && state.observe_panel.is_none()
     {
         frame.set_cursor_position((
             inner.x + (cursor_column - first_column) as u16,
@@ -415,6 +416,7 @@ pub(super) fn draw_command_palette(frame: &mut Frame<'_>, state: &mut State) {
 pub(super) fn draw_completion(frame: &mut Frame<'_>, state: &mut State, area: Rect) {
     if state.command_palette.is_some()
         || state.memory_panel.is_some()
+        || state.observe_panel.is_some()
         || state.picker_panel.is_some()
         || !state.completion.visible()
         || area.height < 3

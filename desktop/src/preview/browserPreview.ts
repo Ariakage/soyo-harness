@@ -1150,6 +1150,128 @@ export function installBrowserPreviewMock(): boolean {
           },
         };
       }
+      case "observe_usage":
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            since_unixepoch: null,
+            totals: {
+              runs: 2,
+              requests: 7,
+              input_tokens: 12840,
+              output_tokens: 3120,
+              cached_input_tokens: 2048,
+              cost: { USD: 42000 },
+              estimated: false,
+            },
+            groups: [
+              {
+                dimension: "run",
+                key: "01930000-0000-7000-8000-000000000101",
+                totals: {
+                  runs: 1,
+                  requests: 4,
+                  input_tokens: 7200,
+                  output_tokens: 1800,
+                  cached_input_tokens: 1024,
+                  cost: { USD: 24000 },
+                  estimated: false,
+                },
+              },
+              {
+                dimension: "profile",
+                key: "anthropic-official",
+                totals: {
+                  runs: 2,
+                  requests: 7,
+                  input_tokens: 12840,
+                  output_tokens: 3120,
+                  cached_input_tokens: 2048,
+                  cost: { USD: 42000 },
+                  estimated: false,
+                },
+              },
+            ],
+          },
+        };
+      case "observe_timeline":
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            runs: ["01930000-0000-7000-8000-000000000101"],
+            steps: [
+              {
+                index: 0,
+                seq: 0,
+                kind: "user_text",
+                run_id: null,
+                label: "user",
+                input: { text: "Inspect the failing build" },
+                output: null,
+                status: "ok",
+                error_code: null,
+              },
+              {
+                index: 1,
+                seq: 1,
+                kind: "tool_call",
+                run_id: "01930000-0000-7000-8000-000000000101",
+                label: "tool read_file",
+                input: { call_id: "call-1", name: "read_file", args: {} },
+                output: null,
+                status: "ok",
+                error_code: null,
+              },
+              {
+                index: 2,
+                seq: 2,
+                kind: "tool_call",
+                run_id: "01930000-0000-7000-8000-000000000101",
+                label: "tool exec finished",
+                input: { call_id: "call-2", name: "exec" },
+                output: { result: { ok: false, error: { code: "tool_error" } } },
+                status: "failed",
+                error_code: "tool_error",
+              },
+            ],
+          },
+        };
+      case "observe_diagnose":
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            run_id: null,
+            failed_step: 2,
+            last_ok_step: 1,
+            error_code: "tool_error",
+            summary: "first failure at step 2 (ToolCall tool exec finished): tool_error",
+            run_result: { status: "failed", stop_reason: "tool_error" },
+            step_count: 3,
+          },
+        };
+      case "observe_report":
+        return {
+          data: {
+            session_id: "01930000-0000-7000-8000-000000000001",
+            run_id: "01930000-0000-7000-8000-000000000101",
+            run: { run_id: "01930000-0000-7000-8000-000000000101" },
+            result: { status: "failed" },
+            metrics: null,
+            timeline: { session_id: "01930000-0000-7000-8000-000000000001", steps: [], runs: [] },
+            diagnosis: {
+              session_id: "01930000-0000-7000-8000-000000000001",
+              run_id: "01930000-0000-7000-8000-000000000101",
+              failed_step: 2,
+              last_ok_step: 1,
+              error_code: "tool_error",
+              summary: "first failure at step 2 (ToolCall tool exec finished): tool_error",
+              run_result: { status: "failed" },
+              step_count: 3,
+            },
+          },
+          markdown:
+            "# Soyo run report\n\n- Session: `01930000-0000-7000-8000-000000000001`\n- Run: `01930000-0000-7000-8000-000000000101`\n- Steps: 3 | Failure: tool_error\n\n## Diagnosis\n\nfirst failure at step 2 (ToolCall tool exec finished): tool_error\n",
+        };
       case "prepare_checkpoint_action": {
         const p = args as {
           action: string;

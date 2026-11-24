@@ -9,7 +9,8 @@ use serde::Serialize;
 use serde_json::Value;
 use soyo_core::{
     contract::{
-        BoundaryError, ErrorInfo, EventPayload, HistoryItem, RunResult, RunStatus, SessionId,
+        BoundaryError, ErrorInfo, EventPayload, HistoryItem, RunId, RunResult, RunStatus,
+        SessionId,
     },
     metrics::RunMetrics,
     sqlite::{RunMetricsRecord, SessionSnapshot, UsageMetricsRecord},
@@ -912,6 +913,25 @@ pub fn report_markdown(report: &RunReport) -> Result<Vec<u8>, BoundaryError> {
 /// projection does not depend on the media module's internals.
 fn display_text(text: &str, limit: usize) -> String {
     truncate_text(&soyo_core::media::display(text), limit)
+}
+
+/// Parse the snapshot's persisted `run_metrics` rows into usage records.
+///
+/// Shared by every surface that aggregates per-session usage (CLI, TUI,
+/// desktop over IPC, eval) so the `run_id`/`data` row shape is decoded once.
+/// Malformed rows are skipped: the projection is observational, never a gate.
+pub fn metrics_records(snapshot: &SessionSnapshot) -> Vec<RunMetricsRecord> {
+    let mut records = Vec::new();
+    for row in &snapshot.metrics {
+        if let (Some(run), Ok(metrics)) = (
+            row["run_id"].as_str(),
+            serde_json::from_value::<RunMetrics>(row["data"].clone()),
+        ) && let Ok(run_id) = serde_json::from_value::<RunId>(serde_json::json!(run))
+        {
+            records.push(RunMetricsRecord { run_id, metrics });
+        }
+    }
+    records
 }
 
 #[cfg(test)]

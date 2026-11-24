@@ -282,6 +282,22 @@ pub const COMMANDS: &[Suggestion] = &[
         text: "/checkpoints",
         description: text::CHECKPOINTS,
     },
+    Suggestion {
+        text: "/usage",
+        description: text::USAGE,
+    },
+    Suggestion {
+        text: "/replay",
+        description: text::REPLAY,
+    },
+    Suggestion {
+        text: "/diagnose",
+        description: text::DIAGNOSE,
+    },
+    Suggestion {
+        text: "/session-report",
+        description: text::SESSION_REPORT,
+    },
 ];
 
 /// Completion state for a single editor prefix. Updates perform no I/O.
@@ -430,7 +446,7 @@ mod tests {
 
     #[test]
     fn catalog_preserves_palette_order_and_adds_all_argument_scaffolds() {
-        assert_eq!(COMMANDS.len(), 59);
+        assert_eq!(COMMANDS.len(), 72);
         let expected = [
             "/mode plan",
             "/mode build",
@@ -500,6 +516,10 @@ mod tests {
             "/task recover",
             "/checkpoint",
             "/checkpoints",
+            "/usage",
+            "/replay",
+            "/diagnose",
+            "/session-report",
         ];
         assert_eq!(
             COMMANDS.iter().map(|item| item.text).collect::<Vec<_>>(),
@@ -586,7 +606,12 @@ mod tests {
         for suggestion in COMMANDS.iter().filter(|item| {
             !matches!(
                 item.text,
-                "/cancel" | "/footnote " | "/effort " | "/thinking " | "/autocompact "
+                "/cancel"
+                    | "/checkpoint"
+                    | "/footnote "
+                    | "/effort "
+                    | "/thinking "
+                    | "/autocompact "
             )
         }) {
             completion.update(suggestion.text, suggestion.text.len(), true);

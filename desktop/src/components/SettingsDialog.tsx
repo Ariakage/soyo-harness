@@ -11,6 +11,7 @@ import {
   FlaskConical,
   History,
   KeyRound,
+  ListTree,
   Palette,
   RefreshCw,
   Settings,
@@ -34,6 +35,7 @@ import {
   type WorkModeDto,
 } from "../bindings";
 import { LANGUAGE_OPTIONS, getMessages, type LocaleId } from "../lib/i18n";
+import { ObserveDialog } from "./ObserveDialog";
 import { WORK_MODE_STYLES, formatTokenCount } from "../lib/sanitize";
 import { isBrowserPreview } from "../preview/browserPreview";
 import {
@@ -63,6 +65,7 @@ export type SettingsTab =
   | "mcp"
   | "memory"
   | "checkpoints"
+  | "observe"
   | "usage"
   | "export";
 
@@ -114,6 +117,7 @@ const NAV_GROUPS: { tab: SettingsTab; icon: LucideIcon }[][] = [
     { tab: "mcp", icon: KeyRound },
     { tab: "memory", icon: Database },
     { tab: "checkpoints", icon: History },
+    { tab: "observe", icon: ListTree },
   ],
   [
     { tab: "usage", icon: Activity },
@@ -425,6 +429,7 @@ export function SettingsDialog({
     mcp: t.settings.navMcp,
     memory: t.settings.navMemory,
     checkpoints: t.settings.navCheckpoints,
+    observe: t.settings.navObserve,
     usage: t.settings.navUsage,
     export: t.settings.navExport,
   };
@@ -438,6 +443,7 @@ export function SettingsDialog({
     mcp: t.extra.titleMcp,
     memory: t.extra.titleMemory,
     checkpoints: t.extra.titleCheckpoints,
+    observe: t.settings.titleObserve,
     usage: t.settings.titleUsage,
     export: t.extra.titleExport,
   };
@@ -1063,6 +1069,20 @@ export function SettingsDialog({
             ) : (
               <div className={`${CARD} text-center text-[12px] text-[var(--text-tertiary)]`}>
                 {t.extra.checkpointsUnavailableHint}
+              </div>
+            ))}
+
+          {activeTab === "observe" &&
+            (sessionId ? (
+              <ObserveDialog
+                open
+                embedded
+                sessionId={sessionId}
+                onClose={onClose}
+              />
+            ) : (
+              <div className={`${CARD} text-center text-[12px] text-[var(--text-tertiary)]`}>
+                {t.extra.observeUnavailableHint}
               </div>
             ))}
 

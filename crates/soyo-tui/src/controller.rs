@@ -13,6 +13,7 @@ mod memory_tests;
 #[cfg(test)]
 mod message_tests;
 mod messages;
+mod observe;
 #[cfg(test)]
 mod palette_tests;
 mod picker;
@@ -883,6 +884,7 @@ impl App {
             self.state.command_palette.is_none()
                 && self.state.memory_panel.is_none()
                 && self.state.checkpoint_panel.is_none()
+                && self.state.observe_panel.is_none()
                 && self.state.picker_panel.is_none(),
         );
     }
@@ -901,6 +903,9 @@ impl App {
         }
         if self.state.checkpoint_panel.is_some() {
             return self.checkpoint_key(key).await;
+        }
+        if self.state.observe_panel.is_some() {
+            return self.observe_key(key).await;
         }
         if matches!(self.pending, Some(Request::Approval(..)))
             && (key.kind != KeyEventKind::Press
@@ -1253,6 +1258,8 @@ async fn run_loop(app: &mut App, terminal: &mut TerminalGuard) -> Result<u8> {
                     if let Some(panel) = &mut app.state.memory_panel {
                         panel.input.insert_paste(&text);
                     } else if let Some(panel) = &mut app.state.checkpoint_panel {
+                        panel.input.insert_paste(&text);
+                    } else if let Some(panel) = &mut app.state.observe_panel {
                         panel.input.insert_paste(&text);
                     } else if app.state.command_palette.is_none() {
                         app.insert_paste(&text);

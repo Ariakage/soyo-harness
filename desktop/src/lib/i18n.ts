@@ -65,6 +65,7 @@ export interface UiMessages {
     browseAllSessions: string;
     memoryTitle: string;
     checkpointsTitle: string;
+    observeTitle: string;
     globalStore: string;
     twoPhase: string;
     memoryDesc: string;
@@ -183,7 +184,9 @@ export interface UiMessages {
     navMcp: string;
     navMemory: string;
     navCheckpoints: string;
+    navObserve: string;
     navExport: string;
+    titleObserve: string;
     titleUsage: string;
     titleProfiles: string;
     titlePermissions: string;
@@ -362,6 +365,36 @@ export interface UiMessages {
     recoverDesc: string;
     recoverBtn: string;
     recoverEmpty: string;
+  };
+  observeDialog: {
+    title: string;
+    noSessionHint: string;
+    readOnlyHint: string;
+    loading: string;
+    viewUsage: string;
+    viewTimeline: string;
+    viewDiagnose: string;
+    viewReport: string;
+    runFilterLabel: string;
+    runFilterPlaceholder: string;
+    colRuns: string;
+    colRequests: string;
+    colTokens: string;
+    colCost: string;
+    colScope: string;
+    colKey: string;
+    colSteps: string;
+    colFailedStep: string;
+    colLastOk: string;
+    colErrorCode: string;
+    usageEmpty: string;
+    timelineEmpty: string;
+    timelineSummary: (steps: number, runs: number) => string;
+    stepInput: string;
+    stepOutput: string;
+    runResult: string;
+    reportMeta: (runId: string, steps: number) => string;
+    reportEmpty: string;
   };
   exportDialog: {
     title: string;
@@ -607,6 +640,7 @@ export interface UiMessages {
     openExportDialogBtn: string;
     exportUnavailableHint: string;
     checkpointsUnavailableHint: string;
+    observeUnavailableHint: string;
     permAuto: string;
     permManual: string;
     permBypass: string;
@@ -689,6 +723,7 @@ export interface UiMessages {
     closeMcpDialog: string;
     closeMemoryDialog: string;
     closeCheckpointsDialog: string;
+    closeObserveDialog: string;
     memoryQueryInput: string;
     memoryActionInput: string;
     mcpServerInput: string;
@@ -738,6 +773,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       browseAllSessions: "Browse all sessions…",
       memoryTitle: "Memory",
       checkpointsTitle: "Checkpoints",
+      observeTitle: "Observe",
       globalStore: "Global store",
       twoPhase: "two-phase",
       memoryDesc:
@@ -900,7 +936,9 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navMcp: "MCP & credentials",
       navMemory: "Memory",
       navCheckpoints: "Checkpoints",
+      navObserve: "Observe",
       navExport: "Import & export",
+      titleObserve: "Observe",
       titleUsage: "Usage & tokens",
       titleProfiles: "Model & profiles",
       titlePermissions: "Permissions & modes",
@@ -1083,6 +1121,37 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
         "Observed restore journals from an interrupted operation; outcomes are reported, never replayed.",
       recoverBtn: "Check",
       recoverEmpty: "No interrupted restore journals observed.",
+    },
+    observeDialog: {
+      title: "Observe",
+      noSessionHint: "Open or resume a session to inspect its persisted records.",
+      readOnlyHint:
+        "Read-only projections of persisted records. Nothing is executed, written or sent.",
+      loading: "Projecting…",
+      viewUsage: "Usage",
+      viewTimeline: "Timeline",
+      viewDiagnose: "Diagnose",
+      viewReport: "Report",
+      runFilterLabel: "Run filter",
+      runFilterPlaceholder: "run id (optional)",
+      colRuns: "Runs",
+      colRequests: "Requests",
+      colTokens: "Input / output tokens",
+      colCost: "Cost",
+      colScope: "Scope",
+      colKey: "Key",
+      colSteps: "Steps",
+      colFailedStep: "First failure",
+      colLastOk: "Last healthy",
+      colErrorCode: "Error code",
+      usageEmpty: "No run metrics are persisted for this session.",
+      timelineEmpty: "No steps are persisted for this session.",
+      timelineSummary: (steps, runs) => `${steps} step(s) · ${runs} run(s)`,
+      stepInput: "Input",
+      stepOutput: "Output",
+      runResult: "Run result",
+      reportMeta: (runId, steps) => `run ${runId} · ${steps} step(s)`,
+      reportEmpty: "No run is persisted in this session.",
     },
     exportDialog: {
       title: "Export Session Transcript",
@@ -1358,6 +1427,8 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       exportUnavailableHint: "Start or resume a session first to export its transcript.",
       checkpointsUnavailableHint:
         "Start or resume a session first to manage its checkpoints.",
+      observeUnavailableHint:
+        "Start or resume a session first to inspect its usage, timeline and diagnosis.",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -1440,6 +1511,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeMcpDialog: "Close MCP and credentials dialog",
       closeMemoryDialog: "Close memory dialog",
       closeCheckpointsDialog: "Close checkpoints dialog",
+      closeObserveDialog: "Close observe dialog",
       memoryQueryInput: "Memory query command",
       memoryActionInput: "Memory action command",
       mcpServerInput: "MCP server name",
@@ -1487,6 +1559,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       browseAllSessions: "浏览全部会话…",
       memoryTitle: "记忆",
       checkpointsTitle: "检查点",
+      observeTitle: "观测",
       globalStore: "全局存储",
       twoPhase: "两阶段",
       memoryDesc: "全局记忆条目会在会话间持久保存，并注入系统上下文。",
@@ -1648,7 +1721,9 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navMcp: "MCP 与凭据",
       navMemory: "记忆",
       navCheckpoints: "检查点",
+      navObserve: "观测",
       navExport: "导入与导出",
+      titleObserve: "观测",
       titleUsage: "用量与 Token",
       titleProfiles: "模型与配置",
       titlePermissions: "权限与模式",
@@ -1827,6 +1902,36 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       recoverDesc: "观察到的被中断恢复操作日志；仅报告结果，绝不重放。",
       recoverBtn: "检查",
       recoverEmpty: "未观察到被中断的恢复日志。",
+    },
+    observeDialog: {
+      title: "观测",
+      noSessionHint: "打开或恢复会话后可查看其持久化记录。",
+      readOnlyHint: "对持久化记录的只读投影，不执行、不写入、不发送任何内容。",
+      loading: "正在投影…",
+      viewUsage: "用量",
+      viewTimeline: "时间线",
+      viewDiagnose: "诊断",
+      viewReport: "报告",
+      runFilterLabel: "运行筛选",
+      runFilterPlaceholder: "运行 ID（可选）",
+      colRuns: "运行数",
+      colRequests: "请求数",
+      colTokens: "输入 / 输出 Token",
+      colCost: "费用",
+      colScope: "维度",
+      colKey: "键",
+      colSteps: "步骤数",
+      colFailedStep: "首个失败",
+      colLastOk: "最近健康",
+      colErrorCode: "错误码",
+      usageEmpty: "该会话没有持久化的运行指标。",
+      timelineEmpty: "该会话没有持久化的步骤。",
+      timelineSummary: (steps, runs) => `${steps} 步 · ${runs} 个运行`,
+      stepInput: "输入",
+      stepOutput: "输出",
+      runResult: "运行结果",
+      reportMeta: (runId, steps) => `运行 ${runId} · ${steps} 步`,
+      reportEmpty: "该会话没有持久化的运行。",
     },
     exportDialog: {
       title: "导出会话记录",
@@ -2097,6 +2202,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       openExportDialogBtn: "打开会话导出",
       exportUnavailableHint: "请先创建或恢复一个会话再导出内容。",
       checkpointsUnavailableHint: "请先创建或恢复一个会话再管理其检查点。",
+      observeUnavailableHint: "请先创建或恢复一个会话再查看其用量、时间线与诊断。",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -2179,6 +2285,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeMcpDialog: "关闭 MCP 与凭据窗口",
       closeMemoryDialog: "关闭记忆管理窗口",
       closeCheckpointsDialog: "关闭检查点窗口",
+      closeObserveDialog: "关闭观测窗口",
       memoryQueryInput: "记忆查询命令",
       memoryActionInput: "记忆操作命令",
       mcpServerInput: "MCP 服务器名称",
@@ -2226,6 +2333,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       browseAllSessions: "瀏覽全部工作階段…",
       memoryTitle: "記憶",
       checkpointsTitle: "檢查點",
+      observeTitle: "觀測",
       globalStore: "全域儲存區",
       twoPhase: "兩階段",
       memoryDesc: "全域記憶項目會在工作階段之間持續保存，並注入系統內容。",
@@ -2387,7 +2495,9 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       navMcp: "MCP 與憑證",
       navMemory: "記憶",
       navCheckpoints: "檢查點",
+      navObserve: "觀測",
       navExport: "匯入與匯出",
+      titleObserve: "觀測",
       titleUsage: "用量與 Token",
       titleProfiles: "模型與設定檔",
       titlePermissions: "權限與模式",
@@ -2566,6 +2676,36 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       recoverDesc: "觀察到的被中斷還原操作日誌；僅回報結果，絕不重播。",
       recoverBtn: "檢查",
       recoverEmpty: "未觀察到被中斷的還原日誌。",
+    },
+    observeDialog: {
+      title: "觀測",
+      noSessionHint: "開啟或恢復工作階段後可檢視其持久化紀錄。",
+      readOnlyHint: "對持久化紀錄的唯讀投影，不執行、不寫入、不送出任何內容。",
+      loading: "正在投影…",
+      viewUsage: "用量",
+      viewTimeline: "時間軸",
+      viewDiagnose: "診斷",
+      viewReport: "報告",
+      runFilterLabel: "執行篩選",
+      runFilterPlaceholder: "執行 ID（選填）",
+      colRuns: "執行數",
+      colRequests: "請求數",
+      colTokens: "輸入 / 輸出 Token",
+      colCost: "費用",
+      colScope: "維度",
+      colKey: "鍵",
+      colSteps: "步驟數",
+      colFailedStep: "首個失敗",
+      colLastOk: "最近健康",
+      colErrorCode: "錯誤碼",
+      usageEmpty: "此工作階段沒有持久化的執行指標。",
+      timelineEmpty: "此工作階段沒有持久化的步驟。",
+      timelineSummary: (steps, runs) => `${steps} 步 · ${runs} 次執行`,
+      stepInput: "輸入",
+      stepOutput: "輸出",
+      runResult: "執行結果",
+      reportMeta: (runId, steps) => `執行 ${runId} · ${steps} 步`,
+      reportEmpty: "此工作階段沒有持久化的執行。",
     },
     exportDialog: {
       title: "匯出工作階段紀錄",
@@ -2836,6 +2976,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       openExportDialogBtn: "開啟工作階段匯出",
       exportUnavailableHint: "請先建立或恢復工作階段再進行匯出。",
       checkpointsUnavailableHint: "請先建立或恢復工作階段再管理其檢查點。",
+      observeUnavailableHint: "請先建立或恢復工作階段再檢視其用量、時間軸與診斷。",
       permAuto: "Auto",
       permManual: "Manual approval",
       permBypass: "Bypass permissions",
@@ -2918,6 +3059,7 @@ const MESSAGES: Record<LocaleId, UiMessages> = {
       closeMcpDialog: "關閉 MCP 與憑證視窗",
       closeMemoryDialog: "關閉記憶管理視窗",
       closeCheckpointsDialog: "關閉檢查點視窗",
+      closeObserveDialog: "關閉觀測視窗",
       memoryQueryInput: "記憶查詢指令",
       memoryActionInput: "記憶操作指令",
       mcpServerInput: "MCP 伺服器名稱",

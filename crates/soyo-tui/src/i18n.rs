@@ -75,6 +75,10 @@ pub(crate) mod command {
     pub const CHECKPOINT: &str =
         "List, diff, capture and restore per-session workspace checkpoints";
     pub const CHECKPOINTS: &str = "List this session's checkpoints";
+    pub const USAGE: &str = "Open read-only usage and cost attribution for this session";
+    pub const REPLAY: &str = "Open the read-only persisted timeline; add a run ID to filter";
+    pub const DIAGNOSE: &str = "Open the first-failure pinpoint; add a run ID to narrow it";
+    pub const SESSION_REPORT: &str = "Open the read-only run report; add a run ID to pick one";
     pub const THINKING_LEVEL: &str = "Set thinking effort for subsequent requests";
     pub const AUTOCOMPACT_AUTO: &str = "Restore the configured percentage trigger";
     pub const AUTOCOMPACT_OFF: &str = "Disable automatic compaction";
@@ -990,6 +994,60 @@ pub(crate) mod checkpoint {
     }
     pub fn error(value: &str) -> String {
         format!("Error · {value}")
+    }
+}
+
+pub(crate) mod observe {
+    pub const TITLE: &str = " Observe · read-only usage, replay and diagnosis ";
+    pub const HELP: &str = "usage · replay [run] · step N · diagnose [run] · report [run] · help";
+    pub const BUSY: &str = "Projecting · Ctrl+C cancels; nothing is executed or written";
+    pub const CONFIRM: &str = "Read-only projection; no operation can be confirmed from here";
+    pub const COMMANDS: &str = "Enter command · PgUp/PgDn scroll · Esc closes · help";
+    pub const DRAFT_RETAINED: &str =
+        "Observe panels read persisted records only. Message draft is retained.";
+    pub const VIEW_TRUNCATED: &str = "[observe view display truncated]";
+    pub const PENDING_REQUEST: &str =
+        "Answer or dismiss the current Agent request before opening observe panels";
+    pub const UI_ACTIVE_WAIT: &str = "A UI operation is active; wait for it to finish";
+    pub const UI_ACTIVE_CANCEL: &str = "A UI operation is active; wait or cancel it";
+    pub const OPERATION_ACTIVE: &str =
+        "Observe query is still active; Ctrl+C cancels and waits for it";
+    pub const QUERY_CANCELLED: &str = "Observe query cancelled.";
+    pub const UNKNOWN_COMMAND: &str = "Unknown observe command; use help";
+    pub const STEP_USAGE: &str = "step N requires a 0-based step index";
+    pub const NO_RUN: &str = "No run is persisted in this session";
+    pub const USAGE_HEADER: &str = "Usage (read-only projection of run metrics)";
+    pub const USAGE_EMPTY: &str = "No run metrics are persisted for this session.";
+    pub const REPLAY_STEP_HINT: &str = "step N shows one step's input and output detail.";
+    pub const STEP_INPUT: &str = "Input:";
+    pub const STEP_OUTPUT: &str = "Output:";
+    pub const DIAGNOSE_HEADER: &str = "Diagnose (first failed, denied or cancelled step)";
+    pub const REPORT_HEADER: &str = "Run report (read-only)";
+    pub const REPORT_DIAGNOSIS: &str = "Diagnosis:";
+    pub const REPORT_MARKDOWN: &str = "Report Markdown:";
+    pub const HELP_LINES: &[&str] = &[
+        "usage — requests, tokens and cost grouped by run and profile",
+        "replay [RUN] · step N — ordered timeline, then one step's full detail",
+        "diagnose [RUN] — first failing step, last healthy step and run result",
+        "report [RUN] — run metadata, result, metrics and diagnosis",
+        "All four project the committed snapshot; none dispatches a model or tool.",
+        "PgUp/PgDn or wheel scroll this modal. Esc preserves your unsent message draft.",
+    ];
+
+    pub fn settings(bound: bool) -> String {
+        format!(
+            "session {} · read-only · no model, tool or network dispatch",
+            if bound { "bound" } else { "auto" },
+        )
+    }
+    pub fn error(value: &str) -> String {
+        format!("Error · {value}")
+    }
+    pub fn step_missing(index: usize) -> String {
+        format!("Step {index} does not exist in this projection")
+    }
+    pub fn diagnose_steps(ok: usize, failed: usize) -> String {
+        format!("Last healthy step {ok} · first failure {failed}")
     }
 }
 

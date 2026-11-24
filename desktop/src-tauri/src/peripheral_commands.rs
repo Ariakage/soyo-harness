@@ -9,6 +9,7 @@ use crate::{
         DesktopPrefsDto, ExperimentalSettingsDto, ExportFormatDto, ExportResultDto, ExportScopeDto,
         ExtensionItemDto, GlobalPromptDto, GoalBudgetDto, GoalDto, GoalJobDto, GoalReportDto,
         McpServerDto, MemoryConfirmResultDto, MemoryQueryResultDto, ModuleStatusDto,
+        ObserveDiagnosisDto, ObserveReportDto, ObserveTimelineDto, ObserveUsageDto,
         PreparedCheckpointReviewDto, PreparedMemoryReviewDto, SandboxBackendDto,
         StagedAttachmentDto, TaskDto, TaskJobDto, UpdateDesktopPrefsParams,
     },
@@ -264,6 +265,51 @@ pub async fn confirm_checkpoint_action(
 ) -> Result<CheckpointConfirmResultDto, DesktopError> {
     state
         .confirm_checkpoint_action(&action_id, approved_paths)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn observe_usage(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+) -> Result<ObserveUsageDto, DesktopError> {
+    state.observe_usage(session_id.as_deref()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn observe_timeline(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    run: Option<String>,
+) -> Result<ObserveTimelineDto, DesktopError> {
+    state
+        .observe_timeline(session_id.as_deref(), run.as_deref())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn observe_diagnose(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    run: Option<String>,
+) -> Result<ObserveDiagnosisDto, DesktopError> {
+    state
+        .observe_diagnose(session_id.as_deref(), run.as_deref())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn observe_report(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+    run: Option<String>,
+) -> Result<ObserveReportDto, DesktopError> {
+    state
+        .observe_report(session_id.as_deref(), run.as_deref())
         .await
 }
 

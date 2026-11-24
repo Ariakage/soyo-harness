@@ -42,6 +42,10 @@ export const commands = {
 	checkpointRecover: (sessionId: string | null) => typedError<CheckpointRecoverDto, DesktopError>(__TAURI_INVOKE("checkpoint_recover", { sessionId })),
 	prepareCheckpointAction: (sessionId: string | null, action: string, paths: string[], checkpointId: string | null, sha256: string | null, label: string | null) => typedError<PreparedCheckpointReviewDto, DesktopError>(__TAURI_INVOKE("prepare_checkpoint_action", { sessionId, action, paths, checkpointId, sha256, label })),
 	confirmCheckpointAction: (actionId: string, approvedPaths: string[] | null) => typedError<CheckpointConfirmResultDto, DesktopError>(__TAURI_INVOKE("confirm_checkpoint_action", { actionId, approvedPaths })),
+	observeUsage: (sessionId: string | null) => typedError<ObserveUsageDto, DesktopError>(__TAURI_INVOKE("observe_usage", { sessionId })),
+	observeTimeline: (sessionId: string | null, run: string | null) => typedError<ObserveTimelineDto, DesktopError>(__TAURI_INVOKE("observe_timeline", { sessionId, run })),
+	observeDiagnose: (sessionId: string | null, run: string | null) => typedError<ObserveDiagnosisDto, DesktopError>(__TAURI_INVOKE("observe_diagnose", { sessionId, run })),
+	observeReport: (sessionId: string | null, run: string | null) => typedError<ObserveReportDto, DesktopError>(__TAURI_INVOKE("observe_report", { sessionId, run })),
 	exportSession: (sessionId: string | null, targetPath: string, format: ExportFormatDto, scope: ExportScopeDto, includeTools: boolean) => typedError<ExportResultDto, DesktopError>(__TAURI_INVOKE("export_session", { sessionId, targetPath, format, scope, includeTools })),
 	stageAttachments: (paths: string[]) => typedError<StagedAttachmentDto[], DesktopError>(__TAURI_INVOKE("stage_attachments", { paths })),
 	stagePastedAttachments: (items: PastedAttachmentItem[]) => typedError<StagedAttachmentDto[], DesktopError>(__TAURI_INVOKE("stage_pasted_attachments", { items })),
@@ -749,6 +753,27 @@ export type ModuleStatusDto_Serialize = {
 	source: string,
 	active: boolean,
 	issue: string | null,
+};
+
+/**  Read-only first-failure pinpoint (`observe_diagnose` JSON). */
+export type ObserveDiagnosisDto = {
+	data: unknown,
+};
+
+/**  Read-only run report (`observe_report` JSON plus rendered Markdown). */
+export type ObserveReportDto = {
+	data: unknown,
+	markdown: string,
+};
+
+/**  Read-only ordered timeline projection (`observe_timeline` JSON). */
+export type ObserveTimelineDto = {
+	data: unknown,
+};
+
+/**  Read-only per-session usage aggregation (`observe_usage` JSON). */
+export type ObserveUsageDto = {
+	data: unknown,
 };
 
 /**

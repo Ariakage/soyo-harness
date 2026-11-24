@@ -1010,6 +1010,37 @@ async fn dispatch(
             };
             r.await.and_then(ok)
         }
+        "observe_usage" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                service.observe_usage(conn_id, sid).await
+            };
+            r.await.and_then(ok)
+        }
+        "observe_timeline" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                let run = param_opt_str(&params, "run").map(str::to_owned);
+                service.observe_timeline(conn_id, sid, run.as_deref()).await
+            };
+            r.await.and_then(ok)
+        }
+        "observe_diagnose" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                let run = param_opt_str(&params, "run").map(str::to_owned);
+                service.observe_diagnose(conn_id, sid, run.as_deref()).await
+            };
+            r.await.and_then(ok)
+        }
+        "observe_report" => {
+            let r = async {
+                let sid = param_opt_str(&params, "session_id");
+                let run = param_opt_str(&params, "run").map(str::to_owned);
+                service.observe_report(conn_id, sid, run.as_deref()).await
+            };
+            r.await.and_then(ok)
+        }
         "export_session" => {
             let r = async {
                 let session_id = param_opt_str(&params, "session_id").map(str::to_owned);
