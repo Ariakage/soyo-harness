@@ -151,6 +151,9 @@ pub enum DispatchState {
     Completed,
     Failed,
     Unknown,
+    /// A remote dispatch whose claimant never confirmed the Run started; the
+    /// task went back to `queued` without replaying any side effect.
+    Expired,
 }
 
 /// Persisted summary of the last finished attempt; model text is data.
@@ -240,6 +243,14 @@ pub struct TaskRecord {
     /// Bound child configuration and last outcome for `run_kind = subagent`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<crate::subagent::PersistentSubagentJob>,
+    /// Stable id of the remote worker this task is dispatched to (`D-117`).
+    /// Ordinary local tasks leave it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_worker: Option<String>,
+    /// Last worker-reported result, held back from the owning workspace until
+    /// an explicit `soyo remote apply`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_result: Option<crate::remote::RemoteTaskResult>,
     pub status: TaskStatus,
     pub revision: u64,
     pub failure: Option<ErrorInfo>,
@@ -279,6 +290,8 @@ impl TaskRecord {
             input: seed.input,
             run_kind: TaskRunKind::Task,
             subagent: None,
+            remote_worker: None,
+            remote_result: None,
             status: TaskStatus::Queued,
             revision: 0,
             failure: None,
@@ -343,6 +356,29 @@ impl TaskRecord {
                 return Err(failure(
                     "invalid_task",
                     "a persistent subagent Task requires its job payload",
+                ));
+            }
+        }
+        if let Some(worker) = &self.remote_worker
+            && !crate::remote::valid_worker_id(worker)
+        {
+            return Err(failure(
+                "invalid_task",
+                "Task remote worker identifier is invalid",
+            ));
+        }
+        if let Some(remote) = &self.remote_result {
+            remote.validate(&crate::remote::RemoteSyncLimits::default())?;
+            if self.remote_worker.as_deref() != Some(remote.worker_id.as_str()) {
+                return Err(failure(
+                    "invalid_task",
+                    "Task remote result does not belong to its assigned worker",
+                ));
+            }
+            if self.last_run_id != Some(remote.run_id) {
+                return Err(failure(
+                    "invalid_task",
+                    "Task remote result does not match its last Run",
                 ));
             }
         }

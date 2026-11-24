@@ -230,6 +230,8 @@ pub mod error_codes {
     pub const PROJECT_CONTEXT_CHANGED: &str = "project_context_changed";
     pub const PROJECT_CONTEXT_ERROR: &str = "project_context_error";
     pub const RATE_LIMITED: &str = "rate_limited";
+    pub const REMOTE_SYNC_ERROR: &str = "remote_sync_error";
+    pub const REMOTE_SYNC_LIMIT: &str = "remote_sync_limit";
     pub const REPEATED_TOOL_FAILURE: &str = "repeated_tool_failure";
     pub const RETRY_TIMEOUT: &str = "retry_timeout";
     pub const RUNTIME_ERROR: &str = "runtime_error";

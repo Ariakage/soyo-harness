@@ -13,6 +13,7 @@ use crate::{
     contract::{BoundaryError, ErrorInfo, RunId, RunStatus},
     metrics::RunMetrics,
     redaction,
+    remote::{RemoteSyncLimits, RemoteTaskResult, valid_worker_id},
     subagent::PersistentSubagentJob,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -80,6 +81,13 @@ impl Default for StoreSettings {
             default_lease_ttl_ms: 60_000,
         }
     }
+}
+
+/// Extra durable payload attached to one finished attempt.
+enum AttemptPayload {
+    Plain,
+    Subagent(Box<PersistentSubagentJob>),
+    Remote(RemoteTaskResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +212,7 @@ fn dispatch_state_label(state: DispatchState) -> &'static str {
         DispatchState::Completed => "completed",
         DispatchState::Failed => "failed",
         DispatchState::Unknown => "unknown",
+        DispatchState::Expired => "expired",
     }
 }
 
@@ -565,6 +574,8 @@ impl TaskStore {
                 .saturating_add(1);
             record.status = TaskStatus::Running;
             record.last_run_id = Some(run_id);
+            // A new attempt supersedes any previously held remote result.
+            record.remote_result = None;
             record.updated_at = now;
             record.revision = record.revision.saturating_add(1);
             record.validate()?;
@@ -623,6 +634,58 @@ impl TaskStore {
         .map_err(|_| storage("task_storage", "Task storage worker failed"))?
     }
 
+    /// Bind a queued task to a remote worker (or clear the binding).
+    ///
+    /// Only queued tasks can be (re)assigned: a running attempt already owns
+    /// its worker through the lease and is never redirected mid-flight.
+    pub async fn assign_worker(
+        &self,
+        task_id: TaskId,
+        worker_id: Option<String>,
+        now: String,
+    ) -> Result<TaskRecord, BoundaryError> {
+        if let Some(worker) = &worker_id
+            && !valid_worker_id(worker)
+        {
+            return Err(storage(
+                "invalid_task_lease",
+                "Remote worker identifier is invalid",
+            ));
+        }
+        let connection = self.connection.clone();
+        let secrets = self.secrets.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut connection = connection
+                .lock()
+                .map_err(|_| storage("task_storage", "Task database lock poisoned"))?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_error)?;
+            let mut record = load_connection(&transaction, task_id)?;
+            if record.run_kind != TaskRunKind::Task {
+                return Err(storage(
+                    "invalid_task_state",
+                    "only ordinary Tasks can be dispatched to a remote worker",
+                ));
+            }
+            if record.status != TaskStatus::Queued {
+                return Err(storage(
+                    "invalid_task_state",
+                    "Task must be queued before it can be assigned to a worker",
+                ));
+            }
+            record.remote_worker = worker_id;
+            record.updated_at = now;
+            record.revision = record.revision.saturating_add(1);
+            record.validate()?;
+            write_connection(&transaction, &record, &secrets, None)?;
+            transaction.commit().map_err(sql_error)?;
+            Ok(record)
+        })
+        .await
+        .map_err(|_| storage("task_storage", "Task storage worker failed"))?
+    }
+
     /// Record the terminal outcome of an attempt inside one transaction.
     /// A run whose status is cancelled or whose persistence was not saved is
     /// treated as an unknown side effect: the task waits for resolution and
@@ -635,8 +698,39 @@ impl TaskStore {
         metrics: &RunMetrics,
         now: String,
     ) -> Result<TaskRecord, BoundaryError> {
-        self.finish_attempt_inner(lease, dispatch, summary, metrics, None, now)
-            .await
+        self.finish_attempt_inner(
+            lease,
+            dispatch,
+            summary,
+            metrics,
+            AttemptPayload::Plain,
+            now,
+        )
+        .await
+    }
+
+    /// Finish one remote-worker attempt, storing the unverified worker result
+    /// (summary text plus changed-file manifest) in the same transaction as the
+    /// terminal status. Files are only materialized later by an explicit
+    /// three-way apply.
+    pub async fn finish_remote_attempt(
+        &self,
+        lease: &TaskLease,
+        dispatch: &TaskDispatch,
+        summary: TaskRunSummary,
+        metrics: &RunMetrics,
+        remote: RemoteTaskResult,
+        now: String,
+    ) -> Result<TaskRecord, BoundaryError> {
+        self.finish_attempt_inner(
+            lease,
+            dispatch,
+            summary,
+            metrics,
+            AttemptPayload::Remote(remote),
+            now,
+        )
+        .await
     }
 
     /// Finish one persistent subagent attempt, storing the child's updated job
@@ -651,8 +745,15 @@ impl TaskStore {
         job: PersistentSubagentJob,
         now: String,
     ) -> Result<TaskRecord, BoundaryError> {
-        self.finish_attempt_inner(lease, dispatch, summary, metrics, Some(job), now)
-            .await
+        self.finish_attempt_inner(
+            lease,
+            dispatch,
+            summary,
+            metrics,
+            AttemptPayload::Subagent(Box::new(job)),
+            now,
+        )
+        .await
     }
 
     async fn finish_attempt_inner(
@@ -661,12 +762,21 @@ impl TaskStore {
         dispatch: &TaskDispatch,
         summary: TaskRunSummary,
         metrics: &RunMetrics,
-        job: Option<PersistentSubagentJob>,
+        payload: AttemptPayload,
         now: String,
     ) -> Result<TaskRecord, BoundaryError> {
         summary.validate()?;
-        if let Some(job) = &job {
+        if let AttemptPayload::Subagent(job) = &payload {
             job.validate()?;
+        }
+        if let AttemptPayload::Remote(remote) = &payload {
+            remote.validate(&RemoteSyncLimits::default())?;
+            if remote.run_id != summary.run_id {
+                return Err(storage(
+                    "invalid_task_state",
+                    "Remote worker result does not match the finished Run",
+                ));
+            }
         }
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
@@ -703,14 +813,32 @@ impl TaskStore {
                     "Task is not waiting for this Run result",
                 ));
             }
-            if let Some(job) = job {
-                if record.run_kind != TaskRunKind::Subagent {
-                    return Err(storage(
-                        "invalid_task_state",
-                        "Task is not a persistent subagent job",
-                    ));
+            match payload {
+                AttemptPayload::Plain => {}
+                AttemptPayload::Subagent(job) => {
+                    if record.run_kind != TaskRunKind::Subagent {
+                        return Err(storage(
+                            "invalid_task_state",
+                            "Task is not a persistent subagent job",
+                        ));
+                    }
+                    record.subagent = Some(*job);
                 }
-                record.subagent = Some(job);
+                AttemptPayload::Remote(remote) => {
+                    if record.run_kind != TaskRunKind::Task {
+                        return Err(storage(
+                            "invalid_task_state",
+                            "a remote result cannot be stored on a subagent job",
+                        ));
+                    }
+                    if record.remote_worker.as_deref() != Some(remote.worker_id.as_str()) {
+                        return Err(storage(
+                            "invalid_task_state",
+                            "remote result does not belong to the assigned worker",
+                        ));
+                    }
+                    record.remote_result = Some(remote);
+                }
             }
             let run_completed = summary.status == RunStatus::Completed && summary.persistence_saved;
             let requested_status = record.status;
@@ -848,6 +976,7 @@ impl TaskStore {
             if target == TaskStatus::Queued {
                 record.failure = None;
                 record.last_run_id = None;
+                record.remote_result = None;
             }
             record.updated_at = now;
             record.revision = record.revision.saturating_add(1);
@@ -879,7 +1008,7 @@ impl TaskStore {
                 .map_err(sql_error)?;
             let mut statement = transaction
                 .prepare(
-                    "SELECT d.task_id,d.attempt,d.run_id FROM task_dispatches d LEFT JOIN task_leases l ON l.task_id=d.task_id WHERE d.state IN ('intent','running') AND (l.task_id IS NULL OR l.expires_at_ms<=?1) ORDER BY d.task_id",
+                    "SELECT d.task_id,d.attempt,d.run_id,d.state,l.owner FROM task_dispatches d LEFT JOIN task_leases l ON l.task_id=d.task_id WHERE d.state IN ('intent','running') AND (l.task_id IS NULL OR l.expires_at_ms<=?1) ORDER BY d.task_id",
                 )
                 .map_err(sql_error)?;
             let rows = statement
@@ -888,6 +1017,8 @@ impl TaskStore {
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 })
                 .map_err(sql_error)?
@@ -895,13 +1026,7 @@ impl TaskStore {
                 .map_err(sql_error)?;
             drop(statement);
             let mut recovered = Vec::new();
-            for (task_id, attempt, run_id) in rows {
-                transaction
-                    .execute(
-                        "UPDATE task_dispatches SET state='unknown' WHERE task_id=?1 AND attempt=?2",
-                        params![task_id, attempt],
-                    )
-                    .map_err(sql_error)?;
+            for (task_id, attempt, run_id, dispatch_state, owner) in rows {
                 let task_id = task_id
                     .parse::<uuid::Uuid>()
                     .map(TaskId)
@@ -911,21 +1036,59 @@ impl TaskStore {
                     .map(RunId)
                     .map_err(|_| storage("task_corrupt", "Task Run ID is invalid"))?;
                 let mut record = load_connection(&transaction, task_id)?;
+                // A remote dispatch that never reached `remote_task_start` is
+                // provably side-effect free: the worker confirms the start
+                // before executing anything. Such an attempt returns to the
+                // queue instead of waiting for manual resolution. A confirmed
+                // start keeps the never-auto-replay rule (`waiting_unknown`).
+                let unstarted_remote = dispatch_state == "intent"
+                    && (record.remote_worker.is_some()
+                        || owner
+                            .as_deref()
+                            .is_some_and(|owner| owner.starts_with("remote:")));
+                let next_dispatch = if unstarted_remote {
+                    DispatchState::Expired
+                } else {
+                    DispatchState::Unknown
+                };
+                transaction
+                    .execute(
+                        "UPDATE task_dispatches SET state=?3 WHERE task_id=?1 AND attempt=?2",
+                        params![
+                            id(task_id.0),
+                            attempt,
+                            dispatch_state_label(next_dispatch)
+                        ],
+                    )
+                    .map_err(sql_error)?;
                 if record.status.is_terminal() {
                     continue;
                 }
                 let requested_status = record.status;
-                record.last_run_id = Some(run_id);
-                record.status = match requested_status {
-                    TaskStatus::Cancelled => TaskStatus::Cancelled,
-                    TaskStatus::Paused => TaskStatus::Paused,
-                    _ => TaskStatus::WaitingUnknown,
-                };
-                if record.status == TaskStatus::WaitingUnknown {
-                    record.failure = Some(ErrorInfo {
-                        code: "task_outcome_unknown".into(),
-                        message: "worker stopped before the Run outcome was recorded".into(),
-                    });
+                if unstarted_remote {
+                    record.status = match requested_status {
+                        TaskStatus::Cancelled => TaskStatus::Cancelled,
+                        TaskStatus::Paused => TaskStatus::Paused,
+                        _ => TaskStatus::Queued,
+                    };
+                    if record.status == TaskStatus::Queued {
+                        record.failure = None;
+                        record.last_run_id = None;
+                        record.remote_result = None;
+                    }
+                } else {
+                    record.last_run_id = Some(run_id);
+                    record.status = match requested_status {
+                        TaskStatus::Cancelled => TaskStatus::Cancelled,
+                        TaskStatus::Paused => TaskStatus::Paused,
+                        _ => TaskStatus::WaitingUnknown,
+                    };
+                    if record.status == TaskStatus::WaitingUnknown {
+                        record.failure = Some(ErrorInfo {
+                            code: "task_outcome_unknown".into(),
+                            message: "worker stopped before the Run outcome was recorded".into(),
+                        });
+                    }
                 }
                 record.updated_at = now.clone();
                 record.revision = record.revision.saturating_add(1);
@@ -969,6 +1132,7 @@ impl TaskStore {
                 record.status = TaskStatus::Queued;
                 record.failure = None;
                 record.last_run_id = None;
+                record.remote_result = None;
             } else {
                 record.status = TaskStatus::Blocked;
             }

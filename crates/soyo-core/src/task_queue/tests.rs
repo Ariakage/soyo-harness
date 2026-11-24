@@ -706,3 +706,244 @@ fn task_records_enforce_schema_and_terminal_invariants() {
     invalid.last_result = Some(summary(RunId::new(), "2026-11-24T05:00:00Z"));
     assert!(invalid.validate().is_err());
 }
+
+fn remote_result(run_id: RunId, worker_id: &str) -> crate::remote::RemoteTaskResult {
+    crate::remote::RemoteTaskResult {
+        schema_version: crate::remote::REMOTE_PROTOCOL_SCHEMA_VERSION,
+        worker_id: worker_id.into(),
+        run_id,
+        summary: Some("remote task completed".into()),
+        changed_files: vec![crate::remote::RemoteFileChange {
+            path: "out.txt".into(),
+            kind: crate::remote::RemoteChangeKind::Added,
+            base_sha256: None,
+            new_sha256: Some("a".repeat(64)),
+            bytes: 3,
+            executable: false,
+        }],
+        received_at: "2026-11-24T06:00:00Z".into(),
+    }
+}
+
+#[tokio::test]
+async fn assign_worker_binds_only_queued_tasks() {
+    let root = tempfile::tempdir().unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let task = store.create(record()).await.unwrap();
+    let assigned = store
+        .assign_worker(
+            task.id,
+            Some("worker-1".into()),
+            "2026-11-24T06:00:00Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(assigned.remote_worker.as_deref(), Some("worker-1"));
+    assert_eq!(assigned.revision, 1);
+    let reloaded = store.load(task.id).await.unwrap();
+    assert_eq!(reloaded.remote_worker.as_deref(), Some("worker-1"));
+    // Invalid identifiers are refused before any write.
+    assert!(
+        store
+            .assign_worker(
+                task.id,
+                Some("bad id".into()),
+                "2026-11-24T06:01:00Z".into()
+            )
+            .await
+            .is_err()
+    );
+    // A running task cannot be redirected mid-flight.
+    let lease = store
+        .acquire_lease(task.id, "remote:worker-1".into(), 1_000, Some(60_000))
+        .await
+        .unwrap();
+    let _dispatch = store
+        .begin_attempt(&lease, RunId::new(), 1_000, "2026-11-24T06:02:00Z".into())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .assign_worker(task.id, None, "2026-11-24T06:03:00Z".into())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn remote_finish_stores_the_unverified_result() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let mut task = record();
+    task.workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let task = store.create(task).await.unwrap();
+    let task = store
+        .assign_worker(
+            task.id,
+            Some("worker-1".into()),
+            "2026-11-24T06:00:00Z".into(),
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .acquire_lease(task.id, "remote:worker-1".into(), 1_000, Some(60_000))
+        .await
+        .unwrap();
+    let run_id = RunId::new();
+    let dispatch = store
+        .begin_attempt(&lease, run_id, 1_000, "2026-11-24T06:01:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 1_001).await.unwrap();
+    let stored = store
+        .finish_remote_attempt(
+            &lease,
+            &dispatch,
+            summary(run_id, "2026-11-24T06:02:00Z"),
+            &RunMetrics::default(),
+            remote_result(run_id, "worker-1"),
+            "2026-11-24T06:02:00Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.status, TaskStatus::Completed);
+    let remote = stored.remote_result.as_ref().expect("remote result");
+    assert_eq!(remote.worker_id, "worker-1");
+    assert_eq!(remote.changed_files.len(), 1);
+    assert_eq!(stored.last_result.as_ref().unwrap().run_id, run_id);
+    // A result from a different worker can never be attached to this task.
+    let mut other = record();
+    other.workspace = task.workspace.clone();
+    let other = store.create(other).await.unwrap();
+    let other = store
+        .assign_worker(
+            other.id,
+            Some("worker-2".into()),
+            "2026-11-24T06:03:00Z".into(),
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .acquire_lease(other.id, "remote:worker-2".into(), 1_000, Some(60_000))
+        .await
+        .unwrap();
+    let run_id = RunId::new();
+    let dispatch = store
+        .begin_attempt(&lease, run_id, 1_000, "2026-11-24T06:04:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 1_001).await.unwrap();
+    assert!(
+        store
+            .finish_remote_attempt(
+                &lease,
+                &dispatch,
+                summary(run_id, "2026-11-24T06:05:00Z"),
+                &RunMetrics::default(),
+                remote_result(run_id, "worker-1"),
+                "2026-11-24T06:05:00Z".into(),
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn unstarted_remote_dispatch_returns_to_the_queue() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let mut task = record();
+    task.workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let task = store.create(task).await.unwrap();
+    let task = store
+        .assign_worker(
+            task.id,
+            Some("worker-1".into()),
+            "2026-11-24T06:00:00Z".into(),
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .acquire_lease(task.id, "remote:worker-1".into(), 1_000, Some(5_000))
+        .await
+        .unwrap();
+    let _dispatch = store
+        .begin_attempt(&lease, RunId::new(), 1_000, "2026-11-24T06:01:00Z".into())
+        .await
+        .unwrap();
+    // The claimant never confirmed the start, so the expired intent is
+    // requeued instead of waiting for a manual resolution.
+    let recovered = store
+        .recover_unknown(u64::MAX, "2026-11-24T06:02:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].status, TaskStatus::Queued);
+    assert!(recovered[0].failure.is_none());
+    assert!(recovered[0].last_run_id.is_none());
+    assert!(recovered[0].remote_result.is_none());
+    // It is dispatchable again; the attempt counter advanced.
+    let lease = store
+        .acquire_lease(task.id, "remote:worker-1".into(), 7_000, Some(5_000))
+        .await
+        .unwrap();
+    let retry = store
+        .begin_attempt(&lease, RunId::new(), 7_000, "2026-11-24T06:03:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(retry.attempt, 2);
+}
+
+#[tokio::test]
+async fn started_remote_dispatch_never_requeues_automatically() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("workspace")).unwrap();
+    let store = TaskStore::open(&root.path().join("data"), vec![]).unwrap();
+    let mut task = record();
+    task.workspace = fs::canonicalize(root.path().join("workspace")).unwrap();
+    let task = store.create(task).await.unwrap();
+    let task = store
+        .assign_worker(
+            task.id,
+            Some("worker-1".into()),
+            "2026-11-24T06:00:00Z".into(),
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .acquire_lease(task.id, "remote:worker-1".into(), 1_000, Some(5_000))
+        .await
+        .unwrap();
+    let run_id = RunId::new();
+    let dispatch = store
+        .begin_attempt(&lease, run_id, 1_000, "2026-11-24T06:01:00Z".into())
+        .await
+        .unwrap();
+    store.mark_running(&dispatch, &lease, 1_100).await.unwrap();
+    let recovered = store
+        .recover_unknown(u64::MAX, "2026-11-24T06:02:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].status, TaskStatus::WaitingUnknown);
+    assert_eq!(recovered[0].last_run_id, Some(run_id));
+    // Only an explicit retry resolution can requeue it.
+    assert!(
+        store
+            .begin_attempt(
+                &lease,
+                RunId::new(),
+                u64::MAX,
+                "2026-11-24T06:03:00Z".into()
+            )
+            .await
+            .is_err()
+    );
+    let resolved = store
+        .resolve_unknown(task.id, true, "2026-11-24T06:04:00Z".into())
+        .await
+        .unwrap();
+    assert_eq!(resolved.status, TaskStatus::Queued);
+}

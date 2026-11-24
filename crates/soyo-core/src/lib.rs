@@ -49,6 +49,7 @@ pub mod prompt;
 pub mod provider;
 pub mod redaction;
 pub mod registry;
+pub mod remote;
 pub mod review;
 pub mod runtime;
 pub mod skills;
