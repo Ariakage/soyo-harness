@@ -1452,6 +1452,45 @@ mod tests {
     }
 
     #[test]
+    fn multi_chunk_blob_transfer_advances_by_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RemoteSyncStore::open(dir.path()).unwrap();
+        let data: Vec<u8> = (0..(2 * REMOTE_BLOB_CHUNK_BYTES + 512))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let sha = sha256_hex(&data);
+        store.begin_blob(&sha, data.len() as u64).unwrap();
+        let mut offset = 0usize;
+        while offset < data.len() {
+            let end = (offset + REMOTE_BLOB_CHUNK_BYTES).min(data.len());
+            store
+                .write_blob_chunk(&sha, offset as u64, &data[offset..end])
+                .unwrap();
+            offset = end;
+        }
+        store.finish_blob(&sha, data.len() as u64).unwrap();
+        assert_eq!(store.get_blob(&sha).unwrap(), data);
+
+        let mut assembled = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            let (chunk, total) = store
+                .read_blob_range(&sha, offset, REMOTE_BLOB_CHUNK_BYTES)
+                .unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+            assert_eq!(total, data.len() as u64);
+            offset += chunk.len() as u64;
+            assembled.extend(chunk);
+            if offset >= total {
+                break;
+            }
+        }
+        assert_eq!(assembled, data);
+    }
+
+    #[test]
     fn manifest_round_trips_and_rejects_traversal_paths() {
         let dir = tempfile::tempdir().unwrap();
         let store = RemoteSyncStore::open(dir.path()).unwrap();
