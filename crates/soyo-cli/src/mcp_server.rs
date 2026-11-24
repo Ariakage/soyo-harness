@@ -199,10 +199,7 @@ impl SoyoMcpServer {
 
         let run_state = match self
             .client
-            .call(
-                "get_run_state",
-                json!({ "session_id": session_id }),
-            )
+            .call("get_run_state", json!({ "session_id": session_id }))
             .await
         {
             Ok(value) => value,
@@ -230,10 +227,7 @@ impl SoyoMcpServer {
         let parsed: CancelToolArgs = parse_args(args)?;
         let result = self
             .client
-            .call(
-                "cancel_run",
-                json!({ "run_id": parsed.run_id }),
-            )
+            .call("cancel_run", json!({ "run_id": parsed.run_id }))
             .await;
         match result {
             Ok(value) => Ok(CallToolResult::structured(json!({
@@ -392,9 +386,7 @@ async fn wait_for_run_identity(
                 // Keep waiting — control envelopes arrive before the first
                 // run-scoped schema event.
             }
-            Ok(Some(DesktopStreamEnvelope::RunCompleted {
-                status, error, ..
-            })) => {
+            Ok(Some(DesktopStreamEnvelope::RunCompleted { status, error, .. })) => {
                 let detail = error
                     .map(|err| format!("{}: {}", err.code, err.message))
                     .unwrap_or_else(|| format!("run ended with status {status}"));
@@ -490,7 +482,10 @@ mod tests {
         assert_eq!(tools.len(), 3);
         let by_name = |name: &str| tools.iter().find(|t| t.name == name).expect(name);
         let run = by_name(TOOL_RUN);
-        assert_eq!(run.annotations.as_ref().unwrap().read_only_hint, Some(false));
+        assert_eq!(
+            run.annotations.as_ref().unwrap().read_only_hint,
+            Some(false)
+        );
         let status = by_name(TOOL_STATUS);
         assert_eq!(
             status.annotations.as_ref().unwrap().read_only_hint,
