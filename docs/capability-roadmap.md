@@ -70,7 +70,7 @@ flowchart TD
 | F-07 | 全局／项目记忆与模型编辑 | 中（已扩展事实 TTL 与检索增强） | F-06、F-12 | 通过可读MEMORY.md、专用工具和审阅恢复机制维护跨会话知识 |
 | F-08 | 后台与持久任务 | 高（已实现跨运行持久队列 opt-in） | F-01、F-05、F-12 | 运行长任务、暂停、继续和管理任务队列 |
 | F-09 | 多 Agent 协作 | 中 | F-01、F-05、F-06、F-08、F-12 | 将任务交给有独立上下文与预算的子 Agent |
-| F-10 | 联网读取与浏览器 | 中 | F-01、F-02 | 获取网页资料，随后扩展到受控网页操作 |
+| F-10 | 联网读取与浏览器 | 中（基线链路已交付，VM opt-in 增量已实现） | F-01、F-02 | 获取网页资料，随后扩展到受控网页操作 |
 | F-11 | 多模态与附件 | 中（已实现 File artifact 文本提取 opt-in） | F-01、F-06 | 使用图片、PDF 和其他附件完成任务 |
 | F-12 | 日志、追踪、回放与评估 | 近期及贯穿各批次 | MVP 事件与安全日志 | 五级诊断、关联追踪、失败定位与版本评估 |
 | F-13 | 稳定 SDK、服务与远程执行 | 后期 | F-01、F-02、F-08、F-12 | 将 Soyo 嵌入其他产品，管理远端任务 |
@@ -215,6 +215,8 @@ N3 已实现 `~/.soyo/MEMORY.md` 与主题资料目录，提供默认读取／�
 ## F-10 联网读取与浏览器
 
 BrowserProvider 首版候选为托管 Chromium／Playwright MCP worker，通过原生后端约束。URL／搜索、ARIA 快照、页面交互、截图、文件、登录、后台任务及策略见[Browser 设计](browser.md)，任务为 DEV-079 至 DEV-083。
+
+> **实现状态（D-095／D-096／D-097）**：基线 Browser 链路（DEV-079 至 DEV-083、专用 Colima VM＋原生 worker、schema v2 安装树身份、`[browser.network]` broker 唯一出口）已交付并完成四平台固定源码终验。本批新增**四个默认关闭、互不耦合的 VM 后端 opt-in 增量**，全部失败关闭、关闭时零漂移：(1) `[browser.profile]` 持久登录／profile 状态——按名字管理的 `userDataDir`＋保留期限，刻意放宽 per-Run scratch 保证，是新增的 opt-in 安全／外泄面（D-096），持久上下文禁用私有 isolated-stdio 通道故截图 facts 失败关闭；(2) `[browser.remote]` 远程／CDP attach——worker 仍跑在 VM 内经身份验证，仅被驱动的浏览器换成显式 CDP 端点；私有 `processInfo`＋`captureScreenshot` 通道不可满足故**全部四项 facts 失败关闭**（D-095），endpoint 须为 VM 回环字面量且有精确匹配的 dev_service 转发；(3) `[browser.dev_service]` localhost 开发服务转发——每条 `alias`＋回环字面 host＋精确端口经 SSH 反向 streamlocal＋netns socat 桥接，精确端点、绝无通配；(4) 非 ARM64 遮蔽截图引擎分发姿态——`MASKED_CAPTURE_ENGINE_TARGETS` 显式集合只含 `aarch64-unknown-linux-gnu`，`linux-x86_64` 为下一目标（真实 patched 构建仍待产出）、macOS 双架构不支持（引擎是 Linux ELF），非列出目标绝不 provisioning 也绝不声称截图能力（D-097）。四者均要求 `[browser.vm]`，与原生 worker 互斥。
 
 **价值**：完成需要外部资料与网页交互的通用任务。
 

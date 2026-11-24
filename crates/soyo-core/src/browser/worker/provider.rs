@@ -74,6 +74,16 @@ pub struct PlaywrightMcpProvider {
     /// Bounded host-side network observations for backends that use the
     /// browser broker. Native workers keep this unset.
     pub(super) network_log: Option<Arc<crate::browser::network::BrowserNetworkLog>>,
+    /// Facts reported to the model. `None` keeps the managed-isolated defaults;
+    /// opt-in modes (persisted profile, remote CDP) supply a degraded set that
+    /// fails closed on capabilities the private channel cannot provide.
+    pub(super) facts_override: Option<BrowserFacts>,
+    /// When the private isolated-stdio channels are unavailable (persisted
+    /// profile or remote attach), the private-channel sandbox evidence cannot
+    /// be produced. Backends with an independent evidence source (the VM /proc
+    /// scan) still verify; a backend that only had the private channel disables
+    /// verification and reports the degraded facts instead of claiming.
+    pub(super) sandbox_evidence_disabled: bool,
     inner: AsyncMutex<ProviderInner>,
     pub(super) call_lock: AsyncMutex<()>,
     pub(super) shutdown_lock: AsyncMutex<()>,
@@ -175,6 +185,8 @@ impl PlaywrightMcpProvider {
             environment_factory,
             sandbox_inspector,
             network_log: None,
+            facts_override: None,
+            sandbox_evidence_disabled: false,
             inner: AsyncMutex::new(ProviderInner {
                 connection: None,
                 generation: 0,
@@ -201,6 +213,25 @@ impl PlaywrightMcpProvider {
         log: Arc<crate::browser::network::BrowserNetworkLog>,
     ) -> Self {
         self.network_log = Some(log);
+        self
+    }
+
+    /// Override the capability facts reported to the model. Used by opt-in
+    /// attach modes that cannot satisfy the private-channel contract: they
+    /// declare the degraded set so the model-facing tools fail closed instead
+    /// of claiming a capability the launch cannot produce.
+    pub fn with_facts(mut self, facts: BrowserFacts) -> Self {
+        self.facts_override = Some(facts);
+        self
+    }
+
+    /// Mark private-channel sandbox evidence unavailable. The VM /proc scan is
+    /// an independent evidence source and stays on; this flag is for a backend
+    /// whose only evidence rode the isolated-stdio private channel. With it
+    /// set, `verify_sandbox` records no evidence but does not fail — the
+    /// degraded facts are what the model sees, never a sandbox claim.
+    pub fn with_sandbox_evidence_disabled(mut self) -> Self {
+        self.sandbox_evidence_disabled = true;
         self
     }
 
@@ -545,6 +576,16 @@ impl PlaywrightMcpProvider {
             // Dropping this future must not make an unverified lifecycle reusable.
             inner.sandbox_unusable = true;
         }
+        // Remote attach has no managed Chromium to verify: the browser lives
+        // outside the controlled boundary, so there is no sandbox to inspect
+        // and nothing is claimed. A persisted profile still launches managed
+        // Chromium, which the VM /proc scan verifies independently — so only
+        // the no-managed-browser mode takes this branch.
+        if self.sandbox_evidence_disabled {
+            let mut inner = self.inner.lock().await;
+            inner.sandbox_unusable = false;
+            return Ok(());
+        }
         let evidence = self
             .sandbox_inspector
             .inspect_connection(connection.as_ref(), cancel)
@@ -645,6 +686,9 @@ impl PlaywrightMcpProvider {
 #[async_trait]
 impl BrowserProvider for PlaywrightMcpProvider {
     fn facts(&self) -> BrowserFacts {
+        if let Some(facts) = &self.facts_override {
+            return facts.clone();
+        }
         BrowserFacts {
             provider: format!("playwright-mcp-{PLAYWRIGHT_MCP_VERSION}"),
             // Pre-capture masking is delegated through the private host-only

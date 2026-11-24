@@ -553,6 +553,8 @@ async fn real_vm_credentials_files_background_and_cleanup() {
             network,
             &run.id.0.to_string(),
             ExecConfig::default(),
+            soyo_core::browser::BrowserAttachMode::Isolated,
+            Vec::new(),
         )
         .expect("VM provider assembly"),
     );

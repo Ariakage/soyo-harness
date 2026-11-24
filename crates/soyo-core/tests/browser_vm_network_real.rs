@@ -399,6 +399,8 @@ async fn vm_browser_network_is_broker_only_and_cleans_everything() {
             network,
             "vm-network-real",
             ExecConfig::default(),
+            soyo_core::browser::BrowserAttachMode::Isolated,
+            Vec::new(),
         )
         .expect("VM provider assembly"),
     );

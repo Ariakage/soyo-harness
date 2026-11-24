@@ -308,6 +308,32 @@ enabled = false
 enabled = true
 max_download_bytes = 8388608
 max_upload_bytes = 8388608
+
+# D-096：持久登录/profile 状态，默认关闭、仅 VM 后端、与 remote 互斥。
+# 刻意放宽 per-Run scratch 保证：cookies/storage 跨 Run 存活，属 opt-in 外泄面。
+# [browser.profile]
+# enabled = false
+# name = "work"                    # 必为合法 alias（字母数字 _-.）
+# remote_root = "/home/soyo/profiles"  # VM 端 POSIX 绝对路径，必填
+# retention = "persist"            # 默认；或 retention = { expires_after = { seconds = 604800 } }（60..31536000）
+
+# D-095：远程/CDP attach，默认关闭、仅 VM 后端、与 profile 互斥。
+# worker 仍在 VM 内经身份验证；私有 processInfo/captureScreenshot 通道不可满足，
+# 故四项 facts 全部失败关闭。endpoint 须为 VM 回环字面量且有精确 dev_service 转发。
+# [browser.remote]
+# enabled = false
+# endpoint = "ws://127.0.0.1:9222" # ws/wss、无凭据/path/query、非 31281
+# connect_timeout_ms = 20000
+# request_timeout_ms = 120000
+
+# D-097：localhost 开发服务转发，默认关闭、仅 VM 后端且需 [browser.network]。
+# 每条 alias+回环字面 host+精确端口，1–16 条、(host,port) 唯一、绝无通配。
+# [browser.dev_service]
+# enabled = false
+# [[browser.dev_service.forwards]]
+# alias = "web"
+# host = "127.0.0.1"
+# port = 3000
 ```
 
 `fetch_url` 只接受 HTTP／HTTPS 的 GET／HEAD，拒绝 userinfo、fragment、特殊 scheme 和系统 proxy。每次重定向都重新检查 origin、公开地址与完整 DNS 答案，并把连接固定到已核查 IP。DNS 解析与响应体读取同时受 timeout 和取消约束；响应大小、内容类型、UTF-8、超时与取消均有边界。字节截断落在 UTF-8 多字节中间时保留有效前缀并标记 truncated，真正损坏的输入仍报 `invalid_utf8`。非 HTML 内容同样在截断时返回 `truncated = true`；没有 OutputStore、捕获失败或捕获未保留字节时，正文返回有界 16KiB 前缀并标记 truncated，不返回空成功。HTML 提取以任意命名空间的 element handler 排除 script／style／noscript／template（含 SVG／MathML）与 RawText／ScriptData，并避免相邻文本块无空白粘连。搜索 endpoint 必须严格规范化为 HTTP／HTTPS，不能包含 query 或 fragment，其 origin 必须出现在 `allowed_origins` 中；字面私网或回环地址默认拒绝，只有同时显式配置 `localhost_development_origin` 时才允许开发回环；开发 origin 必须是回环地址，回环 allowlist 条目必须同时指定为开发 origin。搜索请求固定为 `GET endpoint?q=<query>&limit=<n>`，响应必须是 `{"results":[{"title","url","snippet"?}]}` 严格 JSON，`url` 必须是可规范化的 HTTP／HTTPS 地址。网页正文和快照分别作为 `Web`／`Browser` 流进入 OutputStore，长内容保留 `output_ref`、coverage 与 truncated；搜索长结果投影只保留 `result_count` 等元数据，正文经 `output_read`／`output_search` 回取；上游、提取、provider 或捕获已截断时使用 `limit_reached` 完成状态，不伪称 `eof` 完整。
@@ -321,6 +347,8 @@ DEV-080 的 `[browser.worker]` 仅描述宿主预置的 Playwright MCP worker，
 `[browser.vm]` 按 D-066 保留宿主与 Chromium 双层 sandbox。启用时所有宿主与远端路径必须显式；宿主 `ssh`、identity 与 known-hosts（共三个文件，不含 `/etc/passwd`）由 Seatbelt 精确只读绑定，canonicalize 后的路径再次接受空白、控制字符与引号校验，符号链接目标也不能绕过。`host` 必须是字面回环地址，`[::1]` 等括号形式会归一化为 `::1` 后再进入 HostName 与 argv。写范围仅 run 私有目录，网络只允许到 `host:port` 的 VM loopback SSH，使用 `BatchMode`、`IdentitiesOnly`、严格主机 key 校验并禁止 agent／X11／本地命令／连接复用与 ProxyJump。远端身份校验通过同一受控通道核对 schema v2 manifest 摘要、命名文件大小／SHA-256／权限、三棵安装树摘要／计数／字节、Node 实际版本、`@playwright/mcp`／Playwright 精确版本、Chromium `158.0.8127.18`（revision 1254）和 headless-shell 路径。每个生命周期创建唯一 0700 Run 根，并预先创建 LAUNCH 使用的全部 XDG 目录。SSH 断连、worker 退出、取消或 Run 结束都执行有界远端清理；启动或清理失败保留可重试句柄，外层超时不会丢弃 connection／workspace，无法确认时返回 unknown 并允许重试。VM 内 renderer 证据要求合法 sandbox argv、`NoNewPrivs=1` 与 `Seccomp=2`；native 浏览器还必须取得 Chromium 自有的 `InitializeSandbox` 证据，不能只依赖 Bubblewrap 固定属性。DEV-081A 起 VM 网络只经宿主 broker：宿主启动受 `RunNetworkBudget` 约束的 `NetworkBroker`，SSH 通道增加一条反向 streamlocal 转发，VM 内在 `sudo -n unshare -n` 的私有网络命名空间中由原用户运行 `socat`，worker 再 `setpriv` 回原用户；宿主通道需要放行的两个回环端口是 `[browser.vm].port`（Colima 转发的 VM SSH）和本次 Run 的 broker 临时端口，VM 内 `31281` 只在私有 netns 中。Chromium 被固定到该 loopback 代理，禁用 QUIC、非代理 WebRTC UDP、隐式回环旁路与本地页面名解析。隔离能力失败返回 `browser_network_unavailable`，预算耗尽或固定 deadline 到期返回 `browser_network_budget`，均不回退默认 VM 网络。`screenshots` 仍为 false，原因是固定 worker 没有在截图生成前执行真实遮蔽的契约，而不是 DEV-082 的图片／产物能力未实现；`downloads`／`uploads` 为 true；下载只接受显式元素动作产生的文件，上传只接受当前 Session 的 artifact 引用，并在宿主 OutputStore 保护目录下的 0600 staging 与 VM Run 私有 staging 之间复制。VM 上传以原名作为页面可见 basename 放入唯一私有目录，脚本用 trap 在 create／write／chmod／mv 失败或取消时删除半成品。`browser_navigate`／`wait`／`download` 支持显式 `background=true`，返回真实 job ID 并接入现有 BackgroundJobs、PLAN、取消与 Run 清理；已派发取消为 `outcome_unknown`，不重放。job `tool_timeout` 即使观察到 deadline 之后完成的下载，也保留其 `SealedMedia` lease 和 observed result，避免 GC 提前回收。PLAN 清理使 `background=true` 失败并在显式 open 后重新绑定存活的 supervisor；生命周期取消唤醒在途 wait。凭据／文件错误不绕过权限、PLAN 或 artifact ACL。`scripts/n5/browser_vm.py` 是唯一的显式创建／provision／check／destroy 入口，严格校验本地 canonical 路径、远端生成路径、manifest 结构与 worker-source 目录名，运行时不自动下载或更新版本。每个 Run 只创建一个共享 `RunNetworkBudget`，所有 worker 生命周期与 broker 重启共用累计 bytes／connections 和固定 deadline；重启不会重置已耗尽的上限。`provision`／`check` 还验证 `sudo -n`、`unshare -n`、`socat`、`setpriv`、`nsenter`、`ip route`、Chromium 所需的 user namespace／AppArmor 当前值，以及 `sshd -T` 报告的有效配置确实允许反向 streamlocal forwarding（`AllowStreamLocalForwarding`，并拒绝显式 `AllowTcpForwarding no`）；`provision --configure-apparmor-userns` 仅在专用 VM 内写入 sysctl drop-in，不修改宿主。
 
 `[browser.credentials]` 默认关闭；启用时必须给出绝对私有 store 路径和至少一个 slot，所有 slot 的 alias 必须唯一，`credential_ref` 必须是合法 UUID 引用，origin 必须是无 path／query／fragment 的精确规范化 HTTPS origin；只有显式回环开发 origin（`localhost` 或回环 IP）允许 HTTP，其余 HTTP origin 拒绝。purpose 只能是 `form_fill`，`max_uses` 为 1 至 32。store 以及运行中解析出的凭据值不会进入模型上下文；只要 credentials 已启用并声明 store，非 Host 执行后端会把 store 路径加入受保护路径，Host 后端直接拒绝，即使 `browser.enabled = false`。`[browser.files]` 默认启用，下载／上传上限各自限制为不超过 16 MiB 的有界 File artifact；启用时不接受任意宿主路径，上传只接受同一 Session 且摘要校验通过的 artifact 引用。
+
+`[browser.profile]`／`[browser.remote]`／`[browser.dev_service]` 是三个默认关闭、互不耦合、仅在专用 VM 后端提供的 opt-in 增量，关闭时逐字节零漂移、启用条件不满足即 `invalid_config` 失败关闭。`attach_mode()` 把三者收敛为 `BrowserAttachMode`（`Isolated` 默认／`PersistentProfile`／`RemoteCdp`），模型输入永不可达配置。`[browser.profile]`（D-096）按名字持久 `userDataDir` 跨 Run 保留 cookies／storage，是刻意放宽 per-Run scratch 的 opt-in 外泄面；持久上下文强制 `isolated:false`、私有 `processInfo`＋`captureScreenshot` 通道失效，故 `screenshots`/`screenshot_masking` 失败关闭，`downloads`/`uploads` 保留，VM 侧仍经远程 `/proc` 扫描验证 renderer 沙箱；与 `[browser.remote]` 互斥，`remote_root` 必填、`root`（宿主路径）不得同时声明。`[browser.remote]`（D-095）把 attach 换成显式 CDP endpoint（VM 回环字面量、无凭据／path／query、端口非 0 且非 `31281`），endpoint 必须有一条 `(host,port)` 精确匹配的 dev_service 转发才可经 SSH 反向 streamlocal 抵达宿主侧浏览器；远程浏览器不满足私有通道契约，`screenshots`/`screenshot_masking`/`downloads`/`uploads` 四项 facts 全部失败关闭并跳过 renderer 沙箱证据扫描。`[browser.dev_service]`（D-097）每条转发为 `alias`＋回环字面 `host`＋非 0 精确 `port`（不占用 `31281`），1–16 条、`(host,port)` 唯一、`[::1]`/`::1` 归一化匹配、绝无通配；每条经一条 SSH `-R` 反向 streamlocal（`StreamLocalBindUnlink`＋`ExitOnForwardFailure`）＋netns `socat TCP-LISTEN` 桥到宿主同名服务，`devspec` 建立失败归 `browser_network_unavailable`，且仅在 `[browser.vm]` 与 `[browser.network]` 同时启用时可用。遮蔽截图引擎按 `MASKED_CAPTURE_ENGINE_TARGETS` 显式集合分发：当前仅 `aarch64-unknown-linux-gnu` 已交付验收，`linux-x86_64` 为下一目标（真实 patched 构建待产出），macOS 双架构不支持；非列出目标绝不 provisioning、绝不声称 `screenshots`/`screenshot_masking`。
 
 `[js_repl]`（`F-21`，`D-082`/`D-083`）是实验性、严格默认关闭的只读 JavaScript 编排面。`enabled = true` 时模型可见 `js_repl` 工具：脚本在原生沙箱（Seatbelt／Bubblewrap）内的 `__soyo-js-worker` 同二进制子进程中经 QuickJS 求值，没有文件、网络、进程、模块或凭据访问；脚本内 `await soyo.callTool(name, args)` 逐次经有界 RPC 回到宿主，每一次底层调用都重新过 deny、路径根检查、`tool.before_dispatch`/`tool.finished` Hooks、审批、预算、取消与脱敏，只有只读工具（文件读取、发现与输出查询、Web 读取与声明只读副作用的外部工具）可桥接，`exec`、写入、交互、多智能体、会话控制与 `js_repl` 自身一律在派发前拒绝。审批绑定完整脚本原文与超时，显式 `Host` 兼容后端拒绝该工具。所有限额均可调但有硬上界；脚本字节、桥消息与底层调用数超限、worker 崩溃或超时一律以失败结果返回，中间结果不进入模型历史。
 

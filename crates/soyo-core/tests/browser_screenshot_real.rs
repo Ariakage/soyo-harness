@@ -854,6 +854,8 @@ async fn production_provider_captures_masked_png_and_hides_credentials() {
             network,
             &run.id.0.to_string(),
             ExecConfig::default(),
+            soyo_core::browser::BrowserAttachMode::Isolated,
+            Vec::new(),
         )
         .expect("VM provider assembly"),
     );
