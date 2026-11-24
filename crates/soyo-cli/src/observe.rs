@@ -54,6 +54,14 @@ pub struct DiagnoseArgs {
 }
 
 #[derive(Args, Clone)]
+pub struct EvalArgs {
+    /// Directory of recorded regression fixtures (`*.json`), read in file-name
+    /// order. Each fixture embeds a synthetic session snapshot and the expected
+    /// projection outcome.
+    fixtures: PathBuf,
+}
+
+#[derive(Args, Clone)]
 pub struct ReportArgs {
     /// Persisted session identifier.
     session_id: String,
@@ -387,6 +395,103 @@ async fn run_report(
     Ok(value)
 }
 
+fn eval_text(report: &soyo_app::observe::EvalReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Observe eval: {} case(s) · {} passed · {} failed\n\n",
+        report.cases.len(),
+        report.passed,
+        report.failed
+    ));
+    for case in &report.cases {
+        out.push_str(&format!(
+            "{:<5} {}  (run {})\n",
+            if case.passed { "PASS" } else { "FAIL" },
+            case.name,
+            case.run_id
+        ));
+        for check in &case.checks {
+            out.push_str(&format!(
+                "      {}: expected {} · actual {}{}\n",
+                check.field,
+                check.expected,
+                check.actual,
+                if check.passed { "" } else { "  ← drift" }
+            ));
+        }
+    }
+    out
+}
+
+/// Run the fixed fixture-set regression eval: parse every `*.json` fixture,
+/// project its recorded snapshot through [`soyo_app::observe`], and compare the
+/// result with the recorded expectation. Nothing is executed or written.
+pub async fn run_eval(
+    config: &Config,
+    args: &EvalArgs,
+    cancel: Arc<Cancel>,
+) -> Result<(serde_json::Value, String, bool), BoundaryError> {
+    let dir = if args.fixtures.is_absolute() {
+        args.fixtures.clone()
+    } else {
+        config.cwd.join(&args.fixtures)
+    };
+    let owned = dir.clone();
+    let files = soyo_app::offload_boundary(move || {
+        let entries = std::fs::read_dir(&owned)
+            .map_err(|_| cli_error("fixture_io", "cannot read the fixture directory"))?;
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry =
+                entry.map_err(|_| cli_error("fixture_io", "cannot read a fixture entry"))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                files.push(path);
+            }
+        }
+        files.sort();
+        Ok::<_, BoundaryError>(files)
+    })
+    .await?;
+    if files.is_empty() {
+        return Err(cli_error(
+            "fixture_empty",
+            "no *.json fixtures found in the given directory",
+        ));
+    }
+    let mut cases = Vec::new();
+    for file in files {
+        if cancel.is_cancelled() {
+            return Err(cli_error("cancelled", "eval cancelled"));
+        }
+        let raw = {
+            let path = file.clone();
+            soyo_app::offload_boundary(move || {
+                std::fs::read_to_string(&path)
+                    .map_err(|_| cli_error("fixture_io", "cannot read a fixture file"))
+            })
+            .await?
+        };
+        let case: soyo_app::observe::EvalCase = serde_json::from_str(&raw).map_err(|error| {
+            cli_error(
+                "fixture_invalid",
+                &format!(
+                    "{}: {error}",
+                    file.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("fixture")
+                ),
+            )
+        })?;
+        cases.push(soyo_app::observe::evaluate_case(case)?);
+    }
+    let report = soyo_app::observe::eval_report(cases);
+    let value = serde_json::to_value(&report)
+        .map_err(|_| cli_error("serialization_error", "cannot encode the eval report"))?;
+    let text = eval_text(&report);
+    Ok((value, text, report.all_passed()))
+}
+
 /// Dispatch one observability command. Returns the JSON payload for machine
 /// output or the rendered text for terminal output.
 pub async fn run(
@@ -452,6 +557,31 @@ pub fn emit(
     outcome: Result<(serde_json::Value, String), BoundaryError>,
     jsonl_type: &str,
 ) -> u8 {
+    emit_with(config, outcome, jsonl_type, 0)
+}
+
+/// Emit an eval outcome; a fixture-set regression exits non-zero so CI detects
+/// drift even when the projection itself succeeded.
+pub fn emit_eval(
+    config: &Config,
+    outcome: Result<(serde_json::Value, String, bool), BoundaryError>,
+    jsonl_type: &str,
+) -> u8 {
+    match outcome {
+        Ok((data, text, passed)) => {
+            let code = if passed { 0 } else { 2 };
+            emit_with(config, Ok((data, text)), jsonl_type, code)
+        }
+        Err(error) => emit_with(config, Err(error), jsonl_type, 2),
+    }
+}
+
+fn emit_with(
+    config: &Config,
+    outcome: Result<(serde_json::Value, String), BoundaryError>,
+    jsonl_type: &str,
+    success_code: u8,
+) -> u8 {
     let (data, text) = match outcome {
         Ok(pair) => pair,
         Err(error) => {
@@ -487,7 +617,7 @@ pub fn emit(
         Output::Text => text,
     };
     match writeln!(io::stdout().lock(), "{}", safe_terminal_text(&rendered)) {
-        Ok(()) => 0,
+        Ok(()) => success_code,
         Err(_) => fail("cannot write observe result"),
     }
 }

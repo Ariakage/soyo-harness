@@ -179,6 +179,8 @@ enum Command {
     Replay(observe::ReplayArgs),
     /// Pinpoint the first failure in a persisted session or run timeline.
     Diagnose(observe::DiagnoseArgs),
+    /// Run the fixed fixture-set observe regression eval (offline, read-only).
+    Eval(observe::EvalArgs),
     /// Build, query, or inspect the external workspace symbol index.
     Index {
         #[command(subcommand)]
@@ -2077,6 +2079,14 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
                 )
                 .await;
                 observe::emit(&config, outcome, "session.diagnose")
+            }
+        },
+        Some(Command::Eval(args)) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => {
+                let cancel = Arc::new(Cancel::new());
+                let outcome = observe::run_eval(&config, args, cancel).await;
+                observe::emit_eval(&config, outcome, "observe.eval")
             }
         },
         Some(Command::Helper { listen }) => {

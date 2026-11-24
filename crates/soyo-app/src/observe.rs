@@ -9,8 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 use soyo_core::{
     contract::{
-        BoundaryError, ErrorInfo, EventPayload, HistoryItem, RunId, RunResult, RunStatus,
-        SessionId,
+        BoundaryError, ErrorInfo, EventPayload, HistoryItem, RunId, RunResult, RunStatus, SessionId,
     },
     metrics::RunMetrics,
     sqlite::{RunMetricsRecord, SessionSnapshot, UsageMetricsRecord},
@@ -934,6 +933,219 @@ pub fn metrics_records(snapshot: &SessionSnapshot) -> Vec<RunMetricsRecord> {
     records
 }
 
+/// One recorded regression case: a synthetic snapshot plus the projection
+/// outcome a version is expected to produce.
+///
+/// Fixtures are persisted snapshots, never live runs — the eval stays offline
+/// and deterministic, so two versions can be compared over the same inputs.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EvalCase {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Run to project. Defaults like `soyo session report`: the most recent
+    /// finished run, else the last persisted run.
+    #[serde(default)]
+    pub run: Option<String>,
+    pub expect: EvalExpect,
+    pub snapshot: SessionSnapshot,
+}
+
+/// Expected projection outcome for one fixture.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct EvalExpect {
+    /// Total projected steps for the selected run.
+    pub steps: usize,
+    /// First failing step index; `null` expects a clean projection.
+    pub failed_step: Option<usize>,
+    /// Stable error code of the first failure; `null` expects none.
+    pub error_code: Option<String>,
+    /// Terminal run status (`completed`, `failed`, ...); `null` when the run
+    /// never finished in the fixture.
+    pub run_status: Option<String>,
+}
+
+/// One field comparison between the expectation and the actual projection.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalCheck {
+    pub field: &'static str,
+    pub expected: String,
+    pub actual: String,
+    pub passed: bool,
+}
+
+/// Per-fixture eval result: the same fields as a run report plus the expected
+/// outcome, field-by-field checks and the pass/fail verdict.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalCaseReport {
+    pub name: String,
+    pub description: Option<String>,
+    pub session_id: String,
+    pub run_id: String,
+    pub run: Value,
+    pub result: Option<RunResult>,
+    pub metrics: Option<RunMetrics>,
+    pub timeline: Timeline,
+    pub diagnosis: Diagnosis,
+    pub expected: EvalExpect,
+    pub checks: Vec<EvalCheck>,
+    pub passed: bool,
+}
+
+/// Aggregate regression report over a fixed fixture set.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalReport {
+    pub cases: Vec<EvalCaseReport>,
+    pub passed: usize,
+    pub failed: usize,
+}
+
+impl EvalReport {
+    /// Whether every fixture matched its expectation.
+    pub fn all_passed(&self) -> bool {
+        self.failed == 0
+    }
+}
+
+fn actual_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".into())
+}
+
+fn check_steps(expected: usize, actual: usize) -> EvalCheck {
+    EvalCheck {
+        field: "steps",
+        expected: expected.to_string(),
+        actual: actual.to_string(),
+        passed: expected == actual,
+    }
+}
+
+fn check_optional(
+    field: &'static str,
+    expected: &Option<String>,
+    actual: &Option<String>,
+) -> EvalCheck {
+    EvalCheck {
+        field,
+        expected: actual_json(expected),
+        actual: actual_json(actual),
+        passed: expected == actual,
+    }
+}
+
+/// Project one fixture through the observability layer and compare it with the
+/// recorded expectation. Pure except for the in-memory projection.
+pub fn evaluate_case(case: EvalCase) -> Result<EvalCaseReport, BoundaryError> {
+    let run_id = match &case.run {
+        Some(run) => run.clone(),
+        None => case
+            .snapshot
+            .runs
+            .iter()
+            .rev()
+            .find(|row| !row["finished_at"].is_null())
+            .or_else(|| case.snapshot.runs.last())
+            .and_then(|row| row["run_id"].as_str())
+            .map(str::to_owned)
+            .ok_or_else(|| error("run_not_found", "no run is persisted in this fixture"))?,
+    };
+    let report = run_report(&case.snapshot, &run_id)?;
+    let actual_status: Option<String> = report
+        .result
+        .as_ref()
+        .map(|result| match result.status {
+            RunStatus::Completed => "completed",
+            RunStatus::Cancelled => "cancelled",
+            RunStatus::Failed => "failed",
+            RunStatus::NeedsConfirmation => "needs_confirmation",
+            RunStatus::NeedsInput => "needs_input",
+            RunStatus::LimitReached => "limit_reached",
+        })
+        .map(str::to_owned);
+    let mut checks = vec![
+        check_steps(case.expect.steps, report.timeline.steps.len()),
+        check_optional(
+            "failed_step",
+            &case.expect.failed_step.map(|step| step.to_string()),
+            &report.diagnosis.failed_step.map(|step| step.to_string()),
+        ),
+        check_optional(
+            "error_code",
+            &case.expect.error_code,
+            &report.diagnosis.error_code,
+        ),
+        check_optional("run_status", &case.expect.run_status, &actual_status),
+    ];
+    checks.sort_by_key(|check| check.field);
+    let passed = checks.iter().all(|check| check.passed);
+    Ok(EvalCaseReport {
+        name: case.name,
+        description: case.description,
+        session_id: report.session_id,
+        run_id: report.run_id,
+        run: report.run,
+        result: report.result,
+        metrics: report.metrics,
+        timeline: report.timeline,
+        diagnosis: report.diagnosis,
+        expected: case.expect,
+        checks,
+        passed,
+    })
+}
+
+/// Fold per-fixture results into one aggregate report.
+pub fn eval_report(cases: Vec<EvalCaseReport>) -> EvalReport {
+    let passed = cases.iter().filter(|case| case.passed).count();
+    EvalReport {
+        failed: cases.len().saturating_sub(passed),
+        passed,
+        cases,
+    }
+}
+
+/// Render an eval report as deterministic Markdown suitable for version diffs.
+pub fn eval_markdown(report: &EvalReport) -> Result<Vec<u8>, BoundaryError> {
+    let mut out = String::new();
+    out.push_str("# Soyo observe eval\n\n");
+    out.push_str(&format!(
+        "- Cases: {} | Passed: {} | Failed: {}\n\n",
+        report.cases.len(),
+        report.passed,
+        report.failed
+    ));
+    for case in &report.cases {
+        out.push_str(&format!(
+            "## {} — {}\n\n",
+            case.name,
+            if case.passed { "PASS" } else { "FAIL" }
+        ));
+        if let Some(description) = &case.description {
+            out.push_str(description);
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!(
+            "- Session: `{}`\n- Run: `{}`\n- Steps: {}\n- Failure: {}\n\n",
+            case.session_id,
+            case.run_id,
+            case.diagnosis.step_count,
+            case.diagnosis.error_code.as_deref().unwrap_or("none")
+        ));
+        out.push_str("| Field | Expected | Actual | Pass |\n| --- | --- | --- | --- |\n");
+        for check in &case.checks {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                check.field,
+                check.expected,
+                check.actual,
+                if check.passed { "yes" } else { "no" }
+            ));
+        }
+        out.push('\n');
+    }
+    Ok(out.into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1091,6 +1303,111 @@ mod tests {
     fn run_report_requires_an_existing_run() {
         let snapshot = base_snapshot();
         assert!(run_report(&snapshot, "missing").is_err());
+    }
+
+    fn eval_case(expect: EvalExpect) -> EvalCase {
+        let mut snapshot = base_snapshot();
+        let run_id = soyo_core::contract::RunId::new();
+        let result = RunResult {
+            schema_version: 1,
+            session_id: Some(snapshot.session.id),
+            run_id: Some(run_id),
+            status: RunStatus::Failed,
+            stop_reason: Some("tool_error".into()),
+            text: None,
+            error: Some(ErrorInfo {
+                code: "tool_error".into(),
+                message: "boom".into(),
+            }),
+            usage: None,
+            artifacts: vec![],
+            persistence: None,
+        };
+        snapshot.runs = vec![json!({
+            "run_id": run_id.0.to_string(),
+            "run": {},
+            "result": serde_json::to_value(&result).unwrap(),
+            "started_at": 1,
+            "finished_at": 2,
+        })];
+        snapshot.events = vec![
+            serde_json::to_value(Event {
+                schema_version: 1,
+                session_id: snapshot.session.id,
+                run_id: Some(run_id),
+                seq: 1,
+                timestamp: "2026-11-24T00:00:01Z".into(),
+                payload: EventPayload::ToolFinished {
+                    call_id: "ok".into(),
+                    name: "read_file".into(),
+                    result: ToolResult::success(None),
+                },
+            })
+            .unwrap(),
+            serde_json::to_value(Event {
+                schema_version: 1,
+                session_id: snapshot.session.id,
+                run_id: Some(run_id),
+                seq: 2,
+                timestamp: "2026-11-24T00:00:02Z".into(),
+                payload: EventPayload::ToolFinished {
+                    call_id: "bad".into(),
+                    name: "exec".into(),
+                    result: ToolResult::failure("tool_error", "boom"),
+                },
+            })
+            .unwrap(),
+        ];
+        EvalCase {
+            name: "case".into(),
+            description: None,
+            run: None,
+            expect,
+            snapshot,
+        }
+    }
+
+    #[test]
+    fn eval_case_passes_on_matching_expectations_and_fails_on_drift() {
+        let mut case = eval_case(EvalExpect {
+            steps: 0,
+            failed_step: None,
+            error_code: None,
+            run_status: None,
+        });
+        let run_id = case.snapshot.runs[0]["run_id"].as_str().unwrap().to_owned();
+        let projection = project_timeline(&case.snapshot, Some(&run_id)).unwrap();
+        let failed = diagnose(&projection, None).failed_step.unwrap();
+        case.expect = EvalExpect {
+            steps: projection.steps.len(),
+            failed_step: Some(failed),
+            error_code: Some("tool_error".into()),
+            run_status: Some("failed".into()),
+        };
+        let report = evaluate_case(case.clone()).unwrap();
+        assert!(report.passed, "{:?}", report.checks);
+        assert_eq!(report.run_id, run_id);
+        case.expect.failed_step = Some(failed + 1);
+        let report = evaluate_case(case).unwrap();
+        assert!(!report.passed);
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|check| check.field == "failed_step" && !check.passed)
+        );
+    }
+
+    #[test]
+    fn eval_case_requires_a_run() {
+        let mut case = eval_case(EvalExpect {
+            steps: 0,
+            failed_step: None,
+            error_code: None,
+            run_status: None,
+        });
+        case.snapshot.runs = vec![];
+        assert_eq!(evaluate_case(case).unwrap_err().0.code, "run_not_found");
     }
 
     #[test]

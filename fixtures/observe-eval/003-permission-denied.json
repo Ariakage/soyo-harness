@@ -1,0 +1,104 @@
+{
+  "name": "permission-denied",
+  "description": "A denied approval inside an otherwise completed run; the denial is the first failure.",
+  "expect": {
+    "steps": 5,
+    "failed_step": 3,
+    "error_code": "permission_denied",
+    "run_status": "completed"
+  },
+  "snapshot": {
+    "created_at": "2026-11-24T00:00:00Z",
+    "source_database_schema": 2,
+    "last_change_seq": 3,
+    "last_event_seq": 3,
+    "session": {
+      "id": "01930000-0000-7000-8000-000000000003",
+      "workspace": "/tmp/soyo-eval",
+      "work_mode": "work",
+      "profile": "eval",
+      "protocol": "responses",
+      "model": "offline",
+      "history": [
+        { "kind": "user_text", "data": "Delete the stale cache" },
+        { "kind": "assistant_text", "data": "Requesting approval for the removal." }
+      ]
+    },
+    "runs": [
+      {
+        "run_id": "01930000-0000-7000-8000-000000000103",
+        "run": {},
+        "result": {
+          "schema_version": 1,
+          "session_id": "01930000-0000-7000-8000-000000000003",
+          "run_id": "01930000-0000-7000-8000-000000000103",
+          "status": "completed",
+          "stop_reason": null,
+          "text": "Approval was denied; nothing was removed.",
+          "error": null,
+          "usage": null,
+          "artifacts": [],
+          "persistence": null
+        },
+        "started_at": 1763942400,
+        "finished_at": 1763942405
+      }
+    ],
+    "tool_calls": [],
+    "approval_requests": [],
+    "events": [
+      {
+        "schema_version": 1,
+        "session_id": "01930000-0000-7000-8000-000000000003",
+        "run_id": "01930000-0000-7000-8000-000000000103",
+        "seq": 1,
+        "timestamp": "2026-11-24T00:00:01Z",
+        "type": "permission.requested",
+        "data": {
+          "approval_id": "ap-1",
+          "call_id": "call-1",
+          "operation_summary": "rm -rf cache/",
+          "work_mode": "work"
+        }
+      },
+      {
+        "schema_version": 1,
+        "session_id": "01930000-0000-7000-8000-000000000003",
+        "run_id": "01930000-0000-7000-8000-000000000103",
+        "seq": 2,
+        "timestamp": "2026-11-24T00:00:02Z",
+        "type": "permission.resolved",
+        "data": {
+          "approval_id": "ap-1",
+          "call_id": "call-1",
+          "decision": "denied",
+          "source": "user"
+        }
+      },
+      {
+        "schema_version": 1,
+        "session_id": "01930000-0000-7000-8000-000000000003",
+        "run_id": "01930000-0000-7000-8000-000000000103",
+        "seq": 3,
+        "timestamp": "2026-11-24T00:00:03Z",
+        "type": "run.finished",
+        "data": {
+          "schema_version": 1,
+          "session_id": "01930000-0000-7000-8000-000000000003",
+          "run_id": "01930000-0000-7000-8000-000000000103",
+          "status": "completed",
+          "stop_reason": null,
+          "text": "Approval was denied; nothing was removed.",
+          "error": null,
+          "usage": null,
+          "artifacts": [],
+          "persistence": null
+        }
+      }
+    ],
+    "changes": [],
+    "metrics": [],
+    "project_context": [],
+    "background_jobs": []
+  }
+}

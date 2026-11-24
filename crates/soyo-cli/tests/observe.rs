@@ -280,6 +280,89 @@ async fn diagnose_pinpoints_the_first_failed_step() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn eval_command(state: &std::path::Path, workspace: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_soyo"));
+    command
+        .env_clear()
+        .env("HOME", state)
+        .env("PATH", "/usr/bin:/bin")
+        .env("XDG_STATE_HOME", state.join("state"))
+        .env("XDG_CACHE_HOME", state.join("cache"))
+        .current_dir(workspace)
+        .stdin(Stdio::null())
+        .arg("--config")
+        .arg(state.join("config.toml"))
+        .arg("--data-dir")
+        .arg(state.join("database"));
+    command
+}
+
+#[test]
+fn eval_passes_the_recorded_fixture_set() -> Result<(), Box<dyn std::error::Error>> {
+    let state = tempfile::tempdir()?;
+    let workspace = tempfile::tempdir()?;
+    fs::write(state.path().join("config.toml"), "schema_version = 1\n")?;
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/observe-eval");
+    let out = eval_command(state.path(), workspace.path())
+        .arg("eval")
+        .arg(&fixtures)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout)?;
+    assert!(text.contains("3 passed"), "{text}");
+    assert!(text.contains("failed-tool"), "{text}");
+    // The JSON envelope carries the same per-case fields as a run report plus
+    // the expected outcome, checks and pass/fail verdict.
+    let out = eval_command(state.path(), workspace.path())
+        .args(["--output", "json", "eval"])
+        .arg(&fixtures)
+        .output()?;
+    let value = successful(&out);
+    let cases = value["data"]["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 3);
+    assert_eq!(value["data"]["failed"], 0);
+    let denied = cases
+        .iter()
+        .find(|case| case["name"] == "permission-denied")
+        .unwrap();
+    assert_eq!(denied["diagnosis"]["error_code"], "permission_denied");
+    assert_eq!(denied["expected"]["run_status"], "completed");
+    assert_eq!(denied["passed"], true);
+    Ok(())
+}
+
+#[test]
+fn eval_reports_drift_with_a_nonzero_exit() -> Result<(), Box<dyn std::error::Error>> {
+    let state = tempfile::tempdir()?;
+    let workspace = tempfile::tempdir()?;
+    fs::write(state.path().join("config.toml"), "schema_version = 1\n")?;
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/observe-eval/002-clean-run.json");
+    let mut case: Value = serde_json::from_str(&fs::read_to_string(&source)?)?;
+    case["expect"]["steps"] = json!(99);
+    let fixtures = workspace.path().join("fixtures");
+    fs::create_dir(&fixtures)?;
+    fs::write(
+        fixtures.join("drift.json"),
+        serde_json::to_string_pretty(&case)?,
+    )?;
+    let out = eval_command(state.path(), workspace.path())
+        .arg("eval")
+        .arg(&fixtures)
+        .output()?;
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8(out.stdout)?;
+    assert!(text.contains("FAIL"), "{text}");
+    assert!(text.contains("steps"), "{text}");
+    assert!(text.contains("drift"), "{text}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn session_report_publishes_a_run_scoped_markdown_file()
 -> Result<(), Box<dyn std::error::Error>> {
