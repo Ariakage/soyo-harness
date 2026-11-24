@@ -15,6 +15,7 @@ mod module_commands;
 mod observe;
 mod plugin_commands;
 mod signals;
+mod subagent_commands;
 mod task_commands;
 mod terminal;
 use soyo_app::{new_session, session};
@@ -140,6 +141,11 @@ enum Command {
     Task {
         #[command(subcommand)]
         action: task_commands::TaskAction,
+    },
+    /// Inspect, continue, merge and cancel persistent subagent jobs.
+    Subagent {
+        #[command(subcommand)]
+        action: subagent_commands::SubagentAction,
     },
     /// Inspect and administer the configured managed global memory.
     Memory {
@@ -1959,6 +1965,13 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         Some(Command::Task { action }) => match load_config(overrides, env) {
             Err(error) => query_error(error, cli.output.map(Into::into)),
             Ok(config) => match task_commands::run(action, cli, &config).await {
+                Ok(code) => code,
+                Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
+            },
+        },
+        Some(Command::Subagent { action }) => match load_config(overrides, env) {
+            Err(error) => query_error(error, cli.output.map(Into::into)),
+            Ok(config) => match subagent_commands::run(action, cli, &config).await {
                 Ok(code) => code,
                 Err(error) => query_error(sanitized_error(&error, &config), Some(config.output)),
             },
