@@ -9,6 +9,7 @@ mod goal_commands;
 mod helper_commands;
 mod logs;
 mod mcp;
+mod mcp_server;
 mod memory_commands;
 mod module_commands;
 mod observe;
@@ -230,6 +231,8 @@ enum Command {
     Helper,
     /// Stop the running helper daemon.
     Kill,
+    /// Serve Soyo as an MCP server over stdio (D-108: run/status/cancel via the helper).
+    McpServer,
 }
 #[derive(Subcommand)]
 enum RoutingAction {
@@ -2076,6 +2079,28 @@ async fn dispatch_command(cli: &Cli, overrides: Overrides, env: Environment) -> 
         }
         Some(Command::Kill) => {
             helper_commands::kill_helper(cli.config.as_deref(), cli.data_dir.as_deref()).await
+        }
+        Some(Command::McpServer) => {
+            let target = match cli_helper_target(cli, &env) {
+                Some(target) => target,
+                None => {
+                    eprintln!("soyo mcp-server: cannot resolve helper target");
+                    return 2;
+                }
+            };
+            match helper_commands::connect_checked_for(&target, false).await {
+                Ok(client) => match mcp_server::serve_stdio(client).await {
+                    Ok(()) => 0,
+                    Err(err) => {
+                        eprintln!("soyo mcp-server: {err}");
+                        1
+                    }
+                },
+                Err(err) => {
+                    eprintln!("soyo mcp-server: {}: {}", err.code, err.message);
+                    1
+                }
+            }
         }
         Some(Command::Config {
             action: ConfigAction::Init,

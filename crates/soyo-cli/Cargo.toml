@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }
 libc = "0.2.191"
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-io"] }
 soyo-app = { path = "../soyo-app" }
 soyo-contract = { path = "../soyo-contract" }
 soyo-core = { path = "../soyo-core" }
