@@ -263,10 +263,12 @@ DEV-040 至 DEV-042 已实现五级日志、tracing span、`--log-level`、本�
 
 **价值**：让其他程序能够使用 Soyo，并将执行位置从当前终端扩展出去。
 
-- 先收敛嵌入式 SDK 的运行、控制、事件、错误与兼容策略，区别于 MVP 开发期可调整的内部 Rust API。
-- 再做本地服务与任务查询，支持客户端断开后可理解的任务生命周期。
-- 按需求增加远程 worker、工作区／产物同步、执行身份、凭据与配额隔离。
-- Soyo 作为 MCP Server 对外提供任务能力属于这一层的可选入口，不能通过暴露接口绕开原权限与 sandbox。
+**设计已确认（D-105~D-108，方向定案）**：四个关键决策已拍板——(1) SDK 为 socket 客户端形态，新建 `soyo-sdk` crate 收敛在 `soyo-ipc::HelperClient` 之上，不做进程内嵌入（不冻结内部 Rust API）；(2) 稳定面冻结 wire 契约（`PROTOCOL_VERSION` + 对外 method 名 + DTO JSON schema），首批公布约 15 个 run/session/task 方法，SDK Rust 类型签名在 0.x 内仍可演进；(3) 客户端断线语义为「断线≠取消」——run 归 session 不归 connection，SDK/服务面提供显式 attach/detach 与按 session 重订阅事件；(4) 对外服务面先做 stdio 版 Soyo-as-MCP-Server（`rmcp` server 侧复用 `HostService`，最小工具面 run/status/cancel，不绕开原权限与 sandbox）。远程 worker、工作区／产物同步、HTTP 传输与鉴权模型仍为待实现增量，未决项见下文。
+
+- 先收敛嵌入式 SDK 的运行、控制、事件、错误与兼容策略，区别于 MVP 开发期可调整的内部 Rust API（D-105：socket 客户端 SDK；D-106：冻结 wire 契约）。
+- 再做本地服务与任务查询，支持客户端断开后可理解的任务生命周期（D-107：断线≠取消 + attach/detach）。
+- 按需求增加远程 worker、工作区／产物同步、执行身份、凭据与配额隔离（待决策：传输形态、身份模型、同步协议）。
+- Soyo 作为 MCP Server 对外提供任务能力属于这一层的可选入口，不能通过暴露接口绕开原权限与 sandbox（D-108：stdio 版先行）。
 
 验收：一个外部程序能通过 SDK／服务执行和取消任务，断连、重连及远端失败不会丢失状态或重复副作用。
 
